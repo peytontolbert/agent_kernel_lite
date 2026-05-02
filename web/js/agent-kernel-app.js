@@ -1,0 +1,3079 @@
+const HF = {
+  paperGraphRoot: 'https://huggingface.co/datasets/PeytonT/paper_universe_interactive/resolve/main',
+  paperInteractiveRoot: 'https://huggingface.co/datasets/PeytonT/paper_universe_interactive/resolve/main/interactive',
+  paperSemanticRoot: 'https://huggingface.co/datasets/PeytonT/paper_universe_interactive/resolve/main/semantic_m1',
+  paperEmbeddingLiteRoot: 'https://huggingface.co/PeytonT/1m-paper-embedding-model-lite-onnx/resolve/main',
+  paperTextDataset: 'PeytonT/1m_papers_text',
+  datasetServer: 'https://datasets-server.huggingface.co',
+};
+
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const DEV_BACKEND = String(URL_PARAMS.get('backend') || '').trim().toLowerCase();
+const DEVICE_PARAM = String(URL_PARAMS.get('device') || '').trim().toLowerCase();
+const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
+const VLLM_MODEL = String(URL_PARAMS.get('vllmModel') || 'Qwen/Qwen3.5-9B').trim();
+const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
+const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
+const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
+const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
+const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
+const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
+const CACHE_NAME = 'agent-kernel-lite-v1';
+const DB_NAME = 'agent-kernel-lite-db-v1';
+const DB_STORE = 'metadata';
+const MODE_CONFIG = {
+  chat: {
+    label: 'Chat',
+    pill: 'chat mode',
+    contextItems: 5,
+    semanticTopK: 12,
+    hfSearchRows: 8,
+    candidateFloor: 8,
+    excerptChars: 1200,
+    selectedExcerptChars: 2600,
+    temperature: 0.35,
+    minTokens: 160,
+    placeholder: 'Ask a question...',
+  },
+  think: {
+    label: 'Think',
+    pill: 'think mode',
+    contextItems: 8,
+    semanticTopK: 24,
+    hfSearchRows: 12,
+    candidateFloor: 14,
+    excerptChars: 1600,
+    selectedExcerptChars: 3200,
+    temperature: 0.25,
+    minTokens: 320,
+    placeholder: 'Ask for a careful synthesis...',
+  },
+  deep_research: {
+    label: 'Deep',
+    pill: 'deep research',
+    contextItems: 14,
+    semanticTopK: 48,
+    hfSearchRows: 20,
+    candidateFloor: 24,
+    excerptChars: 2400,
+    selectedExcerptChars: 4200,
+    temperature: 0.18,
+    minTokens: 560,
+    placeholder: 'Ask for a deep research pass...',
+  },
+};
+const PROCESS_STEPS = [
+  { id: 'receive', label: 'Receive', idle: 'Waiting for prompt' },
+  { id: 'runtime', label: 'Runtime', idle: 'Model idle' },
+  { id: 'plan', label: 'Plan Command', idle: 'Choosing respond or gather_context' },
+  { id: 'pack', label: 'Paper Pack', idle: 'Library idle' },
+  { id: 'embed', label: 'Embed Query', idle: 'Not started' },
+  { id: 'rank', label: 'Semantic Rank', idle: 'Not started' },
+  { id: 'select', label: 'Select Evidence', idle: 'Not started' },
+  { id: 'lexical', label: 'Lexical Scan', idle: 'Not started' },
+  { id: 'lookup', label: 'Lookup Evidence', idle: 'Not started' },
+  { id: 'compact', label: 'Compact Context', idle: 'Not started' },
+  { id: 'compile', label: 'Compile Prompt', idle: 'Not started' },
+  { id: 'generate', label: 'Respond', idle: 'Not started' },
+  { id: 'render', label: 'Render', idle: 'Waiting' },
+];
+const MAX_CONTEXT_ITEMS = Math.max(...Object.values(MODE_CONFIG).map((config) => config.contextItems));
+const MAX_SELECTED_PAPERS = 3;
+const SEMANTIC_QUERY_TOKENS = 128;
+const SEMANTIC_SCAN_YIELD_ROWS = 25000;
+const REMOTE_MODEL_FALLBACK_MS = 25000;
+const ORT_CDN_ROOT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist';
+const RETRIEVAL_INTENT_TERMS = new Set([
+  'best',
+  'better',
+  'top',
+  'good',
+  'great',
+  'paper',
+  'papers',
+  'research',
+  'study',
+  'studies',
+  'source',
+  'sources',
+  'evidence',
+  'find',
+  'search',
+  'tell',
+  'me',
+  'more',
+  'please',
+  'pls',
+  'recommend',
+  'recommendation',
+  'recommendations',
+  'what',
+  'whats',
+  'which',
+  'who',
+  'where',
+  'when',
+  'why',
+  'how',
+  'can',
+  'could',
+  'should',
+  'would',
+  'about',
+  'for',
+  'on',
+  'the',
+  'this',
+  'that',
+]);
+
+const state = {
+  worker: null,
+  modelReady: false,
+  modelBusy: false,
+  modelLoadPromise: null,
+  modelLoadResolve: null,
+  modelLoadReject: null,
+  modelAutoLoadStarted: false,
+  loadedModelId: '',
+  core: null,
+  coreReady: false,
+  packRows: [],
+  packLevel: null,
+  paperSemanticManifest: null,
+  paperSemanticIndex: null,
+  paperEmbeddingModel: null,
+  neuralMemoryPack: null,
+  neuralEmbeddingRequests: new Map(),
+  utilityGenerationRequests: new Map(),
+  paperContextRows: [],
+  retrievalRows: [],
+  pendingContextRows: [],
+  lastDecisionPacket: null,
+  messages: [],
+  mode: 'chat',
+  processRunId: 0,
+  generationRunId: 0,
+  processActive: false,
+  liveStatusNode: null,
+  activeTurn: null,
+  theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+};
+
+const els = {
+  model: document.getElementById('modelSelect'),
+  device: document.getElementById('deviceSelect'),
+  pack: document.getElementById('packSelect'),
+  language: document.getElementById('languageSelect'),
+  tokens: document.getElementById('tokenSelect'),
+  chatMode: document.getElementById('chatModeButton'),
+  thinkMode: document.getElementById('thinkModeButton'),
+  deepResearchMode: document.getElementById('deepResearchModeButton'),
+  modeButtons: [...document.querySelectorAll('.mode-button')],
+  loadModel: document.getElementById('loadModelButton'),
+  unloadModel: document.getElementById('unloadModelButton'),
+  loadPack: document.getElementById('loadPackButton'),
+  persist: document.getElementById('persistButton'),
+  reset: document.getElementById('resetChatButton'),
+  send: document.getElementById('sendButton'),
+  form: document.getElementById('composerForm'),
+  prompt: document.getElementById('promptInput'),
+  chat: document.getElementById('chatScroll'),
+  empty: document.getElementById('emptyState'),
+  log: document.getElementById('log'),
+  modelMetric: document.getElementById('modelMetric'),
+  packMetric: document.getElementById('packMetric'),
+  storageMetric: document.getElementById('storageMetric'),
+  rowsMetric: document.getElementById('rowsMetric'),
+  modelPill: document.getElementById('modelPill'),
+  runtimeDetail: document.getElementById('runtimeDetail'),
+  packPill: document.getElementById('packPill'),
+  storagePill: document.getElementById('storagePill'),
+  corePill: document.getElementById('corePill'),
+  modePill: document.getElementById('modePill'),
+  processList: document.getElementById('processList'),
+  processSummary: document.getElementById('processSummary'),
+  processListMain: document.getElementById('processListMain'),
+  processSummaryMain: document.getElementById('processSummaryMain'),
+  sessionLine: document.getElementById('sessionLine'),
+  runtimeLine: document.getElementById('runtimeLine'),
+  statusDock: document.getElementById('statusDock'),
+  themeToggle: document.getElementById('themeToggleButton'),
+  mobileToggle: document.getElementById('mobileToggleButton'),
+};
+
+function log(message) {
+  const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+  els.log.textContent = `${line}\n${els.log.textContent}`.slice(0, 2200);
+}
+
+function shortText(value, limit = 72) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text;
+}
+
+function processStatusLabel(status) {
+  if (status === 'active') return 'Running';
+  if (status === 'done') return 'Done';
+  if (status === 'error') return 'Error';
+  return 'Queued';
+}
+
+function liveStatusTitle(id, status, detail = '') {
+  const step = PROCESS_STEPS.find((item) => item.id === id);
+  if (status === 'error') return `${step?.label || id} failed`;
+  const text = String(detail || '').toLowerCase();
+  if (id === 'runtime') {
+    if (text.includes('manifest')) return 'Loading manifest';
+    if (text.includes('runtime module')) return 'Loading runtime';
+    if (text.includes('webgpu')) return 'Starting WebGPU';
+    if (text.includes('dense tensors ready')) return 'Preparing layers';
+    if (text.includes('dense tensor')) return 'Loading weights';
+    if (text.includes('bitnet layer') && text.includes('upload')) return 'Uploading layer';
+    if (text.includes('bitnet layer')) return 'Building layers';
+    if (text.includes('preparing')) return 'Preparing layers';
+    if (text.includes('tokenizer')) return 'Loading tokenizer';
+    if (text.includes('ready')) return 'Runtime ready';
+    if (text.includes('bundle') || text.includes('loading')) return 'Loading model';
+    return 'Runtime';
+  }
+  return step?.label || id;
+}
+
+function processLists() {
+  return [els.processList, els.processListMain].filter(Boolean);
+}
+
+function processSummaries() {
+  return [els.processSummary, els.processSummaryMain].filter(Boolean);
+}
+
+function setProcessSummary(text) {
+  for (const node of processSummaries()) node.textContent = text;
+}
+
+function setTheme(theme, persist = true) {
+  const normalized = theme === 'dark' ? 'dark' : 'light';
+  state.theme = normalized;
+  document.documentElement.dataset.theme = normalized;
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, normalized);
+    } catch (_error) {
+      // Theme persistence is optional; private browsing can reject localStorage.
+    }
+  }
+  if (els.themeToggle) {
+    els.themeToggle.textContent = normalized === 'dark' ? 'Light' : 'Dark';
+    els.themeToggle.setAttribute('aria-pressed', normalized === 'dark' ? 'true' : 'false');
+    els.themeToggle.title = normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  }
+}
+
+function toggleTheme() {
+  setTheme(state.theme === 'dark' ? 'light' : 'dark');
+}
+
+function setAgentWorking(active) {
+  document.body.classList.toggle('agent-working', Boolean(active));
+}
+
+function updateRuntimeDetail(text) {
+  if (els.runtimeDetail) els.runtimeDetail.textContent = text;
+  if (els.runtimeLine) els.runtimeLine.textContent = text;
+}
+
+function syncModelControls() {
+  const loading = Boolean(state.modelBusy);
+  const loaded = Boolean(state.modelReady);
+  if (els.loadModel) {
+    els.loadModel.disabled = loading || state.processActive;
+    els.loadModel.textContent = loaded ? 'Reload Runtime' : loading ? 'Loading...' : 'Load Runtime';
+  }
+  if (els.unloadModel) {
+    els.unloadModel.disabled = loading || state.processActive || !state.worker;
+  }
+  if (els.send) {
+    els.send.disabled = state.processActive || loading || !loaded;
+  }
+}
+
+function createProcessStepElement(step) {
+  const item = document.createElement('li');
+  item.className = 'process-step';
+  item.dataset.step = step.id;
+  item.dataset.status = 'idle';
+  item.innerHTML = `
+    <span class="process-dot" aria-hidden="true"></span>
+    <span>
+      <span class="process-name">
+        <span>${step.label}</span>
+        <span class="process-status">${processStatusLabel('idle')}</span>
+      </span>
+      <span class="process-detail">${step.idle}</span>
+    </span>
+  `;
+  return item;
+}
+
+function renderProcessTrace() {
+  const lists = processLists();
+  if (!lists.length) return;
+  for (const list of lists) {
+    list.replaceChildren();
+    for (const step of PROCESS_STEPS) list.appendChild(createProcessStepElement(step));
+  }
+  setProcessSummary('Idle');
+}
+
+function setProcessStep(id, status, detail = '') {
+  if (status === 'active') setAgentWorking(true);
+  const lists = processLists();
+  if (lists.length) {
+    if (!lists[0].childElementCount) renderProcessTrace();
+    for (const list of lists) {
+      const item = list.querySelector(`[data-step="${id}"]`);
+      if (!item) continue;
+      item.classList.remove('active', 'done', 'error');
+      if (status && status !== 'idle') item.classList.add(status);
+      item.dataset.status = status || 'idle';
+      const statusNode = item.querySelector('.process-status');
+      const detailNode = item.querySelector('.process-detail');
+      if (statusNode) statusNode.textContent = processStatusLabel(status);
+      if (detailNode && detail) detailNode.textContent = detail;
+    }
+  }
+  const label = PROCESS_STEPS.find((step) => step.id === id)?.label || id;
+  if (status === 'active') setProcessSummary(label);
+  if (status === 'error') setProcessSummary(`${label} failed`);
+  if (status && status !== 'idle') updateLiveStatus(id, status, detail);
+}
+
+function resetProcessTrace(prompt) {
+  state.processRunId += 1;
+  state.processActive = true;
+  setAgentWorking(true);
+  syncModelControls();
+  renderProcessTrace();
+  startLiveStatus(prompt);
+  setProcessStep('receive', 'done', shortText(prompt, 96) || 'Prompt received');
+  setProcessSummary('Starting');
+}
+
+function finishProcessTrace(summary = 'Complete') {
+  state.processActive = false;
+  setAgentWorking(false);
+  syncModelControls();
+  setProcessSummary(summary);
+  finishLiveStatus(summary);
+  setEvidenceActionsLocked(false);
+}
+
+function startLiveStatus(prompt) {
+  els.empty?.remove();
+  const previous = state.liveStatusNode;
+  if (previous?.isConnected && previous.dataset.finished !== 'true') previous.remove();
+  const node = document.createElement('article');
+  node.className = 'message assistant live-status';
+  node.dataset.status = 'active';
+  node.innerHTML = `
+    <div class="role">Agent Kernel Lite</div>
+    <div class="body">
+      <div class="live-status-line">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span class="live-status-state">Starting</span>
+        <span class="live-status-detail">Preparing turn</span>
+      </div>
+    </div>
+  `;
+  state.liveStatusNode = node;
+  if (els.statusDock) {
+    els.statusDock.replaceChildren(node);
+  } else {
+    els.chat.appendChild(node);
+    els.chat.scrollTop = els.chat.scrollHeight;
+  }
+  updateLiveStatus('receive', 'done', shortText(prompt, 96) || 'Prompt received');
+}
+
+function updateLiveStatus(id, status, detail = '') {
+  const node = state.liveStatusNode;
+  if (!node?.isConnected) return;
+  const step = PROCESS_STEPS.find((item) => item.id === id);
+  if (!step) return;
+  node.dataset.status = status || 'active';
+  const stateNode = node.querySelector('.live-status-state');
+  const detailNode = node.querySelector('.live-status-detail');
+  if (stateNode) {
+    stateNode.textContent = liveStatusTitle(id, status, detail);
+  }
+  if (detailNode) detailNode.textContent = detail || processStatusLabel(status);
+}
+
+function finishLiveStatus(summary = 'Complete') {
+  const node = state.liveStatusNode;
+  if (!node?.isConnected) return;
+  node.dataset.finished = 'true';
+  node.dataset.status = summary === 'Error' ? 'error' : 'done';
+  const stateNode = node.querySelector('.live-status-state');
+  if (stateNode) stateNode.textContent = summary;
+  const detailNode = node.querySelector('.live-status-detail');
+  if (detailNode) detailNode.textContent = summary === 'Error' ? 'Review the message below' : 'Done';
+  if (summary !== 'Error') {
+    window.setTimeout(() => {
+      if (state.liveStatusNode === node && node.dataset.finished === 'true') {
+        node.remove();
+        state.liveStatusNode = null;
+      }
+    }, 900);
+  }
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(0)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
+  return `${value} B`;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function setPill(el, text, mode = '') {
+  if (!el) return;
+  el.textContent = text;
+  el.className = `pill ${mode}`.trim();
+}
+
+function normalizeMode(mode) {
+  const value = String(mode || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return MODE_CONFIG[value] ? value : 'chat';
+}
+
+function modeConfig() {
+  return MODE_CONFIG[normalizeMode(state.mode)] || MODE_CONFIG.chat;
+}
+
+function modeToken(mode = state.mode) {
+  const normalized = normalizeMode(mode);
+  if (normalized === 'think') return '<AK_THINK>';
+  if (normalized === 'deep_research') return '<AK_DEEP_RESEARCH>';
+  return '<AK_CHAT>';
+}
+
+function targetMaxTokens() {
+  return Math.max(Number(els.tokens.value || 560), Number(modeConfig().minTokens || 560));
+}
+
+async function loadAgentCore() {
+  try {
+    const { default: initAgentCore, AgentLiteCore } = await import('../wasm/agent_kernel_lite_core/pkg/agent_kernel_lite_core.js');
+    await initAgentCore();
+    state.core = new AgentLiteCore('browser-session', state.mode, MAX_CONTEXT_ITEMS);
+    state.coreReady = true;
+    setPill(els.corePill, 'core ready', 'ready');
+    log('WASM agent core ready');
+  } catch (error) {
+    state.core = null;
+    state.coreReady = false;
+    setPill(els.corePill, 'core fallback', 'error');
+    log(`WASM agent core unavailable: ${error.message || String(error)}`);
+  }
+}
+
+function fallbackLitePlan(userText) {
+  const normalized = String(userText || '').trim().toLowerCase();
+  const substantiveTokenCount = queryContentTokens(userText).filter((token) => token.length > 2).length;
+  if (!normalized) {
+    return { action: 'respond', query: userText, reason: 'empty prompt; respond directly' };
+  }
+  const conversational = ['hi', 'hello', 'hey', 'thanks', 'thank you', 'who are you', 'what can you do'];
+  if (conversational.some((phrase) => normalized === phrase || normalized.startsWith(`${phrase} `))) {
+    return {
+      action: 'respond',
+      query: userText,
+      reason: 'conversational prompt does not need paper retrieval',
+    };
+  }
+  if (isSelectedPaperFollowup(userText)) {
+    return {
+      action: 'gather_context',
+      query: userText,
+      reason: 'using selected paper already loaded in chat',
+    };
+  }
+  const retrievalTerms = [
+    'paper',
+    'papers',
+    'research',
+    'study',
+    'studies',
+    'literature',
+    'arxiv',
+    'citation',
+    'evidence',
+    'source',
+    'sources',
+    'retrieve',
+    'find',
+    'look up',
+    'search',
+    'survey',
+    'compare',
+    'summarize',
+    'explain this paper',
+    'what does this paper',
+    'according to',
+  ];
+  if (retrievalTerms.some((term) => normalized.includes(term))) {
+    return { action: 'gather_context', query: userText, reason: 'prompt asks for research-backed context' };
+  }
+  if (
+    state.paperContextRows.length
+    && ['this', 'that', 'it', 'paper', 'above'].some((term) => normalized.includes(term))
+  ) {
+    return { action: 'gather_context', query: userText, reason: 'using selected paper already loaded in chat' };
+  }
+  if (normalized.endsWith('?') && normalized.split(/\s+/).filter(Boolean).length >= 7) {
+    return { action: 'gather_context', query: userText, reason: 'substantive question may benefit from ranked context' };
+  }
+  if (substantiveTokenCount >= 3) {
+    return { action: 'gather_context', query: userText, reason: 'substantive topic can benefit from ranked context' };
+  }
+  return { action: 'respond', query: userText, reason: 'general chat prompt; respond without adding new papers' };
+}
+
+function isSelectedPaperFollowup(userText) {
+  return Boolean(selectedContextTarget(userText));
+}
+
+function normalizeLitePlan(plan, userText) {
+  const action = String(plan?.action || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return {
+    action: action === 'gather_context' || action === 'retrieve' ? 'gather_context' : 'respond',
+    query: String(plan?.query || userText || ''),
+    reason: String(plan?.reason || 'lite planner selected the next command'),
+  };
+}
+
+async function planLiteTurn(userText) {
+  setProcessStep('plan', 'active', 'Choosing respond or gather_context');
+  const history = state.messages.slice(-8).map((message) => ({
+    role: message.role,
+    text: message.text,
+  }));
+  const fallback = fallbackLitePlan(userText);
+  if (isSelectedPaperFollowup(userText)) {
+    const plan = normalizeLitePlan(fallback, userText);
+    setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+    return plan;
+  }
+  if (!state.coreReady || !state.core?.plan_lite_turn) {
+    const plan = normalizeLitePlan(fallback, userText);
+    setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+    return plan;
+  }
+  try {
+    const raw = state.core.plan_lite_turn(
+      userText,
+      JSON.stringify(history),
+      JSON.stringify({
+        selected_context_count: state.paperContextRows.length,
+        mode: state.mode,
+      }),
+    );
+    const plan = normalizeLitePlan(JSON.parse(raw), userText);
+    setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+    return plan;
+  } catch (error) {
+    const plan = normalizeLitePlan(fallback, userText);
+    setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+    log(`lite planner fallback: ${error.message || String(error)}`);
+    return plan;
+  }
+}
+
+async function refreshStorage() {
+  if (!navigator.storage?.estimate) return;
+  const estimate = await navigator.storage.estimate();
+  els.storageMetric.textContent = formatBytes(estimate.usage || 0);
+}
+
+async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) {
+    setPill(els.storagePill, 'persist unsupported', 'error');
+    log('persistent storage is not supported in this browser');
+    return;
+  }
+  const granted = await navigator.storage.persist();
+  setPill(els.storagePill, granted ? 'persistent' : 'best effort', granted ? 'ready' : '');
+  log(granted ? 'persistent storage granted' : 'persistent storage was not granted');
+  await refreshStorage();
+}
+
+async function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbGet(key) {
+  const db = await openDb();
+  const value = await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const req = tx.objectStore(DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  db.close();
+  return value;
+}
+
+async function dbSet(key, value) {
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put(value, key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function openOptionalCache() {
+  if (typeof caches === 'undefined' || typeof caches.open !== 'function') return null;
+  try {
+    return await caches.open(CACHE_NAME);
+  } catch (error) {
+    log(`browser cache unavailable; fetching directly: ${error.message || String(error)}`);
+    return null;
+  }
+}
+
+async function cachePutOptional(cache, key, response) {
+  if (!cache) return;
+  try {
+    await cache.put(key, response);
+    await refreshStorage();
+  } catch (error) {
+    log(`browser cache write skipped: ${error.message || String(error)}`);
+  }
+}
+
+async function cachedJson(url, label) {
+  const cache = await openOptionalCache();
+  const cached = cache ? await cache.match(url).catch(() => null) : null;
+  if (cached) {
+    log(`cache hit: ${label}`);
+    return cached.json();
+  }
+  log(`fetching: ${label}`);
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error(`${label} failed: ${res.status}`);
+  await cachePutOptional(cache, url, res.clone());
+  return res.json();
+}
+
+async function cachedText(url, label) {
+  const cache = await openOptionalCache();
+  const cached = cache ? await cache.match(url).catch(() => null) : null;
+  if (cached) {
+    log(`cache hit: ${label}`);
+    return cached.text();
+  }
+  log(`fetching: ${label}`);
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error(`${label} failed: ${res.status}`);
+  await cachePutOptional(cache, url, res.clone());
+  return res.text();
+}
+
+async function cachedArrayBuffer(url, label) {
+  const cache = await openOptionalCache();
+  const cached = cache ? await cache.match(url).catch(() => null) : null;
+  if (cached) {
+    log(`cache hit: ${label}`);
+    return cached.arrayBuffer();
+  }
+  log(`fetching: ${label}`);
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error(`${label} failed: ${res.status}`);
+  await cachePutOptional(cache, url, res.clone());
+  return res.arrayBuffer();
+}
+
+function wait(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchHfJson(path, params, { retries = 5 } = {}) {
+  const url = new URL(path, HF.datasetServer);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  }
+  const cache = await openOptionalCache();
+  const cached = cache ? await cache.match(url.href).catch(() => null) : null;
+  if (cached) return cached.json();
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url.href, { mode: 'cors' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      await cachePutOptional(cache, url.href, new Response(JSON.stringify(data), {
+        headers: { 'content-type': 'application/json' },
+      }));
+      return data;
+    }
+    const message = data.error || data.detail || data.message || '';
+    if (attempt < retries && (res.status === 423 || res.status === 429 || res.status >= 500)) {
+      log(`Hugging Face dataset server retry: ${message || res.status}`);
+      await wait(1200 + attempt * 900);
+      continue;
+    }
+    throw new Error(message || `Hugging Face request failed: ${res.status}`);
+  }
+  throw new Error('Hugging Face request failed after retries');
+}
+
+async function hfDatasetFirstSplit(dataset) {
+  const key = `split:${dataset}`;
+  const cached = await dbGet(key);
+  if (cached) return cached;
+  const data = await fetchHfJson('/splits', { dataset });
+  const split = (data.splits || [])[0];
+  if (!split) throw new Error(`No split found for ${dataset}`);
+  const out = { config: split.config || 'default', split: split.split || 'train' };
+  await dbSet(key, out);
+  return out;
+}
+
+async function hfRowsByOffset(dataset, offset, length = 1) {
+  const split = await hfDatasetFirstSplit(dataset);
+  const data = await fetchHfJson('/rows', {
+    dataset,
+    config: split.config,
+    split: split.split,
+    offset: Math.max(0, Math.floor(Number(offset) || 0)),
+    length,
+  });
+  return (data.rows || []).map((item) => item.row || item);
+}
+
+async function hfSearchRows(dataset, query, length = 8) {
+  const split = await hfDatasetFirstSplit(dataset);
+  const data = await fetchHfJson('/search', {
+    dataset,
+    config: split.config,
+    split: split.split,
+    query,
+    offset: 0,
+    length,
+  });
+  return (data.rows || []).map((item) => item.row || item);
+}
+
+function chooseLevel(manifest, targetRows) {
+  const levels = manifest.paper_levels || [];
+  const exact = levels.find((level) => Number(level.rows || 0) === Number(targetRows));
+  if (exact) return exact;
+  const sorted = [...levels].sort((a, b) => Math.abs(Number(a.rows || 0) - targetRows) - Math.abs(Number(b.rows || 0) - targetRows));
+  return sorted[0];
+}
+
+function levelJsonPath(level) {
+  if (level?.path) return level.path;
+  if (Number(level?.rows || 0) === 1000000) return 'papers_all.json';
+  return '';
+}
+
+function fileStem(value) {
+  const base = String(value || '').split(/[?#]/)[0].split('/').pop() || '';
+  return base.replace(/\.(json|parquet|i8)$/i, '').replace(/\.emb$/i, '');
+}
+
+async function loadResearchPack() {
+  const targetRows = Number(els.pack.value || 50000);
+  setAgentWorking(true);
+  setPill(els.packPill, 'pack loading', 'busy');
+  els.loadPack.disabled = true;
+  setProcessStep('pack', 'active', `Loading ${formatCount(targetRows)} paper metadata rows`);
+  try {
+    const manifest = await cachedJson(`${HF.paperInteractiveRoot}/manifest.json`, 'paper pack manifest');
+    const level = chooseLevel(manifest, targetRows);
+    const path = levelJsonPath(level);
+    if (!path) throw new Error('Selected paper pack has no JSON path.');
+    setProcessStep('pack', 'active', `Fetching ${level.label || `${formatCount(level.rows)} papers`}`);
+    const rows = await cachedJson(`${HF.paperInteractiveRoot}/${path}`, level.label || `${level.rows} papers`);
+    state.packRows = Array.isArray(rows) ? rows : rows.rows || [];
+    state.packLevel = { ...level, path };
+    state.paperSemanticIndex = null;
+    els.packMetric.textContent = level.label || `${formatCount(state.packRows.length)} papers`;
+    els.rowsMetric.textContent = formatCount(state.packRows.length);
+    setPill(els.packPill, 'library ready', 'ready');
+    setProcessStep('pack', 'done', `${formatCount(state.packRows.length)} paper rows ready`);
+    log(`loaded ${formatCount(state.packRows.length)} paper rows`);
+  } catch (error) {
+    setPill(els.packPill, 'library error', 'error');
+    setProcessStep('pack', 'error', error.message || String(error));
+    log(error.message || String(error));
+  } finally {
+    els.loadPack.disabled = false;
+    await refreshStorage();
+    if (!state.processActive) setAgentWorking(false);
+  }
+}
+
+async function ensureDefaultResearchPack() {
+  if (STRUCTURE_FIXTURE || state.packRows.length) return;
+  log('loading default paper pack for retrieval');
+  await loadResearchPack();
+}
+
+function ensureWorker() {
+  if (state.worker) return state.worker;
+  state.worker = new Worker('./js/llm-worker.js?v=20260502-adaptive-spec', { type: 'module' });
+  state.worker.addEventListener('message', onWorkerMessage);
+  return state.worker;
+}
+
+function selectedDevice() {
+  if (DEV_BACKEND === 'vllm') return { backend: 'vllm', vllmEndpoint: VLLM_ENDPOINT };
+  if (DEVICE_PARAM === 'wasm' || DEVICE_PARAM === 'webgpu') return DEVICE_PARAM;
+  if (String(els.model.value || '').startsWith('modelstack:')) return 'wasm';
+  const requested = els.device.value;
+  if (requested === 'webgpu' && DEVICE_PARAM === 'webgpu') return 'webgpu';
+  return 'wasm';
+}
+
+function settleModelLoad(error = null, value = null) {
+  const resolve = state.modelLoadResolve;
+  const reject = state.modelLoadReject;
+  state.modelLoadPromise = null;
+  state.modelLoadResolve = null;
+  state.modelLoadReject = null;
+  if (error && reject) reject(error);
+  else if (resolve) resolve(value);
+}
+
+async function loadModel({ force = false, auto = false } = {}) {
+  const modelId = els.model.value;
+  if (!modelId) throw new Error('No runtime model is configured.');
+  if (!force && state.modelReady && state.loadedModelId === modelId) {
+    setProcessStep('runtime', 'done', `Using loaded ${shortText(modelId, 56)}`);
+    updateRuntimeDetail('Runtime is loaded and ready for chat.');
+    syncModelControls();
+    return state.loadedModelId;
+  }
+  if (!force && state.modelBusy && state.modelLoadPromise) {
+    updateRuntimeDetail('Runtime is still loading. Chat will start when it is ready.');
+    return state.modelLoadPromise;
+  }
+  if (force && state.worker) {
+    unloadModel({ silent: true });
+  }
+  state.modelBusy = true;
+  state.modelReady = false;
+  state.loadedModelId = '';
+  setAgentWorking(true);
+  els.modelMetric.textContent = 'Loading';
+  setPill(els.modelPill, 'runtime loading', 'busy');
+  updateRuntimeDetail(auto ? 'Loading runtime automatically...' : 'Loading runtime...');
+  syncModelControls();
+  setProcessStep('runtime', 'active', `Loading ${shortText(modelId, 56)}`);
+  state.modelLoadPromise = new Promise((resolve, reject) => {
+    state.modelLoadResolve = resolve;
+    state.modelLoadReject = reject;
+  });
+  ensureWorker().postMessage({ type: 'load', modelId, device: selectedDevice() });
+  return state.modelLoadPromise;
+}
+
+function unloadModel({ silent = false } = {}) {
+  if (state.worker) {
+    state.worker.postMessage({ type: 'unload' });
+    state.worker.terminate();
+    state.worker = null;
+  }
+  if (state.modelLoadPromise) settleModelLoad(new Error('Runtime unloaded.'));
+  state.modelBusy = false;
+  state.modelReady = false;
+  state.loadedModelId = '';
+  els.modelMetric.textContent = 'Idle';
+  setPill(els.modelPill, 'runtime idle', '');
+  updateRuntimeDetail('Runtime unloaded. Load Runtime to preload it again.');
+  syncModelControls();
+  if (!state.processActive) setAgentWorking(false);
+  if (!silent) {
+    setProcessStep('runtime', 'done', 'Runtime unloaded');
+    log('runtime unloaded');
+  }
+}
+
+function onWorkerMessage(event) {
+  const data = event.data || {};
+  if (data.type === 'progress') {
+    const total = Number(data.total || 0);
+    const loaded = Number(data.loaded || 0);
+    const suffix = total ? ` ${formatBytes(loaded)} / ${formatBytes(total)}` : '';
+    log(`${data.status || 'model'} ${data.file || ''}${suffix}`.trim());
+    const detail = `${data.status || 'loading'} ${shortText(data.file || '', 42)}${suffix}`;
+    updateRuntimeDetail(detail);
+    setProcessStep('runtime', 'active', detail);
+  } else if (data.type === 'status') {
+    const message = data.message || 'model status';
+    log(message);
+    if (state.utilityGenerationRequests.size && /generat|decoder|encoding prompt/i.test(message)) {
+      setProcessStep('select', 'active', message);
+    } else if (/generat/i.test(message)) {
+      setProcessStep('generate', 'active', message);
+    } else if (/loading|using local|bundle|dense tensor|bitnet layer|building|preparing|runtime ready|webgpu|wasm|tokenizer|manifest|weights|uploading|shader/i.test(message)) {
+      updateRuntimeDetail(message);
+      setProcessStep('runtime', 'active', message);
+    }
+  } else if (data.type === 'loaded') {
+    state.modelReady = true;
+    state.modelBusy = false;
+    state.loadedModelId = data.modelId || els.model.value;
+    els.modelMetric.textContent = data.device === 'vllm' ? 'vLLM' : data.device === 'webgpu' ? 'WebGPU' : 'WASM';
+    setPill(els.modelPill, 'runtime ready', 'ready');
+    updateRuntimeDetail(`${data.device || 'runtime'} ready. WASM is the primary on-device runtime.`);
+    log(`loaded ${state.loadedModelId} (${data.dtype || 'default'})`);
+    setProcessStep('runtime', 'done', `${data.device || 'runtime'} ready`);
+    settleModelLoad(null, state.loadedModelId);
+    syncModelControls();
+    if (!state.processActive) setAgentWorking(false);
+    refreshStorage();
+  } else if (data.type === 'generated') {
+    const text = data.text || 'No answer generated.';
+    const request = state.utilityGenerationRequests.get(Number(data.generationId || 0));
+    if (request) {
+      state.utilityGenerationRequests.delete(Number(data.generationId || 0));
+      request.resolve(text);
+      return;
+    }
+    if (!finalizeAssistantResponse(text)) log('ignored late model response after fallback');
+  } else if (data.type === 'embedded') {
+    const request = state.neuralEmbeddingRequests.get(data.requestId);
+    if (request) {
+      state.neuralEmbeddingRequests.delete(data.requestId);
+      request.resolve(Float32Array.from(data.embedding || []));
+    }
+  } else if (data.type === 'cancelled') {
+    log('cancelled slow generation; runtime stayed loaded');
+    if (state.modelReady) updateRuntimeDetail('Runtime is still loaded and ready for the next chat.');
+  } else if (data.type === 'unloaded') {
+    state.modelReady = false;
+    state.modelBusy = false;
+    state.loadedModelId = '';
+    els.modelMetric.textContent = 'Idle';
+    setPill(els.modelPill, 'runtime idle', '');
+    updateRuntimeDetail('Runtime unloaded.');
+    settleModelLoad(new Error('Runtime unloaded.'));
+    syncModelControls();
+  } else if (data.type === 'error') {
+    for (const [requestId, request] of state.utilityGenerationRequests.entries()) {
+      state.utilityGenerationRequests.delete(requestId);
+      request.reject(new Error(data.message || 'model error'));
+    }
+    for (const [requestId, request] of state.neuralEmbeddingRequests.entries()) {
+      state.neuralEmbeddingRequests.delete(requestId);
+      request.reject(new Error(data.message || 'model error'));
+    }
+    const error = new Error(data.message || 'model error');
+    const wasLoading = state.modelBusy;
+    if (wasLoading) settleModelLoad(error);
+    state.modelBusy = false;
+    setControlsBusy(false);
+    if (!state.processActive) setAgentWorking(false);
+    setPill(els.modelPill, 'runtime error', 'error');
+    updateRuntimeDetail(data.message || 'Runtime error.');
+    syncModelControls();
+    setProcessStep(state.modelReady ? 'generate' : 'runtime', 'error', data.message || 'model error');
+    if (wasLoading) {
+      log(data.message || 'model error');
+      return;
+    }
+    const rows = state.activeTurn?.contextRows || state.pendingContextRows || [];
+    if (rows.length) {
+      finalizeAssistantResponse('', {
+        fallback: true,
+        reason: `Local model error: ${data.message || 'unknown error'}`,
+      });
+    } else {
+      finishProcessTrace('Error');
+      appendMessage('assistant', `Local model error: ${data.message || 'unknown error'}`);
+    }
+    log(data.message || 'model error');
+  }
+}
+
+function generateUtilityText(prompt, options = {}) {
+  const generationId = ++state.generationRunId;
+  const promise = new Promise((resolve, reject) => {
+    state.utilityGenerationRequests.set(generationId, { resolve, reject });
+  });
+  ensureWorker().postMessage({
+    type: 'generate',
+    generationId,
+    prompt,
+    options,
+  });
+  return promise;
+}
+
+function normalizeText(value) {
+  return String(value || '').toLowerCase();
+}
+
+function normalizeSearchText(value) {
+  return normalizeText(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function queryTokens(query) {
+  return normalizeSearchText(query)
+    .split(/\s+/)
+    .filter((token) => token.length > 1);
+}
+
+function queryContentTokens(query) {
+  const tokens = queryTokens(query);
+  const content = tokens.filter((token) => !RETRIEVAL_INTENT_TERMS.has(token));
+  return content.length ? content : tokens;
+}
+
+function requiresFreshResearchContext(userText) {
+  if (isSelectedPaperFollowup(userText)) return false;
+  const normalized = normalizeSearchText(userText);
+  if (!normalized) return false;
+  const tokens = tokenSet(userText);
+  const asksForEvidence =
+    hasToken(tokens, 'paper')
+    || hasToken(tokens, 'study')
+    || hasToken(tokens, 'source')
+    || hasToken(tokens, 'evidence')
+    || hasToken(tokens, 'citation')
+    || hasTokenPhrase(normalized, 'literature')
+    || hasTokenPhrase(normalized, 'arxiv');
+  const asksForRecommendation =
+    hasToken(tokens, 'best')
+    || hasToken(tokens, 'top')
+    || hasToken(tokens, 'recommend')
+    || hasToken(tokens, 'survey')
+    || hasToken(tokens, 'compare');
+  return asksForEvidence || (asksForRecommendation && queryContentTokens(userText).length >= 2);
+}
+
+function selectedContextTarget(userText) {
+  if (!state.paperContextRows.length) return null;
+  const normalized = normalizeSearchText(userText);
+  if (!normalized) return null;
+  const tokens = queryContentTokens(userText);
+  const hasPaperHandle = /\b(paper|study|work|article|source|evidence)\b/.test(normalized);
+  const hasReference = /\b(this|that|it|its|above|loaded|selected|context|current)\b/.test(normalized);
+  const hasFollowupVerb = /\b(tell|explain|explani|summarize|describe|detail|details|detailed|more|about|meaning|takeaway|takeaways|method|results|limitations)\b/.test(normalized);
+  const mostlyContextWords = tokens.length <= 3 && hasFollowupVerb;
+  const selectedPronounFollowup = hasReference && hasFollowupVerb && tokens.length <= 5;
+  const selectedPaperPhrase = /\b(this|that|selected|loaded|above)\s+(paper|study|work|article|source|evidence)\b/.test(normalized)
+    || /\b(paper|study|work|article|source|evidence)\s+(above|selected|loaded|in\s+context|context)\b/.test(normalized);
+  const contextPaperPhrase = hasPaperHandle && hasReference && hasFollowupVerb;
+  if (selectedPaperPhrase || contextPaperPhrase || mostlyContextWords || selectedPronounFollowup) {
+    return {
+      type: 'selected_paper',
+      rows: state.paperContextRows,
+      reason: 'user is referring to paper context already added to chat',
+    };
+  }
+  return null;
+}
+
+function tokenSet(value) {
+  return new Set(queryTokens(value));
+}
+
+function hasToken(tokens, token) {
+  return tokens.has(token) || (token.endsWith('s') && tokens.has(token.slice(0, -1)));
+}
+
+function hasTokenPhrase(text, phrase) {
+  return normalizeSearchText(text).includes(normalizeSearchText(phrase));
+}
+
+function paperSearchText(row) {
+  return normalizeSearchText([
+    row.title,
+    row.paper_id,
+    row.canonical_paper_id,
+    row.primary_category,
+    row.category_list,
+    row.categories,
+    row.year,
+    row.abstract,
+    row.summary,
+    row.context_text,
+  ].filter(Boolean).join(' '));
+}
+
+function tokenCoveredByText(text, token) {
+  if (hasTokenPhrase(text, token)) return true;
+  if (token === 'llm') return hasTokenPhrase(text, 'large language model') || hasTokenPhrase(text, 'large language models');
+  if (token === 'agent') return hasTokenPhrase(text, 'agents') || hasTokenPhrase(text, 'multiagent');
+  if (token === 'multi') return hasTokenPhrase(text, 'multi agent') || hasTokenPhrase(text, 'multiagent');
+  return false;
+}
+
+function queryCoverage(row, query) {
+  const text = paperSearchText(row);
+  const required = queryContentTokens(query);
+  const covered = required.filter((token) => tokenCoveredByText(text, token));
+  return { required, covered };
+}
+
+function rowMatchesQuery(row, query) {
+  const { required, covered } = queryCoverage(row, query);
+  if (!required.length) return true;
+  if (required.includes('llm') && !covered.includes('llm')) return false;
+  if (required.length >= 3) return covered.length >= Math.min(3, required.length);
+  return covered.length >= Math.min(1, required.length);
+}
+
+function isRecommendationQuery(query) {
+  const normalized = normalizeSearchText(query);
+  return /\b(best|top|recommend|recommendation|survey|overview|which)\b/.test(normalized);
+}
+
+function scorePaper(row, query, tokens) {
+  const title = normalizeSearchText(row.title);
+  const paperId = normalizeSearchText(row.paper_id || row.canonical_paper_id);
+  const category = normalizeSearchText(row.primary_category || row.category_list || row.categories);
+  const abstract = normalizeSearchText(row.abstract || row.summary || row.context_text || '');
+  const haystack = `${title} ${paperId} ${category} ${row.year || ''} ${abstract}`;
+  const titleTokens = tokenSet(title);
+  const paperTokens = tokenSet(paperId);
+  const categoryTokens = tokenSet(category);
+  const abstractTokens = tokenSet(abstract);
+  let score = 0;
+  const phrase = normalizeSearchText(query);
+  if (phrase && title.includes(phrase)) score += 22;
+  if (paperId.includes(phrase)) score += 14;
+  for (const token of tokens) {
+    if (hasToken(titleTokens, token)) score += 8;
+    if (hasToken(paperTokens, token)) score += 4;
+    if (hasToken(categoryTokens, token)) score += 3;
+    if (hasToken(abstractTokens, token)) score += 3;
+    if (hasTokenPhrase(haystack, token)) score += 1;
+  }
+  const requiredTokens = queryContentTokens(query);
+  const covered = requiredTokens.filter((token) => hasTokenPhrase(haystack, token));
+  if (covered.length >= 2) score += covered.length * 3;
+  if (requiredTokens.length >= 3 && covered.length < 2) score *= 0.35;
+  if (tokens.includes('llm') && !hasTokenPhrase(haystack, 'llm') && !hasTokenPhrase(haystack, 'large language model')) {
+    score *= 0.45;
+  }
+  return score;
+}
+
+function rankRetrievedRows(query, rows) {
+  return rows.map((row) => {
+    const lexical = scorePaper(row, query, queryContentTokens(query));
+    const semantic = Number(row.semantic_score || 0);
+    const selected = String(row.source || '').includes('selected_paper') ? 1000 : 0;
+    const rankScore = selected + lexical * 1.8 + semantic * 5;
+    return {
+      ...row,
+      lexical_score: Math.max(Number(row.lexical_score || 0), lexical),
+      retrieval_score: Math.max(Number(row.retrieval_score || 0), rankScore),
+      rank_score: rankScore,
+    };
+  }).sort((a, b) => Number(b.rank_score || 0) - Number(a.rank_score || 0));
+}
+
+function paperKey(row) {
+  return String(row.paper_idx ?? row.paper_id ?? row.canonical_paper_id ?? row.arxiv_id ?? row.title ?? '');
+}
+
+function isPunctuation(char) {
+  return /[\p{P}\p{S}]/u.test(char);
+}
+
+function basicTokenize(text) {
+  const cleaned = String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const spaced = [];
+  for (const char of cleaned) {
+    if (/\s/u.test(char)) spaced.push(' ');
+    else if (isPunctuation(char)) spaced.push(' ', char, ' ');
+    else spaced.push(char);
+  }
+  return spaced.join('').split(/\s+/).filter(Boolean);
+}
+
+function parseVocab(text) {
+  const vocab = new Map();
+  String(text || '').split(/\r?\n/).forEach((token, index) => {
+    if (token) vocab.set(token, index);
+  });
+  return vocab;
+}
+
+function wordPieceTokenize(token, vocab) {
+  if (vocab.has(token)) return [token];
+  if (token.length > 100) return ['[UNK]'];
+  const pieces = [];
+  let start = 0;
+  while (start < token.length) {
+    let end = token.length;
+    let current = null;
+    while (start < end) {
+      const candidate = `${start > 0 ? '##' : ''}${token.slice(start, end)}`;
+      if (vocab.has(candidate)) {
+        current = candidate;
+        break;
+      }
+      end -= 1;
+    }
+    if (!current) return ['[UNK]'];
+    pieces.push(current);
+    start = end;
+  }
+  return pieces;
+}
+
+function encodeWordPiece(text, vocab, maxLength = SEMANTIC_QUERY_TOKENS) {
+  const clsId = vocab.get('[CLS]') ?? 101;
+  const sepId = vocab.get('[SEP]') ?? 102;
+  const padId = vocab.get('[PAD]') ?? 0;
+  const unkId = vocab.get('[UNK]') ?? 100;
+  const pieces = [];
+  for (const token of basicTokenize(text)) {
+    pieces.push(...wordPieceTokenize(token, vocab));
+    if (pieces.length >= maxLength - 2) break;
+  }
+  const ids = [clsId, ...pieces.slice(0, maxLength - 2).map((piece) => vocab.get(piece) ?? unkId), sepId];
+  const attention = new Array(ids.length).fill(1);
+  while (ids.length < maxLength) {
+    ids.push(padId);
+    attention.push(0);
+  }
+  return {
+    inputIds: ids,
+    attentionMask: attention,
+    tokenTypeIds: new Array(maxLength).fill(0),
+  };
+}
+
+function int64Tensor(ort, values, dims) {
+  return new ort.Tensor('int64', BigInt64Array.from(values, (value) => BigInt(value)), dims);
+}
+
+function normalizeVector(values) {
+  let sum = 0;
+  for (const value of values) sum += Number(value) * Number(value);
+  const norm = Math.sqrt(sum) || 1;
+  const out = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i++) out[i] = Number(values[i]) / norm;
+  return out;
+}
+
+async function loadOrtRuntime() {
+  if (state.ortRuntime) return state.ortRuntime;
+  const ort = await import(`${ORT_CDN_ROOT}/ort.wasm.min.mjs`);
+  ort.env.logLevel = 'error';
+  ort.env.wasm ??= {};
+  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.proxy = false;
+  ort.env.wasm.wasmPaths = `${ORT_CDN_ROOT}/`;
+  state.ortRuntime = ort;
+  return ort;
+}
+
+async function ensurePaperEmbeddingModel() {
+  if (state.paperEmbeddingModel) return state.paperEmbeddingModel;
+  setPill(els.packPill, 'M1 loading', 'busy');
+  const ort = await loadOrtRuntime();
+  const [modelBuffer, vocabText] = await Promise.all([
+    cachedArrayBuffer(`${HF.paperEmbeddingLiteRoot}/onnx/model.int8.onnx`, 'M1-Lite ONNX model'),
+    cachedText(`${HF.paperEmbeddingLiteRoot}/tokenizer/vocab.txt`, 'M1-Lite vocab'),
+  ]);
+  const session = await ort.InferenceSession.create(new Uint8Array(modelBuffer), {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'basic',
+    enableMemPattern: false,
+    executionMode: 'sequential',
+  });
+  state.paperEmbeddingModel = {
+    ort,
+    session,
+    vocab: parseVocab(vocabText),
+    dimension: 0,
+  };
+  log('M1-Lite paper embedding model ready');
+  return state.paperEmbeddingModel;
+}
+
+async function embedSemanticQuery(text) {
+  const model = await ensurePaperEmbeddingModel();
+  const encoded = encodeWordPiece(text, model.vocab, SEMANTIC_QUERY_TOKENS);
+  const feeds = {
+    input_ids: int64Tensor(model.ort, encoded.inputIds, [1, encoded.inputIds.length]),
+    attention_mask: int64Tensor(model.ort, encoded.attentionMask, [1, encoded.attentionMask.length]),
+    token_type_ids: int64Tensor(model.ort, encoded.tokenTypeIds, [1, encoded.tokenTypeIds.length]),
+  };
+  const output = await model.session.run(feeds);
+  const tensor = output.embedding || output[Object.keys(output)[0]];
+  const embedding = normalizeVector(tensor.data);
+  model.dimension = embedding.length;
+  return embedding;
+}
+
+async function ensurePaperSemanticManifest() {
+  if (state.paperSemanticManifest) return state.paperSemanticManifest;
+  state.paperSemanticManifest = await cachedJson(`${HF.paperSemanticRoot}/manifest.json`, 'paper semantic manifest');
+  return state.paperSemanticManifest;
+}
+
+function currentSemanticLevel(manifest) {
+  const levels = manifest?.levels || [];
+  const currentRows = state.packRows.length;
+  const currentPath = levelJsonPath(state.packLevel);
+  const currentStem = fileStem(currentPath);
+  return levels.find((level) => (
+    level.level_path === currentPath
+    || fileStem(level.level_path) === currentStem
+    || Number(level.rows || 0) === currentRows
+  ));
+}
+
+async function ensurePaperSemanticIndex(queryDimension) {
+  const manifest = await ensurePaperSemanticManifest();
+  const level = currentSemanticLevel(manifest);
+  if (!level?.path) throw new Error('No row-aligned semantic index for the loaded paper pack.');
+  const dimension = Number(level.dimension || manifest.dimension || 0);
+  if (dimension !== queryDimension) {
+    throw new Error(`Embedding dimension mismatch: query=${queryDimension}, index=${dimension}.`);
+  }
+  const key = `${level.path}:${level.rows}:${dimension}`;
+  if (state.paperSemanticIndex?.key === key) return state.paperSemanticIndex;
+  setPill(els.packPill, 'vectors loading', 'busy');
+  const buffer = await cachedArrayBuffer(`${HF.paperSemanticRoot}/${level.path}`, `M1 vectors ${formatCount(level.rows)}`);
+  const data = new Int8Array(buffer);
+  const expected = Number(level.rows || 0) * dimension;
+  if (data.length !== expected) {
+    throw new Error(`Semantic index size mismatch: expected ${formatCount(expected)} bytes, got ${formatCount(data.length)}.`);
+  }
+  state.paperSemanticIndex = { key, data, rows: Number(level.rows || 0), dimension, scale: Number(level.scale || manifest.scale || 127) || 127 };
+  log(`loaded M1 semantic vectors for ${formatCount(level.rows)} papers`);
+  return state.paperSemanticIndex;
+}
+
+function dotQueryInt8(query, data, offset, dimension, scale = 127) {
+  let score = 0;
+  for (let i = 0; i < dimension; i++) score += query[i] * (data[offset + i] / scale);
+  return score;
+}
+
+function dotQueryInt8Scaled(query, data, offset, dimension, scale) {
+  let score = 0;
+  const rowScale = Number(scale || 1 / 127);
+  for (let i = 0; i < dimension; i++) score += query[i] * data[offset + i] * rowScale;
+  return score;
+}
+
+function dotQueryTernaryPacked(query, data, rowIndex, dimension, packedDimension, scale) {
+  let score = 0;
+  const rowOffset = rowIndex * packedDimension;
+  const rowScale = Number(scale || 1);
+  for (let i = 0; i < dimension; i += 1) {
+    const byte = data[rowOffset + (i >> 2)];
+    const code = (byte >> ((i & 3) * 2)) & 3;
+    if (code === 1) score += query[i];
+    else if (code === 2) score -= query[i];
+  }
+  return score * rowScale;
+}
+
+function dotQueryTernaryGrouped(query, data, rowIndex, dimension, packedDimension, scales, groupSize, groupCount) {
+  let score = 0;
+  const rowOffset = rowIndex * packedDimension;
+  const scaleOffset = rowIndex * groupCount;
+  const width = Number(groupSize || 32);
+  for (let i = 0; i < dimension; i += 1) {
+    const byte = data[rowOffset + (i >> 2)];
+    const code = (byte >> ((i & 3) * 2)) & 3;
+    if (code === 0) continue;
+    const scale = Number(scales[scaleOffset + Math.floor(i / width)] || 1);
+    if (code === 1) score += query[i] * scale;
+    else if (code === 2) score -= query[i] * scale;
+  }
+  return score;
+}
+
+function dotQueryTernaryGroupedSigned(query, data, rowIndex, dimension, packedDimension, scales, groupSize, groupCount) {
+  let score = 0;
+  const rowOffset = rowIndex * packedDimension;
+  const scaleOffset = rowIndex * groupCount * 2;
+  const width = Number(groupSize || 32);
+  for (let i = 0; i < dimension; i += 1) {
+    const byte = data[rowOffset + (i >> 2)];
+    const code = (byte >> ((i & 3) * 2)) & 3;
+    if (code === 0) continue;
+    const group = Math.floor(i / width);
+    if (code === 1) score += query[i] * Number(scales[scaleOffset + group * 2] || 1);
+    else if (code === 2) score -= query[i] * Number(scales[scaleOffset + group * 2 + 1] || 1);
+  }
+  return score;
+}
+
+function dotQueryTernaryGroupedSignedResidual(
+  query,
+  data,
+  rowIndex,
+  dimension,
+  packedDimension,
+  scales,
+  groupSize,
+  groupCount,
+  residualIndices,
+  residualValues,
+  residualDims,
+) {
+  let score = dotQueryTernaryGroupedSigned(query, data, rowIndex, dimension, packedDimension, scales, groupSize, groupCount);
+  const offset = rowIndex * residualDims;
+  for (let i = 0; i < residualDims; i += 1) {
+    const dim = residualIndices[offset + i];
+    score += query[dim] * residualValues[offset + i];
+  }
+  return score;
+}
+
+function float16ToFloat32(value) {
+  const sign = (value & 0x8000) ? -1 : 1;
+  const exponent = (value >> 10) & 0x1f;
+  const fraction = value & 0x03ff;
+  if (exponent === 0) return sign * Math.pow(2, -14) * (fraction / 1024);
+  if (exponent === 31) return fraction ? NaN : sign * Infinity;
+  return sign * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+}
+
+function decodeFloatArray(buffer, dtype = 'f32') {
+  if (String(dtype || 'f32').toLowerCase() !== 'f16') return new Float32Array(buffer);
+  const half = new Uint16Array(buffer);
+  const out = new Float32Array(half.length);
+  for (let i = 0; i < half.length; i += 1) out[i] = float16ToFloat32(half[i]);
+  return out;
+}
+
+function neuralMemoryFormatEntry(manifest) {
+  const formats = manifest?.vector_formats || {};
+  const requested = String(URL_PARAMS.get('neuralMemoryFormat') || '').trim().toLowerCase();
+  const primary = String(manifest?.primary_vector_format || '').trim().toLowerCase();
+  const format = requested && formats[requested] ? requested : primary || (
+    String(manifest?.vector_dtype || '').includes('ternary') ? 'ternary' : 'int8'
+  );
+  return {
+    format,
+    entry: formats[format] || manifest || {},
+  };
+}
+
+async function loadNeuralMemoryPack() {
+  if (!NEURAL_MEMORY_ENABLED) return null;
+  if (state.neuralMemoryPack) return state.neuralMemoryPack;
+  if (!NEURAL_MEMORY_PACK_URL) throw new Error('No neural memory pack URL configured.');
+  setProcessStep('pack', 'active', 'Loading neural memory pack');
+  const base = new URL('.', NEURAL_MEMORY_PACK_URL).href;
+  const manifest = await cachedJson(NEURAL_MEMORY_PACK_URL, 'neural memory manifest');
+  const { format, entry } = neuralMemoryFormatEntry(manifest);
+  const [vectorsBuffer, scalesBuffer, metadataText] = await Promise.all([
+    cachedArrayBuffer(new URL(entry.vector_path || manifest.vector_path, base).href, `neural memory ${format} vectors`),
+    cachedArrayBuffer(new URL(entry.scale_path || manifest.scale_path, base).href, `neural memory ${format} scales`),
+    cachedText(new URL(manifest.metadata_path, base).href, 'neural memory metadata'),
+  ]);
+  const metadata = metadataText
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const dimension = Number(manifest.dim || entry.dim || 0);
+  const isTernary = (
+    format === 'ternary'
+    || format === 'ternary_grouped'
+    || format === 'ternary_grouped_signed'
+    || format === 'ternary_grouped_signed_residual'
+  );
+  const packedDimension = isTernary
+    ? Number(entry.packed_dim || Math.ceil(dimension / 4))
+    : dimension;
+  const vectorArray = isTernary ? new Uint8Array(vectorsBuffer) : new Int8Array(vectorsBuffer);
+  let residualIndices = null;
+  let residualValues = null;
+  if (format === 'ternary_grouped_signed_residual') {
+    const [indexBuffer, valueBuffer] = await Promise.all([
+      cachedArrayBuffer(new URL(entry.residual_index_path, base).href, 'neural memory residual indices'),
+      cachedArrayBuffer(new URL(entry.residual_value_path, base).href, 'neural memory residual values'),
+    ]);
+    residualIndices = new Uint16Array(indexBuffer);
+    residualValues = decodeFloatArray(valueBuffer, entry.residual_value_dtype === 'float16' ? 'f16' : 'f32');
+  }
+  state.neuralMemoryPack = {
+    manifest,
+    vectorFormat: format,
+    vectorEntry: entry,
+    vectors: vectorArray,
+    scales: decodeFloatArray(scalesBuffer, entry.scale_dtype || 'f32'),
+    residualIndices,
+    residualValues,
+    residualDims: Number(entry.residual_dims || 0),
+    metadata,
+    dimension,
+    packedDimension,
+    groupSize: Number(entry.group_size || 0),
+    groupCount: Number(entry.group_count || 0),
+    rows: Number(manifest.row_count || metadata.length || 0),
+  };
+  setProcessStep('pack', 'done', `Loaded ${formatCount(state.neuralMemoryPack.rows)} ${format} neural memory vectors`);
+  log(`loaded ${format} neural memory pack with ${formatCount(state.neuralMemoryPack.rows)} vectors`);
+  return state.neuralMemoryPack;
+}
+
+function requestNeuralQueryEmbedding(text) {
+  const requestId = `embed-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const worker = ensureWorker();
+  const promise = new Promise((resolve, reject) => {
+    state.neuralEmbeddingRequests.set(requestId, { resolve, reject });
+    setTimeout(() => {
+      const request = state.neuralEmbeddingRequests.get(requestId);
+      if (!request) return;
+      state.neuralEmbeddingRequests.delete(requestId);
+      request.reject(new Error('neural retrieval embedding timed out'));
+    }, 30000);
+  });
+  worker.postMessage({ type: 'embed', requestId, text, maxEncoderTokens: SEMANTIC_QUERY_TOKENS });
+  return promise;
+}
+
+async function neuralMemorySearch(query) {
+  if (!NEURAL_MEMORY_ENABLED || !String(state.loadedModelId || '').startsWith('modelstack:')) return [];
+  const config = modeConfig();
+  const pack = await loadNeuralMemoryPack();
+  if (!pack?.rows || !pack.dimension) return [];
+  setProcessStep('embed', 'active', 'Embedding query with AgentKernel BitNet');
+  const queryEmbedding = await requestNeuralQueryEmbedding(query);
+  if (queryEmbedding.length !== pack.dimension) {
+    throw new Error(`Neural memory dimension mismatch: query=${queryEmbedding.length}, index=${pack.dimension}.`);
+  }
+  setProcessStep('embed', 'done', `${formatCount(queryEmbedding.length)}D BitNet query vector`);
+  setProcessStep('rank', 'active', `Scanning ${formatCount(pack.rows)} ${pack.vectorFormat || 'int8'} neural memory vectors`);
+  const top = [];
+  const isTernary = (
+    pack.vectorFormat === 'ternary'
+    || pack.vectorFormat === 'ternary_grouped'
+    || pack.vectorFormat === 'ternary_grouped_signed'
+    || pack.vectorFormat === 'ternary_grouped_signed_residual'
+  );
+  const rowWidth = isTernary ? pack.packedDimension : pack.dimension;
+  const limit = Math.min(pack.rows, pack.metadata.length, Math.floor(pack.vectors.length / rowWidth));
+  for (let i = 0; i < limit; i += 1) {
+    let score = 0;
+    if (pack.vectorFormat === 'ternary_grouped_signed_residual') {
+      score = dotQueryTernaryGroupedSignedResidual(
+        queryEmbedding,
+        pack.vectors,
+        i,
+        pack.dimension,
+        pack.packedDimension,
+        pack.scales,
+        pack.groupSize,
+        pack.groupCount,
+        pack.residualIndices,
+        pack.residualValues,
+        pack.residualDims,
+      );
+    } else if (pack.vectorFormat === 'ternary_grouped_signed') {
+      score = dotQueryTernaryGroupedSigned(
+        queryEmbedding,
+        pack.vectors,
+        i,
+        pack.dimension,
+        pack.packedDimension,
+        pack.scales,
+        pack.groupSize,
+        pack.groupCount,
+      );
+    } else if (pack.vectorFormat === 'ternary_grouped') {
+      score = dotQueryTernaryGrouped(
+        queryEmbedding,
+        pack.vectors,
+        i,
+        pack.dimension,
+        pack.packedDimension,
+        pack.scales,
+        pack.groupSize,
+        pack.groupCount,
+      );
+    } else if (pack.vectorFormat === 'ternary') {
+      score = dotQueryTernaryPacked(queryEmbedding, pack.vectors, i, pack.dimension, pack.packedDimension, pack.scales[i]);
+    } else {
+      score = dotQueryInt8Scaled(queryEmbedding, pack.vectors, i * pack.dimension, pack.dimension, pack.scales[i]);
+    }
+    insertTopScore(top, { row: pack.metadata[i], score }, config.semanticTopK);
+    if (i > 0 && i % SEMANTIC_SCAN_YIELD_ROWS === 0) await wait(0);
+  }
+  top.sort((a, b) => b.score - a.score);
+  setProcessStep('rank', 'done', `${formatCount(top.length)} BitNet neural candidates`);
+  return top.map((item) => ({
+    ...item.row,
+    retrieval_score: item.score,
+    semantic_score: item.score,
+    source: 'agentkernel_bitnet_memory',
+  }));
+}
+
+function insertTopScore(top, item, limit) {
+  if (top.length < limit) {
+    top.push(item);
+    return;
+  }
+  let minIndex = 0;
+  for (let i = 1; i < top.length; i++) {
+    if (top[i].score < top[minIndex].score) minIndex = i;
+  }
+  if (item.score > top[minIndex].score) top[minIndex] = item;
+}
+
+async function semanticSearchPack(query) {
+  if (!state.packRows.length && !NEURAL_MEMORY_ENABLED) return [];
+  try {
+    if (NEURAL_MEMORY_ENABLED) {
+      const neuralRows = await neuralMemorySearch(query);
+      if (neuralRows.length) return neuralRows;
+    }
+    const config = modeConfig();
+    setProcessStep('embed', 'active', 'Embedding query with M1-Lite');
+    const queryEmbedding = await embedSemanticQuery(query);
+    setProcessStep('embed', 'done', `${formatCount(queryEmbedding.length)}D query vector`);
+    setProcessStep('rank', 'active', `Scanning ${formatCount(state.packRows.length)} paper vectors`);
+    const index = await ensurePaperSemanticIndex(queryEmbedding.length);
+    const limit = Math.min(state.packRows.length, index.rows);
+    const top = [];
+    for (let i = 0; i < limit; i++) {
+      const row = state.packRows[i];
+      const score = dotQueryInt8(queryEmbedding, index.data, i * index.dimension, index.dimension, index.scale);
+      insertTopScore(top, { row, score }, config.semanticTopK);
+      if (i > 0 && i % SEMANTIC_SCAN_YIELD_ROWS === 0) await wait(0);
+    }
+    top.sort((a, b) => b.score - a.score);
+    setProcessStep('rank', 'done', `${formatCount(top.length)} semantic candidates`);
+    log(`M1 semantic ranked ${formatCount(limit)} papers`);
+    return top.map((item) => ({
+      ...item.row,
+      retrieval_score: item.score,
+      semantic_score: item.score,
+      source: 'm1_semantic',
+    }));
+  } catch (error) {
+    setProcessStep('rank', 'error', error.message || String(error));
+    log(`semantic retrieval fallback: ${error.message || String(error)}`);
+    return [];
+  }
+}
+
+function mergeRetrievedRows(groups) {
+  const byKey = new Map();
+  for (const rows of groups) {
+    for (const row of rows || []) {
+      const key = paperKey(row);
+      if (!key) continue;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, row);
+        continue;
+      }
+      byKey.set(key, {
+        ...existing,
+        ...row,
+        source: [existing.source, row.source].filter(Boolean).join('+'),
+        retrieval_score: Math.max(Number(existing.retrieval_score || 0), Number(row.retrieval_score || 0)),
+        semantic_score: Math.max(Number(existing.semantic_score || 0), Number(row.semantic_score || 0)),
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
+function lexicalPackSearch(query, tokens, limit = 12) {
+  if (!state.packRows.length) return [];
+  setProcessStep('lexical', 'active', `Scanning ${formatCount(state.packRows.length)} titles and abstracts`);
+  const contentTokens = queryContentTokens(query);
+  const matches = state.packRows
+    .map((row) => ({ row, score: scorePaper(row, query, contentTokens) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((item) => ({ ...item.row, retrieval_score: item.score, lexical_score: item.score, source: 'local_pack' }));
+  setProcessStep('lexical', 'done', `${formatCount(matches.length)} lexical matches`);
+  return matches;
+}
+
+function structureFixtureRows() {
+  return [
+    {
+      paper_idx: 'structure-fixture-1',
+      paper_id: '1706.03762',
+      canonical_paper_id: '1706.03762',
+      title: 'Attention Is All You Need',
+      primary_category: 'cs.CL',
+      categories: 'cs.CL cs.LG',
+      year: 2017,
+      source: 'structure_fixture',
+      abstract: 'The Transformer architecture uses attention mechanisms without recurrence or convolution. This fixture lets the interface verify evidence cards, arXiv links, citation chips, and context compilation without depending on a remote dataset request.',
+      context_text: 'The Transformer architecture uses scaled dot-product attention and multi-head attention to model sequence relationships. This local fixture is only for interface structure checks.',
+    },
+  ];
+}
+
+function fullPaperText(row) {
+  return String(row.text || row.full_text || row.body || '');
+}
+
+function contextExcerpt(row, query, limit = 1200, preferFullText = false) {
+  const fullText = fullPaperText(row).replace(/\s+/g, ' ').trim();
+  const preferred = preferFullText ? '' : String(row.context_text || row.abstract || row.summary || '');
+  if (preferred.trim()) return preferred.replace(/\s+/g, ' ').trim().slice(0, limit);
+  const text = fullText || String(row.abstract || row.summary || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const tokens = queryTokens(query).filter((token) => token.length > 2);
+  const lower = text.toLowerCase();
+  let best = -1;
+  for (const token of tokens) {
+    const idx = lower.indexOf(token);
+    if (idx >= 0 && (best < 0 || idx < best)) best = idx;
+  }
+  const start = Math.max(0, (best < 0 ? 0 : best) - 350);
+  return text.slice(start, start + limit);
+}
+
+async function retrieveContext(query, options = {}) {
+  const onCandidates = typeof options.onCandidates === 'function' ? options.onCandidates : null;
+  if (STRUCTURE_FIXTURE) {
+    log('using local structure-check evidence fixture');
+    setProcessStep('lookup', 'done', 'Using fixture evidence');
+    setProcessStep('compact', 'done', '1 fixture evidence item');
+    return structureFixtureRows(query);
+  }
+  setProcessStep('lookup', 'active', 'Preparing research lookup');
+  const config = modeConfig();
+  if (isSelectedPaperFollowup(query)) {
+    const selectedRows = state.paperContextRows.map((row) => ({ ...row, source: row.source || 'selected_paper' }));
+    setProcessStep('lookup', 'active', `Using ${formatCount(selectedRows.length)} selected paper context item${selectedRows.length === 1 ? '' : 's'}`);
+    const enrichedSelected = [];
+    for (const row of selectedRows.slice(0, MAX_SELECTED_PAPERS)) {
+      const hydrated = await enrichPaper(row).catch(() => row);
+      enrichedSelected.push({
+        ...hydrated,
+        source: 'selected_paper',
+        context_text: contextExcerpt(hydrated, query, config.selectedExcerptChars, true),
+      });
+    }
+    setProcessStep('lookup', 'done', `${formatCount(enrichedSelected.length)} selected paper context item${enrichedSelected.length === 1 ? '' : 's'}`);
+    setProcessStep('compact', 'active', `Compacting ${formatCount(enrichedSelected.length)} selected paper context item${enrichedSelected.length === 1 ? '' : 's'}`);
+    setProcessStep('compact', 'done', `${formatCount(enrichedSelected.length)} excerpts prepared`);
+    return enrichedSelected;
+  }
+  await ensureDefaultResearchPack();
+  const tokens = queryTokens(query);
+  let rows = [];
+  if (state.packRows.length) rows = rankRetrievedRows(query, mergeRetrievedRows([await semanticSearchPack(query), lexicalPackSearch(query, tokens)]));
+  if (!rows.length && HF_DATASET_SEARCH_ENABLED) {
+    setProcessStep('lookup', 'active', `Remote search in ${HF.paperTextDataset}`);
+    rows = (await hfSearchRows(HF.paperTextDataset, query, config.hfSearchRows)).map((row) => ({ ...row, source: 'hf_search' }));
+  } else if (!rows.length && !state.packRows.length) {
+    log('remote Hugging Face dataset search skipped; load a paper pack or add ?hfSearch=1 to enable it');
+  }
+  const enriched = [];
+  const rankedCandidates = rankRetrievedRows(query, rows);
+  const relevantCandidates = isRecommendationQuery(query)
+    ? rankedCandidates.filter((row) => rowMatchesQuery(row, query))
+    : rankedCandidates;
+  const candidates = relevantCandidates.slice(0, Math.max(config.contextItems, config.candidateFloor));
+  if (onCandidates && candidates.length) {
+    onCandidates(candidates);
+  }
+  setProcessStep('lookup', 'active', `${formatCount(candidates.length)} candidates; hydrating top ${formatCount(Math.min(candidates.length, config.contextItems))}`);
+  for (const row of candidates.slice(0, config.contextItems)) {
+    setProcessStep('lookup', 'active', `Opening ${shortText(row.title || row.paper_id || row.canonical_paper_id || 'paper', 64)}`);
+    const hydrated = await enrichPaper(row).catch(() => row);
+    const isSelected = String(row.source || '').includes('selected_paper');
+    enriched.push({
+      ...hydrated,
+      context_text: contextExcerpt(
+        hydrated,
+        query,
+        isSelected ? config.selectedExcerptChars : config.excerptChars,
+        isSelected,
+      ),
+    });
+  }
+  setProcessStep('lookup', 'done', enriched.length ? `${formatCount(enriched.length)} evidence items selected` : 'No evidence found');
+  setProcessStep('compact', 'active', `Compacting ${formatCount(enriched.length)} evidence items`);
+  setProcessStep('compact', 'done', `${formatCount(enriched.length)} excerpts prepared`);
+  return enriched;
+}
+
+async function selectedPaperContextRows(query) {
+  const config = modeConfig();
+  const selectedRows = state.paperContextRows
+    .map((row) => ({ ...row, source: 'selected_paper' }))
+    .slice(0, MAX_SELECTED_PAPERS);
+  setProcessStep('lookup', 'active', `Using ${formatCount(selectedRows.length)} loaded paper context item${selectedRows.length === 1 ? '' : 's'}`);
+  const enrichedSelected = [];
+  for (const row of selectedRows) {
+    const hydrated = await enrichPaper(row).catch(() => row);
+    enrichedSelected.push({
+      ...hydrated,
+      source: 'selected_paper',
+      context_text: contextExcerpt(hydrated, query, config.selectedExcerptChars, true),
+    });
+  }
+  setProcessStep('lookup', 'done', `${formatCount(enrichedSelected.length)} loaded paper context item${enrichedSelected.length === 1 ? '' : 's'}`);
+  setProcessStep('compact', 'active', `Compacting loaded paper context`);
+  setProcessStep('compact', 'done', `${formatCount(enrichedSelected.length)} selected-paper excerpt${enrichedSelected.length === 1 ? '' : 's'} prepared`);
+  return enrichedSelected;
+}
+
+async function enrichPaper(row) {
+  if (row.abstract || row.text || row.full_text) return row;
+  const paperId = String(row.paper_id || row.canonical_paper_id || '');
+  if (row.paper_idx !== undefined && row.paper_idx !== null && row.paper_idx !== '') {
+    const offsetRows = await hfRowsByOffset(HF.paperTextDataset, row.paper_idx, 1).catch(() => []);
+    const match = offsetRows.find((candidate) => (
+      !paperId ||
+      String(candidate.paper_id || '') === paperId ||
+      String(candidate.canonical_paper_id || '') === String(row.canonical_paper_id || paperId)
+    ));
+    if (match) return { ...row, ...match };
+  }
+  if (paperId) {
+    const rows = await hfSearchRows(HF.paperTextDataset, paperId, 5).catch(() => []);
+    const match = rows.find((candidate) => (
+      String(candidate.paper_id || '') === paperId ||
+      String(candidate.canonical_paper_id || '') === String(row.canonical_paper_id || paperId)
+    ));
+    if (match) return { ...row, ...match };
+  }
+  return row;
+}
+
+function compactContext(row, index) {
+  const abstract = String(row.context_text || row.abstract || row.summary || row.text || row.full_text || '').replace(/\s+/g, ' ').slice(0, 1800);
+  const title = String(row.title || row.paper_id || 'Untitled paper');
+  const paperId = row.paper_id || row.canonical_paper_id || row.arxiv_id || '';
+  const category = row.primary_category || row.category_list || row.categories || '';
+  const meta = [
+    paperId,
+    category,
+    row.year || '',
+  ].filter(Boolean).join(' | ');
+  return [
+    `<AK_EVIDENCE_ID> P${index + 1}`,
+    `<AK_TITLE> ${title}`,
+    paperId ? `<AK_PAPER_ID> ${paperId}` : '',
+    category ? `<AK_CATEGORY> ${category}` : '',
+    row.year ? `<AK_YEAR> ${row.year}` : '',
+    abstract ? `<AK_ABSTRACT> ${abstract}` : '',
+    meta ? `Metadata: ${meta}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function evidenceSnippet(row) {
+  const text = String(row.abstract || row.summary || row.context_text || row.text || row.full_text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text ? text.slice(0, 520) : 'No abstract or text snippet was available in the loaded row.';
+}
+
+function answerScaffold(contextRows) {
+  const text = evidenceSnippet(contextRows[0] || {})
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || text.startsWith('No abstract')) {
+    return 'No answer scaffold is available; answer cautiously from the user request.';
+  }
+  const sentences = text.match(/[^.!?]+[.!?]/g) || [text];
+  return sentences.slice(0, 2).join(' ').trim().slice(0, 420);
+}
+
+function historyContext(limit = 6) {
+  const messages = state.messages.slice(-limit);
+  if (!messages.length) return 'No prior turns.';
+  return messages.map((message) => {
+    const role = message.role === 'user' ? 'User' : 'Assistant';
+    return `${role}: ${shortText(message.text, 420)}`;
+  }).join('\n');
+}
+
+function splitSentences(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  return normalized.match(/[^.!?]+[.!?]/g)?.map((sentence) => sentence.trim()).filter(Boolean)
+    || [normalized.slice(0, 420)];
+}
+
+function readingQueryTokens(userText) {
+  const tokens = queryContentTokens(userText)
+    .filter((token) => token.length > 2)
+    .filter((token) => !['paper', 'papers', 'source', 'sources', 'study', 'studies'].includes(token));
+  return tokens.length ? tokens : queryTokens(userText).filter((token) => token.length > 2);
+}
+
+function sentenceRelevance(sentence, tokens) {
+  const text = normalizeSearchText(sentence);
+  let score = 0;
+  for (const token of tokens) {
+    if (tokenCoveredByText(text, token)) score += 2;
+    else if (text.includes(token)) score += 1;
+  }
+  return score;
+}
+
+function evidenceReadingNotes(userText, contextRows) {
+  if (!contextRows.length) return 'No retrieved evidence to read.';
+  const tokens = readingQueryTokens(userText);
+  const notes = contextRows.slice(0, modeConfig().contextItems).map((row, index) => {
+    const text = String(row.context_text || row.abstract || row.summary || row.full_text || row.text || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const sentences = splitSentences(text);
+    const ranked = sentences
+      .map((sentence, sentenceIndex) => ({
+        sentence,
+        score: sentenceRelevance(sentence, tokens) + (sentenceIndex === 0 ? 0.4 : 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    const best = ranked.slice(0, state.mode === 'deep_research' ? 3 : 2)
+      .map((item) => item.sentence)
+      .join(' ');
+    const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
+    const meta = [row.paper_id || row.canonical_paper_id || row.arxiv_id, row.primary_category || row.category_list || row.categories, row.year]
+      .filter(Boolean)
+      .join(' | ');
+    return [
+      `[P${index + 1}] ${title}`,
+      meta ? `Metadata: ${meta}` : '',
+      `Relevant reading: ${shortText(best || evidenceSnippet(row), state.mode === 'deep_research' ? 760 : 520)}`,
+    ].filter(Boolean).join('\n');
+  });
+  const instruction = isRecommendationQuery(userText)
+    ? 'Recommendation rule: compare the retrieved evidence, prefer papers that directly match the user topic, and explain why the chosen evidence is strongest. Do not invent a title outside the evidence list.'
+    : 'Synthesis rule: answer the user question first, then cite only evidence ids that support the claims.';
+  return [instruction, ...notes].join('\n\n');
+}
+
+function arxivIdFromRow(row) {
+  const candidates = [
+    row.paper_id,
+    row.canonical_paper_id,
+    row.arxiv_id,
+    row.id,
+  ];
+  for (const candidate of candidates) {
+    const raw = String(candidate || '').trim();
+    const match = raw.match(/(?:arxiv:)?(\d{4}\.\d{4,5})(?:v\d+)?/i) || raw.match(/(?:arxiv:)?([a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?/i);
+    if (match) return match[1];
+  }
+  return '';
+}
+
+function arxivPdfUrl(row) {
+  const id = arxivIdFromRow(row);
+  return id ? `https://arxiv.org/pdf/${encodeURIComponent(id)}` : '';
+}
+
+function languageLabel() {
+  if (!els.language) return 'Auto';
+  const value = String(els.language.value || 'auto');
+  const option = [...els.language.options].find((item) => item.value === value);
+  return option?.textContent || value;
+}
+
+function buildPromptFallback(userText, contextRows) {
+  const config = modeConfig();
+  const selectedContext = selectedContextTarget(userText);
+  const context = contextRows.length
+    ? contextRows.map((row, index) => `<AK_EVIDENCE> ${compactContext(row, index)}`).join('\n')
+    : 'No research context was retrieved.';
+  const modeInstruction = state.mode === 'deep_research'
+    ? 'Mode: Deep Research. Review every evidence item, cite evidence numbers for supported claims, identify conflicts or gaps, and then give the final synthesis.'
+    : state.mode === 'think'
+      ? 'Mode: Think. Build a semantic synthesis across the evidence before answering and preserve important uncertainty.'
+      : 'Mode: Chat. Reply like a helpful assistant. Use the strongest relevant evidence as support, not as the whole answer.';
+  const tokenHeader = contextRows.length
+    ? `${modeToken()} <AK_RESPOND> <AK_CONTEXT> <AK_ANSWER>`
+    : `${modeToken()} <AK_RESPOND>`;
+  const selectedCount = contextRows.filter((row) => String(row.source || '').includes('selected_paper')).length;
+  const readingNotes = evidenceReadingNotes(userText, contextRows);
+  return [
+    tokenHeader,
+    `<AK_LOOP> <AK_STATE> mode=${state.mode} selected_context=${selectedCount ? 1 : 0} retrieval=${contextRows.length ? 'ranked' : 'none'}`,
+    'Return exactly this decision format: Action: respond, then Content: your direct answer.',
+    'You are Agent Kernel Lite running entirely in this browser.',
+    'Do not claim to execute, test, install, browse, or modify files.',
+    'Answer the user directly. When using evidence, cite the evidence id such as [1] or [P1]; the interface renders the exact paper title and PDF link from that id.',
+    'Do not generate paper titles or paper ids from memory; use evidence ids for grounded source references.',
+    modeInstruction,
+    `Mode: ${config.label}`,
+    selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
+    '',
+    '<AK_HISTORY> Recent conversation:',
+    historyContext(),
+    '',
+    '<AK_READING_NOTES> Semantic reading notes:',
+    readingNotes,
+    '',
+    '<AK_CONTEXT> Research context:',
+    context,
+    '',
+    '<AK_ANSWER> Answer scaffold:',
+    answerScaffold(contextRows),
+    '',
+    `<AK_USER> ${userText}`,
+    'Return a structured decision with action=respond.',
+  ].join('\n');
+}
+
+function compactCandidateRow(row, index) {
+  const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
+  const category = row.primary_category || row.category_list || row.categories || '';
+  const meta = [row.paper_id || row.canonical_paper_id || row.arxiv_id, row.year, row.source]
+    .filter(Boolean)
+    .join(' ');
+  return [
+    `<AK_CANDIDATE_ID> ${index + 1}`,
+    `<AK_TITLE> ${title}`,
+    category ? `<AK_CATEGORY> ${category}` : '',
+    meta ? `<AK_META> ${meta}` : '',
+    `<AK_ABSTRACT> ${shortText(evidenceSnippet(row), 520)}`,
+  ].filter(Boolean).join(' | ');
+}
+
+function buildEvidenceSelectionPrompt(userText, rows) {
+  const candidates = rows.map((row, index) => compactCandidateRow(row, index)).join('\n');
+  return [
+    `${modeToken()} <AK_GATHER_CONTEXT> <AK_RERANK> <AK_CANDIDATES>`,
+    `<AK_LOOP> <AK_STATE> mode=${state.mode} selected_context=0 retrieval=ranked`,
+    `<AK_USER> ${userText}`,
+    candidates,
+    'Select the evidence ids that best match the user intent.',
+    'Return exactly this decision format: Action: gather_context, then Content: selected_candidate_id=1 or selected_candidate_id=1,3.',
+  ].join('\n');
+}
+
+function selectedCandidateIndexes(selectorText, rowCount) {
+  const indexes = [];
+  const addIndex = (value) => {
+    const index = Number(value) - 1;
+    if (Number.isInteger(index) && index >= 0 && index < rowCount && !indexes.includes(index)) indexes.push(index);
+  };
+  for (const match of String(selectorText || '').matchAll(/selected_candidate_id\s*=\s*([0-9,\sPp]+)/gi)) {
+    for (const raw of String(match[1] || '').matchAll(/P?(\d{1,2})/gi)) addIndex(raw[1]);
+  }
+  if (indexes.length) return indexes;
+  for (const match of String(selectorText || '').matchAll(/\[(?:P)?(\d{1,2})\]|\bP(\d{1,2})\b/g)) {
+    addIndex(match[1] || match[2]);
+  }
+  return indexes;
+}
+
+function confidentTopEvidenceRows(userText, rows) {
+  if (!rows?.length) return [];
+  const ranked = rankRetrievedRows(userText, rows);
+  const top = ranked[0];
+  const second = ranked[1];
+  const topScore = Number(top?.rank_score || top?.retrieval_score || 0);
+  const secondScore = Number(second?.rank_score || second?.retrieval_score || 0);
+  const gap = topScore - secondScore;
+  const ratio = secondScore > 0 ? topScore / secondScore : topScore;
+  if (rowMatchesQuery(top, userText) && topScore >= 18 && (gap >= 14 || ratio >= 1.75)) {
+    return [top];
+  }
+  return [];
+}
+
+async function selectEvidenceRows(userText, rows) {
+  if (!rows?.length || rows.length <= 1) return rows || [];
+  const confidentRows = confidentTopEvidenceRows(userText, rows);
+  if (confidentRows.length) {
+    setProcessStep('select', 'done', 'Skipped selector: retrieval top candidate is clear');
+    return confidentRows;
+  }
+  if (!state.modelReady || !String(state.loadedModelId || '').startsWith('modelstack:')) return rows;
+  setProcessStep('select', 'active', `Model selecting from ${formatCount(rows.length)} candidates`);
+  try {
+    const output = await generateUtilityText(buildEvidenceSelectionPrompt(userText, rows), {
+      maxNewTokens: 18,
+      maxEncoderTokens: 1024,
+      temperature: 0,
+      topP: 0.9,
+      decoderPrefix: 'Action: gather_context\nContent: selected_candidate_id=',
+      stopOnDecision: true,
+    });
+    const indexes = selectedCandidateIndexes(output, rows.length);
+    if (!indexes.length) {
+      setProcessStep('select', 'done', 'Kept ranked retrieval order');
+      log(`selector did not return selected_candidate_id: ${shortText(output, 160)}`);
+      return rows;
+    }
+    const selected = indexes.map((index) => rows[index]).filter(Boolean);
+    setProcessStep('select', 'done', `Selected ${indexes.map((index) => index + 1).join(', ')}`);
+    log(`selector output: ${shortText(output, 180)}`);
+    return selected.length ? selected : rows;
+  } catch (error) {
+    setProcessStep('select', 'done', 'Selector unavailable; kept ranked retrieval order');
+    log(`selector skipped: ${error.message || String(error)}`);
+    return rows;
+  }
+}
+
+function buildPrompt(userText, contextRows) {
+  const config = modeConfig();
+  if (state.coreReady && state.core) {
+    try {
+      const task = {
+        task_id: `browser-${Date.now()}`,
+        prompt: userText,
+        workspace_subdir: 'browser',
+        max_steps: config.contextItems,
+        metadata: {
+          benchmark_family: 'agentkernel_lite_browser',
+          research_mode: state.mode,
+        },
+      };
+      const history = state.messages.slice(-6).map((message) => ({
+        role: message.role,
+        text: message.text,
+      }));
+      const packet = state.core.start_turn_with_context
+        ? JSON.parse(state.core.start_turn_with_context(
+            JSON.stringify(task),
+            JSON.stringify(contextRows),
+            JSON.stringify(history),
+            JSON.stringify({
+              language: languageLabel(),
+              max_new_tokens: targetMaxTokens(),
+              max_context_items: config.contextItems,
+              research_mode: state.mode,
+              code_execution_enabled: false,
+            }),
+          ))
+        : JSON.parse(state.core.start_turn(
+            userText,
+            JSON.stringify(contextRows),
+            languageLabel(),
+            targetMaxTokens(),
+      ));
+      if (packet.prompt) {
+        const selectedContext = selectedContextTarget(userText);
+        const readingAppendix = [
+          '',
+          '<AK_HISTORY> Recent conversation:',
+          historyContext(),
+          '',
+          '<AK_READING_NOTES> Semantic reading notes:',
+          evidenceReadingNotes(userText, contextRows),
+          selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
+        ].filter((line) => line !== '').join('\n');
+        return `${packet.prompt}\n${readingAppendix}`;
+      }
+      return buildPromptFallback(userText, contextRows);
+    } catch (error) {
+      log(`WASM prompt compiler fallback: ${error.message || String(error)}`);
+    }
+  }
+  return buildPromptFallback(userText, contextRows);
+}
+
+function recordAssistantTurn(text) {
+  if (!state.coreReady || !state.core) return null;
+  try {
+    const raw = state.core.finish_model_reply
+      ? state.core.finish_model_reply(text || '')
+      : state.core.finish_turn(text || '');
+    const packet = JSON.parse(raw);
+    state.lastDecisionPacket = packet.decision_packet || null;
+    return packet;
+  } catch (error) {
+    log(`WASM turn record failed: ${error.message || String(error)}`);
+    return null;
+  }
+}
+
+function displayTextFromDecision(packet, fallbackText) {
+  const decision = packet?.decision_packet?.decision || packet?.decision || null;
+  return String(decision?.content || fallbackText || 'No answer generated.');
+}
+
+function contentTokens(value) {
+  return String(value || '')
+    .toLowerCase()
+    .match(/[a-z][a-z0-9-]{2,}/g)
+    || [];
+}
+
+function tokenOverlap(a, b) {
+  const left = new Set(contentTokens(a));
+  const right = new Set(contentTokens(b));
+  if (!left.size || !right.size) return 0;
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return shared / Math.min(left.size, right.size);
+}
+
+function evidenceCorpus(rows, userText = '') {
+  return [
+    userText,
+    ...(rows || []).flatMap((row) => [
+      row.title,
+      row.paper_id,
+      row.canonical_paper_id,
+      row.primary_category,
+      row.category_list,
+      row.categories,
+      row.abstract,
+      row.summary,
+      row.context_text,
+    ]),
+  ].filter(Boolean).join(' ');
+}
+
+function hasRepetitionIssue(text) {
+  const tokens = contentTokens(text);
+  if (tokens.length < 24) return false;
+  const seen = new Map();
+  for (let i = 0; i <= tokens.length - 4; i += 1) {
+    const key = tokens.slice(i, i + 4).join(' ');
+    const count = (seen.get(key) || 0) + 1;
+    if (count >= 3) return true;
+    seen.set(key, count);
+  }
+  return false;
+}
+
+function unsupportedTokenRatio(text, rows, userText) {
+  const tokens = contentTokens(text)
+    .filter((token) => token.length > 3)
+    .filter((token) => !RETRIEVAL_INTENT_TERMS.has(token));
+  if (tokens.length < 12 || !rows?.length) return 0;
+  const corpus = normalizeSearchText(evidenceCorpus(rows, userText));
+  let unsupported = 0;
+  for (const token of tokens) {
+    if (!tokenCoveredByText(corpus, token)) unsupported += 1;
+  }
+  return unsupported / tokens.length;
+}
+
+function exactEvidenceTitleMentionCount(text, rows) {
+  const normalized = normalizeSearchText(text);
+  let count = 0;
+  for (const row of rows || []) {
+    const title = normalizeSearchText(row.title || '');
+    if (title && normalized.includes(title)) count += 1;
+  }
+  return count;
+}
+
+function hasDecoderQualityIssue(text, rows, userText = '') {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return true;
+  if (normalized.length > 120 && !/[.!?]/.test(normalized)) return true;
+  if (/[\uFFFD]/.test(normalized)) return true;
+  if (/\b(?:envend|local-balls|racket|gronuded|amtch|rpesent|ishould|thn|somne)\b/i.test(normalized)) return true;
+  if (hasRepetitionIssue(normalized)) return true;
+  const malformed = normalized.match(/\b[a-z]{2,}(?:[A-Z][a-z]{2,}){2,}\b/g) || [];
+  if (malformed.length >= 3) return true;
+  if (rows?.length && unsupportedTokenRatio(normalized, rows, userText) > 0.34) return true;
+  return false;
+}
+
+function shouldPreferEvidenceComposer(text, rows, userText = '') {
+  if (!String(state.loadedModelId || '').startsWith('modelstack:')) return false;
+  if (!rows?.length) return false;
+  if (isRecommendationQuery(userText)) return true;
+  if (isSelectedPaperFollowup(userText)) return true;
+  if (hasDecoderQualityIssue(text, rows, userText)) return true;
+  if (exactEvidenceTitleMentionCount(text, rows) <= 0 && citedEvidenceIndexes(text, rows).length > 0) {
+    return unsupportedTokenRatio(text, rows, userText) > 0.22;
+  }
+  return false;
+}
+
+function relevantSentenceFromRow(row, userText, limit = 300) {
+  const tokens = readingQueryTokens(userText);
+  const text = String(row.context_text || row.abstract || row.summary || row.full_text || row.text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const sentences = splitSentences(text);
+  const best = sentences
+    .map((sentence, index) => ({
+      sentence,
+      score: sentenceRelevance(sentence, tokens) + (index === 0 ? 0.25 : 0),
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.sentence || evidenceSnippet(row);
+  return shortText(best, limit);
+}
+
+function groundedAnswerFromRows(rows) {
+  if (!rows?.length) return '';
+  const scaffold = answerScaffold(rows);
+  if (!scaffold || scaffold.startsWith('No answer scaffold')) return '';
+  if (state.mode === 'deep_research') {
+    return `The strongest retrieved evidence says: ${scaffold} I would treat that as the supported core claim, then inspect the full paper and adjacent sources before making a broader conclusion [1].`;
+  }
+  if (state.mode === 'think') {
+    return `The useful synthesis is: ${scaffold} This is supported by the top retrieved evidence, but it is still only one source, so I would keep the conclusion scoped [1].`;
+  }
+  return `The main point is: ${scaffold} That is the answer I would use from the retrieved evidence, with the paper details available in the source card [1].`;
+}
+
+function evidenceMatchesQuery(userText, rows) {
+  if (!rows?.length) return false;
+  if (isSelectedPaperFollowup(userText) && rows.some((row) => String(row.source || '').includes('selected_paper'))) {
+    return true;
+  }
+  return rows.some((row) => rowMatchesQuery(row, userText) && scorePaper(row, userText, queryContentTokens(userText)) >= 5);
+}
+
+function directChatFallback(userText) {
+  const normalized = String(userText || '').trim().toLowerCase();
+  if (/^(hi|hello|hey)\b/.test(normalized)) {
+    return 'Hi. I can chat directly, and when a question needs outside support I can gather papers from the research library and show them in the conversation.';
+  }
+  if (normalized.includes('what can you do') || normalized.includes('who are you')) {
+    return 'I am Agent Kernel Lite. In this browser flow I can answer directly, gather ranked paper context when it helps, and let you open or add papers from the chat.';
+  }
+  const topic = String(userText || '').replace(/^(tell me about|explain|describe|summarize)\s+/i, '').trim();
+  return [
+    `At a high level, ${topic || 'that topic'} is something I would answer by first separating the core idea, the mechanisms involved, and the evidence or examples that support it.`,
+    'I do not have retrieved paper context attached to this fallback response, so I should keep the answer scoped instead of pretending to cite sources.',
+    'For a stronger answer, I should gather ranked research context and then synthesize the result rather than stop at this generic chat fallback.',
+  ].join('\n\n');
+}
+
+function retrievalMissFallback(userText) {
+  const question = shortText(userText, 140);
+  return [
+    `I did not retrieve a strong paper match for "${question}".`,
+    'The current evidence looks off-topic, so I should not present it as a grounded answer.',
+    'Try a narrower query with the specific research area, method, or benchmark you care about.',
+  ].join('\n\n');
+}
+
+function selectedPaperFallbackAnswer(userText, rows) {
+  const row = rows.find((item) => String(item.source || '').includes('selected_paper')) || rows[0];
+  if (!row) return '';
+  const question = shortText(userText, 140);
+  const title = row.title || row.paper_id || row.canonical_paper_id || 'the selected paper';
+  const snippet = evidenceSnippet(row);
+  const sentences = (snippet.match(/[^.!?]+[.!?]/g) || [snippet])
+    .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const first = sentences[0] || snippet || 'The loaded context does not include enough text to summarize the paper well.';
+  const second = sentences.find((sentence) => sentence !== first) || '';
+  const third = sentences.find((sentence) => sentence !== first && sentence !== second) || '';
+  const details = [
+    `It is about ${first.replace(/^(this paper|we|the paper)\s+/i, '')}`,
+    second ? `A useful extra detail is that ${second.replace(/^(this paper|we|the paper)\s+/i, '')}` : '',
+    third ? `The next thing I would inspect is ${third.replace(/^(this paper|we|the paper)\s+/i, '')}` : '',
+  ].filter(Boolean);
+  return [
+    `For "${question}", I am using the paper you added to chat: ${title}.`,
+    details.join('\n'),
+    'The paper card already in the conversation has the source link if you want to open the PDF.',
+  ].join('\n\n');
+}
+
+function groundedFallbackAnswer(userText, rows, reason = '') {
+  void reason;
+  const question = shortText(userText, 140);
+  if (!rows?.length) {
+    return directChatFallback(question);
+  }
+  if (isSelectedPaperFollowup(userText) && rows.some((row) => String(row.source || '').includes('selected_paper'))) {
+    return selectedPaperFallbackAnswer(userText, rows) || groundedAnswerFromRows(rows);
+  }
+  if (!evidenceMatchesQuery(userText, rows)) {
+    return retrievalMissFallback(userText);
+  }
+  if (isRecommendationQuery(userText)) {
+    const ranked = rows.filter((row) => rowMatchesQuery(row, userText)).slice(0, 5);
+    const items = ranked.map((row, index) => {
+      const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
+      return `- [${index + 1}] ${title}: ${relevantSentenceFromRow(row, userText, 260)}`;
+    });
+    const top = ranked[0] || rows[0];
+    const topTitle = top?.title || top?.paper_id || top?.canonical_paper_id || 'the first retrieved paper';
+    const topReason = relevantSentenceFromRow(top, userText, 300);
+    return [
+      `For "${question}", I would not call any paper universally "best" without criteria like LLM agents, robotics, control, verification, or surveys. Among the evidence retrieved here, the best starting point is [1] ${topTitle}.`,
+      topReason ? `The reason is grounded in the evidence: ${topReason}` : '',
+      ranked.length > 1 ? 'Other retrieved matches are useful as adjacent background rather than a single definitive winner:' : '',
+      items.join('\n'),
+      'For modern multi-agent LLM work specifically, I would narrow the query to "multi-agent LLM collaboration", "LLM agent society", or "multi-agent LLM survey" and compare newer evidence before making a recommendation.',
+    ].filter(Boolean).join('\n\n');
+  }
+  const lead = groundedAnswerFromRows(rows);
+  const bullets = rows.slice(0, 3).map((row, index) => {
+    const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
+    const snippet = answerScaffold([row]).replace(/^No answer scaffold.*$/i, evidenceSnippet(row));
+    return `- [${index + 1}] ${title}: ${shortText(snippet, 260)}`;
+  });
+  return [
+    `For "${question}", my grounded answer is: ${lead}`,
+    bullets.join('\n'),
+    'Open the evidence cards or citation links above to inspect the papers directly.',
+  ].filter(Boolean).join('\n\n');
+}
+
+function maybeGroundedFallback(text, rows, userText = '') {
+  if (!String(state.loadedModelId || '').startsWith('modelstack:')) return text;
+  const normalized = String(text || '').trim();
+  if (!shouldPreferEvidenceComposer(normalized, rows, userText)) return normalized;
+  const grounded = groundedFallbackAnswer(userText, rows, 'decoder output failed quality gate');
+  return grounded || 'The local decoder did not produce a usable answer for this turn.';
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function arxivPdfUrlFromId(value) {
+  const raw = String(value || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '');
+  return raw ? `https://arxiv.org/pdf/${encodeURIComponent(raw)}` : '';
+}
+
+function linkArxivIds(html) {
+  return html.replace(
+    /\b((?:https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\/)?(?:arXiv:?\s*)?(\d{4}\.\d{4,5}(?:v\d+)?))\b/g,
+    (match, _label, id) => `<a class="inline-paper-link" href="${escapeHtml(arxivPdfUrlFromId(id))}" target="_blank" rel="noopener noreferrer">${match}</a>`,
+  );
+}
+
+function linkEvidenceCitations(html) {
+  if (!state.retrievalRows.length) return html;
+  return html.replace(/(^|[^\w])\[(P?)(\d{1,2})\]/gi, (match, prefix, marker, number) => {
+    const index = Number(number) - 1;
+    const row = state.retrievalRows[index];
+    if (!row) return match;
+    const label = `${marker ? 'P' : ''}${number}`;
+    const title = row.title || row.paper_id || `Evidence ${label}`;
+    const disabled = state.processActive ? ' disabled aria-disabled="true"' : '';
+    return `${prefix}<button type="button" class="inline-evidence" data-action="load-paper" data-result-index="${index}" title="${escapeHtml(title)}" aria-label="Open evidence ${label}"${disabled}>[${label}]</button>`;
+  });
+}
+
+function citedEvidenceIndexes(text, rows = state.retrievalRows) {
+  if (!rows.length) return [];
+  const seen = new Set();
+  const indexes = [];
+  for (const match of String(text || '').matchAll(/\[(?:P?)(\d{1,2})\]/gi)) {
+    const index = Number(match[1]) - 1;
+    if (index < 0 || index >= rows.length || seen.has(index)) continue;
+    seen.add(index);
+    indexes.push(index);
+  }
+  return indexes;
+}
+
+function evidenceAttributionText(text, rows = state.retrievalRows) {
+  const indexes = citedEvidenceIndexes(text, rows);
+  if (!indexes.length) return '';
+  const lines = indexes.slice(0, 5).map((index) => {
+    const row = rows[index];
+    const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
+    const meta = paperMeta(row);
+    return `[${index + 1}] ${title}${meta ? ` (${meta})` : ''}`;
+  });
+  return `Sources used:\n${lines.join('\n')}`;
+}
+
+function bindEvidenceAttribution(text, rows = state.retrievalRows) {
+  const sourceText = evidenceAttributionText(text, rows);
+  if (!sourceText) return String(text || '');
+  if (/Sources used:/i.test(String(text || ''))) return String(text || '');
+  return `${String(text || '').trim()}\n\n${sourceText}`;
+}
+
+function renderInline(value, options = {}) {
+  let html = escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = linkArxivIds(html);
+  if (options.linkEvidence) html = linkEvidenceCitations(html);
+  return html;
+}
+
+function codeLanguage(value) {
+  return String(value || '').trim().split(/\s+/)[0] || 'text';
+}
+
+function appendTextChunk(parent, text, options = {}) {
+  const chunks = String(text || '').split(/\n{2,}/).filter((chunk) => chunk.trim());
+  for (const chunk of chunks) {
+    const p = document.createElement('p');
+    p.innerHTML = renderInline(chunk.trim(), options);
+    parent.appendChild(p);
+  }
+}
+
+function openCodeArtifact(language, code) {
+  const extension = codeLanguage(language).replace(/[^a-z0-9_-]/gi, '') || 'txt';
+  const blob = new Blob([code.replace(/\s+$/, '')], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank', 'noopener,noreferrer');
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  if (!win) log(`code artifact ready: agent-kernel.${extension}`);
+}
+
+function appendCodeChunk(parent, language, code) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'code-block';
+  const bar = document.createElement('div');
+  bar.className = 'code-bar';
+  const label = document.createElement('span');
+  label.textContent = codeLanguage(language);
+  const actions = document.createElement('div');
+  actions.className = 'code-actions';
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'copy-code';
+  open.textContent = 'Open';
+  open.addEventListener('click', () => openCodeArtifact(language, code));
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'copy-code';
+  copy.textContent = 'Copy';
+  copy.addEventListener('click', async () => {
+    await navigator.clipboard?.writeText(code).catch(() => {});
+    copy.textContent = 'Copied';
+    window.setTimeout(() => { copy.textContent = 'Copy'; }, 1100);
+  });
+  const pre = document.createElement('pre');
+  const codeNode = document.createElement('code');
+  codeNode.textContent = code.replace(/\s+$/, '');
+  pre.appendChild(codeNode);
+  actions.append(open, copy);
+  bar.append(label, actions);
+  wrapper.append(bar, pre);
+  parent.appendChild(wrapper);
+}
+
+function renderMessageBody(parent, text, options = {}) {
+  const source = String(text || '');
+  const fencePattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
+  let cursor = 0;
+  let match;
+  while ((match = fencePattern.exec(source)) !== null) {
+    appendTextChunk(parent, source.slice(cursor, match.index), options);
+    appendCodeChunk(parent, match[1], match[2]);
+    cursor = fencePattern.lastIndex;
+  }
+  appendTextChunk(parent, source.slice(cursor), options);
+  if (!parent.childElementCount) appendTextChunk(parent, source || 'No answer generated.', options);
+}
+
+function clearActiveTurnTimer() {
+  if (state.activeTurn?.fallbackTimer) {
+    window.clearTimeout(state.activeTurn.fallbackTimer);
+    state.activeTurn.fallbackTimer = null;
+  }
+}
+
+function cancelActiveGeneration() {
+  const generationId = state.activeTurn?.generationId;
+  if (!generationId || !state.worker) return;
+  state.worker.postMessage({ type: 'cancel', generationId });
+  log('requested generation cancel; runtime remains loaded');
+}
+
+function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {}) {
+  const turn = state.activeTurn;
+  if (turn?.finalized) return false;
+  if (turn) turn.finalized = true;
+  clearActiveTurnTimer();
+  state.modelBusy = false;
+  setControlsBusy(false);
+  const rows = turn?.contextRows || state.pendingContextRows || [];
+  const userText = turn?.userText || '';
+  const responseText = fallback
+    ? [
+        'The local decoder did not produce a decoded answer for this turn.',
+        rows.length
+          ? 'Research context was retrieved and remains available in the evidence cards, but I am not going to replace the model with a synthetic answer.'
+          : 'No research context was attached to this turn, and I am not going to replace the model with a synthetic answer.',
+        reason ? `Runtime detail: ${reason}` : '',
+      ].filter(Boolean).join('\n\n')
+    : maybeGroundedFallback(text, rows, userText);
+  setProcessStep('generate', fallback ? 'error' : 'done', fallback ? 'Decoder timed out before answer' : `${formatCount(String(text || '').length)} characters generated`);
+  const packet = recordAssistantTurn(responseText);
+  const displayText = bindEvidenceAttribution(displayTextFromDecision(packet, responseText), rows);
+  setProcessStep('render', 'active', 'Rendering answer and evidence links');
+  appendMessage('assistant', displayText);
+  setProcessStep('render', 'done', 'Answer displayed');
+  finishProcessTrace(fallback ? 'Decoder timeout' : 'Complete');
+  state.pendingContextRows = [];
+  if (fallback) cancelActiveGeneration();
+  return true;
+}
+
+function armGenerationFallback(userText, contextRows, generationId) {
+  clearActiveTurnTimer();
+  const selectedModel = String(state.loadedModelId || els.model.value || '');
+  const turn = {
+    id: state.processRunId,
+    userText,
+    contextRows,
+    generationId,
+    finalized: false,
+    fallbackTimer: null,
+  };
+  if (selectedModel.startsWith('modelstack:')) {
+    state.activeTurn = turn;
+    setProcessStep('generate', 'active', 'Waiting for local BitNet decoder');
+    return;
+  }
+  const delay = REMOTE_MODEL_FALLBACK_MS;
+  turn.fallbackTimer = window.setTimeout(() => {
+    if (state.activeTurn !== turn || turn.finalized) return;
+    setProcessStep('generate', 'error', 'Decoder did not finish before timeout');
+    finalizeAssistantResponse('', {
+      fallback: true,
+      reason: `timeout after ${Math.round(delay / 1000)}s`,
+    });
+  }, delay);
+  state.activeTurn = turn;
+}
+
+function appendMessage(role, text) {
+  els.empty?.remove();
+  const node = document.createElement('article');
+  node.className = `message ${role}`;
+  const roleNode = document.createElement('div');
+  roleNode.className = 'role';
+  roleNode.textContent = role === 'user' ? 'You' : 'Agent Kernel Lite';
+  const body = document.createElement('div');
+  body.className = 'body';
+  renderMessageBody(body, text, { linkEvidence: role === 'assistant' });
+  node.append(roleNode, body);
+  attachPaperButtons(node, state.retrievalRows);
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+  state.messages.push({ role, text });
+}
+
+function paperMeta(row) {
+  return [
+    row.paper_id || row.canonical_paper_id || '',
+    row.primary_category || row.categories || '',
+    row.year || '',
+    row.source || '',
+  ].filter(Boolean).join(' | ');
+}
+
+function loadedPaperPreview(row) {
+  const abstract = String(row.abstract || row.summary || '').replace(/\s+/g, ' ').trim();
+  const text = fullPaperText(row).replace(/\s+/g, ' ').trim();
+  if (text) return text.slice(0, 2200);
+  return abstract ? abstract.slice(0, 1600) : 'No full text or abstract was available in the fetched row.';
+}
+
+function rememberPaperContext(row) {
+  const key = paperKey(row);
+  if (!key) return;
+  const contextRow = { ...row, source: 'selected_paper' };
+  state.paperContextRows = [contextRow, ...state.paperContextRows.filter((item) => paperKey(item) !== key)].slice(0, MAX_SELECTED_PAPERS);
+}
+
+function attachPaperButtons(root, rows = state.retrievalRows) {
+  root.querySelectorAll('[data-action="load-paper"]').forEach((button) => {
+    if (button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', () => {
+      if (state.processActive) {
+        log('paper actions are available after the assistant response finishes');
+        return;
+      }
+      const index = Number(button.getAttribute('data-result-index') || -1);
+      loadPaperContext(rows[index], button);
+    });
+  });
+}
+
+function setEvidenceActionsLocked(locked, root = document) {
+  root.querySelectorAll('[data-action="load-paper"]').forEach((button) => {
+    button.disabled = Boolean(locked);
+    button.setAttribute('aria-disabled', locked ? 'true' : 'false');
+  });
+  root.querySelectorAll('[data-evidence-link="paper-pdf"]').forEach((link) => {
+    delete link.dataset.locked;
+    link.setAttribute('aria-disabled', 'false');
+    link.removeAttribute('tabindex');
+  });
+}
+
+function appendLoadedPaper(row) {
+  els.empty?.remove();
+  const pdf = arxivPdfUrl(row);
+  const node = document.createElement('section');
+  node.className = 'retrieval loaded-paper';
+  node.innerHTML = `
+    <h3>Loaded Paper Context</h3>
+    <div class="result-list">
+      <div class="result-item">
+        <strong>${escapeHtml(row.title || row.paper_id || 'Untitled paper')}</strong>
+        ${escapeHtml(paperMeta(row))}
+        <p>${escapeHtml(loadedPaperPreview(row))}</p>
+        <div class="result-actions">
+          ${pdf ? `<a href="${escapeHtml(pdf)}" target="_blank" rel="noopener noreferrer">Open arXiv PDF</a>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+}
+
+async function loadPaperContext(row, button) {
+  if (!row) return;
+  if (state.processActive) {
+    log('paper actions are available after the assistant response finishes');
+    return;
+  }
+  const originalLabel = button?.textContent || '';
+  const inlineButton = button?.classList.contains('inline-evidence');
+  const startedStandaloneTrace = !state.processActive;
+  if (!state.processActive) {
+    state.processRunId += 1;
+    state.processActive = true;
+    startLiveStatus(`Add paper: ${shortText(row.title || row.paper_id || 'paper', 96)}`);
+    setProcessStep('receive', 'done', 'Paper selected from chat');
+  }
+  setProcessStep('lookup', 'active', `Opening ${shortText(row.title || row.paper_id || row.canonical_paper_id || 'paper', 64)}`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = inlineButton ? `${originalLabel}...` : 'Loading';
+  }
+  try {
+    const hydrated = await enrichPaper(row);
+    rememberPaperContext(hydrated);
+    appendLoadedPaper(hydrated);
+    if (button) {
+      button.textContent = inlineButton ? originalLabel : 'Loaded';
+      button.classList.add('ready');
+    }
+    setProcessStep('lookup', 'done', `Loaded ${shortText(hydrated.title || hydrated.paper_id || 'paper', 64)}`);
+    setProcessStep('compact', 'done', 'Paper added to chat context');
+    if (startedStandaloneTrace) finishProcessTrace('Paper Ready');
+    log(`loaded full paper context: ${hydrated.paper_id || hydrated.canonical_paper_id || hydrated.title || 'paper'}`);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = inlineButton ? originalLabel : 'Add to Chat';
+    }
+    setProcessStep('lookup', 'error', error.message || String(error));
+    if (startedStandaloneTrace) finishProcessTrace('Error');
+    appendMessage('assistant', `Could not load that paper text: ${error.message || String(error)}`);
+    log(error.message || String(error));
+  }
+}
+
+function appendRetrieval(rows, { locked = state.processActive } = {}) {
+  if (!rows.length) return;
+  state.retrievalRows = rows;
+  const node = document.createElement('section');
+  node.className = 'retrieval';
+  if (locked) node.dataset.locked = 'true';
+  node.innerHTML = `
+    <h3>Retrieved Evidence</h3>
+    <div class="result-list">
+      ${rows.map((row, index) => {
+        const pdf = arxivPdfUrl(row);
+        return `
+          <div class="result-item">
+            <strong>
+              <button type="button" class="paper-title-button" data-action="load-paper" data-result-index="${index}"${locked ? ' disabled aria-disabled="true"' : ''}>
+                ${index + 1}. ${escapeHtml(row.title || row.paper_id || 'Untitled paper')}
+              </button>
+            </strong>
+            ${escapeHtml(paperMeta(row))}
+            <p>${escapeHtml(evidenceSnippet(row))}</p>
+            <div class="result-actions">
+              <button type="button" class="secondary result-action-button" data-action="load-paper" data-result-index="${index}"${locked ? ' disabled aria-disabled="true"' : ''}>Add to Chat</button>
+              ${pdf ? `<a href="${escapeHtml(pdf)}" target="_blank" rel="noopener noreferrer" data-evidence-link="paper-pdf" aria-disabled="false">Open arXiv PDF</a>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  attachPaperButtons(node, rows);
+  setEvidenceActionsLocked(locked, node);
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+}
+
+function setControlsBusy(busy) {
+  els.send.disabled = busy || state.modelBusy || !state.modelReady;
+  els.prompt.disabled = busy;
+  els.loadModel.disabled = busy || state.modelBusy;
+  if (els.unloadModel) els.unloadModel.disabled = busy || state.modelBusy || !state.worker;
+  els.loadPack.disabled = busy;
+  syncModelControls();
+}
+
+async function submitPrompt(event) {
+  event.preventDefault();
+  const text = els.prompt.value.trim();
+  if (!text || state.modelBusy) return;
+  els.prompt.value = '';
+  appendMessage('user', text);
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  try {
+    if (!state.modelReady || state.loadedModelId !== els.model.value) await loadModel();
+    else setProcessStep('runtime', 'done', `Using loaded ${shortText(state.loadedModelId || els.model.value, 56)}`);
+    let contextRows = [];
+    state.pendingContextRows = [];
+    state.retrievalRows = [];
+    const freshResearchRequired = requiresFreshResearchContext(text);
+    let plan = await planLiteTurn(text);
+    if (freshResearchRequired && plan.action !== 'gather_context') {
+      plan = {
+        action: 'gather_context',
+        query: text,
+        reason: 'paper/source request requires fresh ranked evidence',
+      };
+      setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+      log('planner override: paper/source request must gather fresh evidence');
+    }
+    const selectedPaperFollowup = isSelectedPaperFollowup(text);
+    if (plan.action === 'gather_context') {
+      try {
+        let retrievalRendered = false;
+        if (selectedPaperFollowup) {
+          setPill(els.packPill, 'using loaded paper', 'ready');
+          contextRows = await selectedPaperContextRows(plan.query || text);
+        } else {
+          setPill(els.packPill, state.packRows.length ? 'retrieving' : 'HF search', 'busy');
+          contextRows = await retrieveContext(plan.query || text, {
+            onCandidates(candidates) {
+              if (retrievalRendered) return;
+              retrievalRendered = true;
+              setProcessStep('render', 'active', `Showing ${formatCount(candidates.length)} retrieved papers`);
+              appendRetrieval(candidates, { locked: true });
+              setProcessStep('render', 'done', 'Retrieved papers displayed');
+            },
+          });
+          contextRows = await selectEvidenceRows(plan.query || text, contextRows);
+        }
+        state.pendingContextRows = contextRows;
+        setPill(els.packPill, state.packRows.length ? 'library ready' : 'library idle', state.packRows.length ? 'ready' : '');
+        if (selectedPaperFollowup) {
+          state.retrievalRows = contextRows;
+          log('using loaded paper context for this turn; fresh retrieval skipped');
+        } else if (!retrievalRendered) {
+          appendRetrieval(contextRows);
+        } else {
+          state.retrievalRows = contextRows;
+        }
+      } catch (error) {
+        state.pendingContextRows = [];
+        setPill(els.packPill, 'chat only', '');
+        setProcessStep('lookup', 'error', error.message || String(error));
+        setProcessStep('compact', 'done', 'Continuing without evidence');
+        log(`retrieval skipped: ${error.message || String(error)}`);
+      }
+    } else {
+      setPill(els.packPill, state.packRows.length ? 'library ready' : 'chat only', state.packRows.length ? 'ready' : '');
+      setProcessStep('lookup', 'done', 'respond selected; no paper lookup');
+      setProcessStep('compact', 'done', 'Chat-only context');
+    }
+    if (freshResearchRequired && !selectedPaperFollowup && !contextRows.length) {
+      setProcessStep('generate', 'done', 'Skipped: no paper evidence available');
+      setProcessStep('render', 'done', 'Rendered no-evidence response');
+      finishProcessTrace('No evidence');
+      setControlsBusy(false);
+      setAgentWorking(false);
+      appendMessage('assistant', 'I could not retrieve paper evidence for that query, so I should not guess. Try a narrower research phrase or load the paper pack first.');
+      return;
+    }
+    const config = modeConfig();
+    setProcessStep('compile', 'active', `Building ${state.mode.replace('_', ' ')} context packet`);
+    const compiledPrompt = buildPrompt(text, contextRows);
+    setProcessStep('compile', 'done', `${formatCount(compiledPrompt.length)} prompt characters`);
+    setProcessStep('generate', 'active', `Generating up to ${formatCount(targetMaxTokens())} tokens`);
+    const generationId = ++state.generationRunId;
+    armGenerationFallback(text, contextRows, generationId);
+    ensureWorker().postMessage({
+      type: 'generate',
+      generationId,
+      prompt: compiledPrompt,
+      options: {
+        maxNewTokens: targetMaxTokens(),
+        temperature: config.temperature,
+      },
+    });
+  } catch (error) {
+    setControlsBusy(false);
+    setProcessStep('render', 'error', error.message || String(error));
+    clearActiveTurnTimer();
+    state.modelBusy = false;
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Could not complete local run: ${error.message || String(error)}`);
+    log(error.message || String(error));
+  }
+}
+
+async function resetChat() {
+  state.messages = [];
+  state.paperContextRows = [];
+  state.retrievalRows = [];
+  state.pendingContextRows = [];
+  clearActiveTurnTimer();
+  state.activeTurn = null;
+  state.lastDecisionPacket = null;
+  state.processActive = false;
+  state.liveStatusNode = null;
+  setAgentWorking(false);
+  if (state.coreReady && state.core) state.core.reset();
+  els.chat.innerHTML = '';
+  els.chat.appendChild(els.empty);
+  els.prompt.value = '';
+  renderProcessTrace();
+}
+
+function setMode(mode) {
+  state.mode = normalizeMode(mode);
+  if (state.coreReady && state.core) state.core.set_mode(state.mode);
+  const config = modeConfig();
+  for (const button of els.modeButtons || []) {
+    const active = normalizeMode(button.dataset.mode || button.id.replace(/ModeButton$/, '')) === state.mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+  setPill(els.modePill, config.pill, state.mode === 'deep_research' ? 'busy' : 'ready');
+  els.send.textContent = 'Send';
+  els.prompt.placeholder = config.placeholder;
+  log(`mode set: ${config.label}`);
+}
+
+function registerBuiltinExtensions() {
+  if (!state.coreReady || !state.core?.register_extension_manifest) return;
+  const manifest = {
+    id: 'code_draft',
+    name: 'Code Draft',
+    version: '0.1.0',
+    approval_policy: 'always_ask',
+    capabilities: [
+      {
+        id: 'code.generate_draft',
+        description: 'Generate code drafts from chat with explicit user approval.',
+        scopes: ['chat.context', 'artifact.proposal'],
+      },
+    ],
+    metadata: {
+      browser_surface: 'extension',
+      default_enabled: false,
+      code_execution: false,
+    },
+  };
+  try {
+    state.core.register_extension_manifest(JSON.stringify(manifest));
+    log('registered code drafting as an extension capability');
+  } catch (error) {
+    log(`extension registration failed: ${error.message || String(error)}`);
+  }
+}
+
+async function init() {
+  setTheme(state.theme, false);
+  renderProcessTrace();
+  await loadAgentCore();
+  registerBuiltinExtensions();
+  if (DEV_BACKEND === 'vllm') {
+    const option = document.createElement('option');
+    option.value = `vllm:${VLLM_MODEL}`;
+    option.textContent = `Local vLLM (${VLLM_MODEL})`;
+    els.model.prepend(option);
+    els.model.value = option.value;
+    setPill(els.modelPill, 'vLLM dev backend', 'ready');
+    log(`vLLM dev backend enabled: ${VLLM_ENDPOINT}`);
+  }
+  if (STRUCTURE_FIXTURE) {
+    els.packMetric.textContent = 'Fixture';
+    els.rowsMetric.textContent = '1';
+    setPill(els.packPill, 'fixture ready', 'ready');
+    log('structure-check evidence fixture enabled');
+  }
+  const addModelStackOption = (manifestUrl, label = 'AgentKernel Lite EncDec (model-stack)') => {
+    const resolvedManifestUrl = new URL(manifestUrl, window.location.href).href;
+    const option = document.createElement('option');
+    option.value = `modelstack:${resolvedManifestUrl}`;
+    option.textContent = label;
+    els.model.prepend(option);
+    els.model.value = option.value;
+    log('model-stack encoder-decoder manifest attached from URL');
+  };
+  const rawManifestUrl = new URLSearchParams(window.location.search).get('modelStackManifest');
+  if (rawManifestUrl) {
+    addModelStackOption(new URL(rawManifestUrl, window.location.href).href);
+  } else if (DEV_BACKEND !== 'vllm') {
+    addModelStackOption(HF_MODELSTACK_MANIFEST, 'AgentKernel Lite 100M BitNet');
+    log('AgentKernel Lite BitNet bundle attached from Hugging Face');
+  }
+  els.form.addEventListener('submit', submitPrompt);
+  els.chatMode?.addEventListener('click', () => setMode('chat'));
+  els.thinkMode?.addEventListener('click', () => setMode('think'));
+  els.deepResearchMode?.addEventListener('click', () => setMode('deep_research'));
+  els.loadModel.addEventListener('click', () => loadModel({ force: true }).catch((error) => log(error.message || String(error))));
+  els.unloadModel?.addEventListener('click', () => unloadModel());
+  els.loadPack.addEventListener('click', () => loadResearchPack());
+  els.persist.addEventListener('click', () => requestPersistentStorage());
+  els.reset.addEventListener('click', resetChat);
+  els.themeToggle?.addEventListener('click', toggleTheme);
+  els.mobileToggle?.addEventListener('click', () => document.body.classList.toggle('controls-hidden'));
+  if (navigator.storage?.persisted) {
+    const persisted = await navigator.storage.persisted();
+    setPill(els.storagePill, persisted ? 'persistent' : 'best effort', persisted ? 'ready' : '');
+  }
+  els.sessionLine.textContent = DEV_BACKEND === 'vllm'
+    ? STRUCTURE_FIXTURE
+      ? 'Dev structure check via local vLLM and fixture evidence.'
+      : 'Dev structure check via local vLLM.'
+    : 'WASM on-device runtime. No server-side inference.';
+  setMode('chat');
+  await refreshStorage();
+  syncModelControls();
+  log('agent kernel lite ready');
+  if (URL_PARAMS.get('autoload') !== '0') {
+    state.modelAutoLoadStarted = true;
+    loadModel({ auto: true }).catch((error) => {
+      log(error.message || String(error));
+      updateRuntimeDetail(`Runtime did not load automatically: ${error.message || String(error)}`);
+      syncModelControls();
+    });
+  } else {
+    updateRuntimeDetail('Runtime autoload is off. Load Runtime to start the model.');
+  }
+}
+
+init().catch((error) => log(error.message || String(error)));

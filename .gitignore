@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / browser
+node_modules/
+.vite/
+dist/
+
+# Rust
+target/
+
+# Local runtime noise
+.DS_Store
+*.log
+*.tmp
+
+# Large generated datasets/checkpoints should stay external unless explicitly vendored.
+artifacts/
+checkpoints/
+runs/
+wandb/

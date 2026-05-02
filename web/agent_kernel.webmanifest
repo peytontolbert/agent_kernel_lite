@@ -1,0 +1,9 @@
+{
+  "name": "Agent Kernel Lite",
+  "short_name": "AgentKernel",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b0d10",
+  "theme_color": "#11161d",
+  "icons": []
+}

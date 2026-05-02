@@ -1,0 +1,14 @@
+{
+  "format": "browser-bitnet",
+  "layer_count": 109,
+  "manifest": "manifest.json",
+  "runtime_files": {
+    "encdec_js": "runtime/encdec_runtime.js",
+    "wasm_binary": "runtime/model_stack_bitnet_wasm_bg.wasm",
+    "wasm_js": "runtime/model_stack_bitnet_wasm.js",
+    "wasm_runtime_js": "runtime/bitnet_wasm_runtime.js",
+    "webgpu_js": "runtime/bitnet_webgpu.js",
+    "wgsl": "runtime/bitnet_linear.wgsl"
+  },
+  "sha256": "cfa2962f89ec51a601bf87f0534aa0597aa84cec1f4891e6dd0743e40f005188"
+}
