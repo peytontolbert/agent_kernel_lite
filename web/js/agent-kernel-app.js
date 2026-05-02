@@ -21,6 +21,9 @@ const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
 const CACHE_NAME = 'agent-kernel-lite-v1';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
+const SESSION_EXPORT_VERSION = 1;
+const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
+const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const MODE_CONFIG = {
   chat: {
     label: 'Chat',
@@ -152,11 +155,34 @@ const state = {
   lastDecisionPacket: null,
   messages: [],
   mode: 'chat',
+  image: {
+    enabled: false,
+    worker: null,
+    ready: false,
+    busy: false,
+    loadPromise: null,
+    activeJobId: null,
+    activeActionId: null,
+    extensionId: 'image_generation',
+    capabilityId: 'image.generate',
+    modelId: 'agentkernel_lite_image_bitdit_hf_cifar_distilled_v1',
+  },
+  translation: {
+    enabled: false,
+    busy: false,
+    listening: false,
+    recognition: null,
+    extensionId: 'translator',
+    textCapabilityId: 'translation.text',
+    audioCapabilityId: 'translation.audio',
+    activeActionId: null,
+  },
   processRunId: 0,
   generationRunId: 0,
   processActive: false,
   liveStatusNode: null,
   activeTurn: null,
+  appIntegrity: null,
   theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
 };
 
@@ -170,10 +196,23 @@ const els = {
   thinkMode: document.getElementById('thinkModeButton'),
   deepResearchMode: document.getElementById('deepResearchModeButton'),
   modeButtons: [...document.querySelectorAll('.mode-button')],
+  imageMode: document.getElementById('imageModeButton'),
+  imageModeDetail: document.getElementById('imageModeDetail'),
+  extensionList: document.getElementById('extensionList'),
+  extensionManifestUrl: document.getElementById('extensionManifestUrl'),
+  installExtension: document.getElementById('installExtensionButton'),
+  translationMode: document.getElementById('translationModeButton'),
+  translationModeDetail: document.getElementById('translationModeDetail'),
+  translationSource: document.getElementById('translationSourceSelect'),
+  translationTarget: document.getElementById('translationTargetSelect'),
+  audioTranslate: document.getElementById('audioTranslateButton'),
   loadModel: document.getElementById('loadModelButton'),
   unloadModel: document.getElementById('unloadModelButton'),
   loadPack: document.getElementById('loadPackButton'),
   persist: document.getElementById('persistButton'),
+  exportSession: document.getElementById('exportSessionButton'),
+  importSession: document.getElementById('importSessionButton'),
+  importSessionInput: document.getElementById('importSessionInput'),
   reset: document.getElementById('resetChatButton'),
   send: document.getElementById('sendButton'),
   form: document.getElementById('composerForm'),
@@ -185,12 +224,14 @@ const els = {
   packMetric: document.getElementById('packMetric'),
   storageMetric: document.getElementById('storageMetric'),
   rowsMetric: document.getElementById('rowsMetric'),
+  appHashMetric: document.getElementById('appHashMetric'),
   modelPill: document.getElementById('modelPill'),
   runtimeDetail: document.getElementById('runtimeDetail'),
   packPill: document.getElementById('packPill'),
   storagePill: document.getElementById('storagePill'),
   corePill: document.getElementById('corePill'),
   modePill: document.getElementById('modePill'),
+  imagePill: document.getElementById('imagePill'),
   processList: document.getElementById('processList'),
   processSummary: document.getElementById('processSummary'),
   processListMain: document.getElementById('processListMain'),
@@ -283,19 +324,90 @@ function updateRuntimeDetail(text) {
   if (els.runtimeLine) els.runtimeLine.textContent = text;
 }
 
+function bytesToHex(buffer) {
+  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Text(text) {
+  const data = new TextEncoder().encode(String(text || ''));
+  return bytesToHex(await crypto.subtle.digest('SHA-256', data));
+}
+
+async function hashAsset(path) {
+  const url = new URL(path, window.location.href);
+  const response = await fetch(url.href, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`hash fetch failed for ${path}: ${response.status}`);
+  const buffer = await response.arrayBuffer();
+  return {
+    path,
+    url: url.href,
+    bytes: buffer.byteLength,
+    sha256: bytesToHex(await crypto.subtle.digest('SHA-256', buffer)),
+  };
+}
+
+async function computeAppIntegrity() {
+  const assets = [
+    './index.html',
+    './js/agent-kernel-app.js',
+    './wasm/agent_kernel_lite_core/pkg/agent_kernel_lite_core.js',
+    './wasm/agent_kernel_lite_core/pkg/agent_kernel_lite_core_bg.wasm',
+  ];
+  const hashedAssets = await Promise.all(assets.map((asset) => hashAsset(asset)));
+  const appHash = await sha256Text(JSON.stringify(hashedAssets.map((asset) => ({
+    path: asset.path,
+    sha256: asset.sha256,
+  }))));
+  return {
+    algorithm: 'sha256',
+    app_hash: appHash,
+    assets: hashedAssets,
+    computed_at: new Date().toISOString(),
+  };
+}
+
+async function refreshAppIntegrity() {
+  if (!crypto?.subtle) {
+    if (els.appHashMetric) els.appHashMetric.textContent = 'Unavailable';
+    log('app hash unavailable: crypto.subtle is not supported');
+    return;
+  }
+  try {
+    state.appIntegrity = await computeAppIntegrity();
+    const shortHash = state.appIntegrity.app_hash.slice(0, 12);
+    if (els.appHashMetric) {
+      els.appHashMetric.textContent = shortHash;
+      els.appHashMetric.title = state.appIntegrity.app_hash;
+    }
+    log(`app hash ${shortHash}`);
+  } catch (error) {
+    if (els.appHashMetric) els.appHashMetric.textContent = 'Error';
+    log(`app hash failed: ${error.message || String(error)}`);
+  }
+}
+
 function syncModelControls() {
   const loading = Boolean(state.modelBusy);
   const loaded = Boolean(state.modelReady);
+  const imageMode = Boolean(state.image.enabled);
+  const imageBusy = Boolean(state.image.busy);
+  const translationBusy = Boolean(state.translation.busy || state.translation.listening);
   if (els.loadModel) {
-    els.loadModel.disabled = loading || state.processActive;
+    els.loadModel.disabled = imageMode || loading || state.processActive;
     els.loadModel.textContent = loaded ? 'Reload Runtime' : loading ? 'Loading...' : 'Load Runtime';
   }
   if (els.unloadModel) {
-    els.unloadModel.disabled = loading || state.processActive || !state.worker;
+    els.unloadModel.disabled = imageMode || loading || state.processActive || !state.worker;
   }
   if (els.send) {
-    els.send.disabled = state.processActive || loading || !loaded;
+    els.send.disabled = state.processActive || imageBusy || translationBusy || (imageMode ? !state.image.ready : loading || !loaded);
+    els.send.textContent = imageMode
+      ? imageBusy ? 'Generating...' : 'Generate'
+      : state.translation.enabled
+        ? state.translation.busy ? 'Translating...' : 'Translate'
+        : 'Send';
   }
+  syncTranslationControls();
 }
 
 function createProcessStepElement(step) {
@@ -463,6 +575,213 @@ function modeToken(mode = state.mode) {
   return '<AK_CHAT>';
 }
 
+function syncImageModeControls() {
+  const enabled = Boolean(state.image.enabled);
+  els.imageMode?.classList.toggle('active', enabled);
+  els.imageMode?.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  if (els.imageMode) els.imageMode.textContent = enabled ? 'Image On' : 'Image Off';
+  if (els.imageModeDetail) {
+    els.imageModeDetail.textContent = enabled ? 'Image runtime' : 'Chat runtime';
+  }
+  setPill(
+    els.imagePill,
+    enabled
+      ? state.image.busy
+        ? 'image generating'
+        : state.image.ready
+          ? 'image ready'
+          : 'image loading'
+      : 'image off',
+    enabled ? state.image.busy || !state.image.ready ? 'busy' : 'ready' : '',
+  );
+  if (els.prompt) els.prompt.placeholder = enabled ? 'Describe the image to generate...' : modeConfig().placeholder;
+  syncModelControls();
+  renderExtensionList();
+}
+
+function translationTargetLabel() {
+  return String(els.translationTarget?.value || 'Spanish').trim() || 'Spanish';
+}
+
+function translationSourceLabel() {
+  const value = String(els.translationSource?.value || 'auto').trim();
+  if (!value || value === 'auto') return 'Auto';
+  const option = [...(els.translationSource?.options || [])].find((item) => item.value === value);
+  return option?.textContent || value;
+}
+
+function syncTranslationControls() {
+  const enabled = Boolean(state.translation.enabled);
+  els.translationMode?.classList.toggle('active', enabled);
+  els.translationMode?.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  if (els.translationMode) els.translationMode.textContent = enabled ? 'Translate On' : 'Translate Off';
+  if (els.translationModeDetail) {
+    els.translationModeDetail.textContent = enabled
+      ? `${translationSourceLabel()} to ${translationTargetLabel()}`
+      : 'Translate text or speech';
+  }
+  if (els.audioTranslate) {
+    els.audioTranslate.disabled = state.processActive || state.translation.busy;
+    els.audioTranslate.classList.toggle('listening', state.translation.listening);
+    els.audioTranslate.textContent = state.translation.listening ? 'Listening...' : 'Audio Translate';
+  }
+  if (els.prompt && !state.image.enabled) {
+    els.prompt.placeholder = enabled ? `Text to translate to ${translationTargetLabel()}...` : modeConfig().placeholder;
+  }
+}
+
+function setTranslationMode(enabled) {
+  const requested = Boolean(enabled);
+  const extensionResult = setExtensionEnabled(state.translation.extensionId, requested);
+  if (extensionResult.status === 'error' || extensionResult.status === 'disabled') {
+    appendMessage('assistant', `Translator extension could not be ${requested ? 'enabled' : 'disabled'}: ${extensionResult.error || extensionResult.status}`);
+    log(`translator extension toggle failed: ${extensionResult.error || extensionResult.status}`);
+    syncTranslationControls();
+    return;
+  }
+  state.translation.enabled = requested;
+  if (state.translation.enabled && state.image.enabled) setImageMode(false);
+  log(`translator extension ${requested ? 'enabled' : 'disabled'}`);
+  syncTranslationControls();
+  syncModelControls();
+}
+
+function ensureImageWorker() {
+  if (state.image.worker) return state.image.worker;
+  state.image.worker = new Worker('./js/image-worker.js?v=20260502-image-preview', { type: 'module' });
+  state.image.worker.addEventListener('message', onImageWorkerMessage);
+  state.image.worker.addEventListener('error', (event) => {
+    state.image.busy = false;
+    state.image.ready = false;
+    setProcessStep('generate', 'error', event.message || 'Image worker error');
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Image generation failed: ${event.message || 'worker error'}`);
+    syncImageModeControls();
+  });
+  return state.image.worker;
+}
+
+function loadImageRuntime() {
+  if (state.image.ready) return Promise.resolve();
+  if (state.image.loadPromise) return state.image.loadPromise;
+  state.image.loadPromise = new Promise((resolve, reject) => {
+    state.image.loadResolve = resolve;
+    state.image.loadReject = reject;
+  });
+  ensureImageWorker().postMessage({ type: 'load', modelId: state.image.modelId });
+  syncImageModeControls();
+  return state.image.loadPromise;
+}
+
+function settleImageRuntime(error) {
+  const resolve = state.image.loadResolve;
+  const reject = state.image.loadReject;
+  state.image.loadPromise = null;
+  state.image.loadResolve = null;
+  state.image.loadReject = null;
+  if (error) reject?.(error);
+  else resolve?.();
+}
+
+function setImageMode(enabled) {
+  const requested = Boolean(enabled);
+  const extensionResult = setExtensionEnabled(state.image.extensionId, requested);
+  if (extensionResult.status === 'error' || extensionResult.status === 'disabled') {
+    appendMessage('assistant', `Image extension could not be ${requested ? 'enabled' : 'disabled'}: ${extensionResult.error || extensionResult.status}`);
+    log(`image extension toggle failed: ${extensionResult.error || extensionResult.status}`);
+    syncImageModeControls();
+    return;
+  }
+  state.image.enabled = requested;
+  if (state.image.enabled) {
+    if (state.translation.enabled) setTranslationMode(false);
+    loadImageRuntime().catch((error) => {
+      setExtensionEnabled(state.image.extensionId, false);
+      state.image.enabled = false;
+      state.image.ready = false;
+      setPill(els.imagePill, 'image error', 'error');
+      appendMessage('assistant', `Image mode could not start: ${error.message || String(error)}`);
+      log(`image mode failed: ${error.message || String(error)}`);
+      syncImageModeControls();
+    });
+    log('image generation mode enabled');
+  } else {
+    log('image generation mode disabled');
+  }
+  syncImageModeControls();
+}
+
+function onImageWorkerMessage(event) {
+  const data = event.data || {};
+  if (data.type === 'status') {
+    log(data.message || 'image status');
+    if (state.processActive) setProcessStep('runtime', 'active', data.message || 'Image runtime status');
+    return;
+  }
+  if (data.type === 'ready') {
+    state.image.ready = true;
+    state.image.busy = false;
+    settleImageRuntime();
+    if (state.processActive) {
+      setProcessStep('runtime', 'done', `Image backend ready: ${shortText(data.modelId || state.image.modelId, 56)}`);
+    }
+    syncImageModeControls();
+    return;
+  }
+  if (data.type === 'progress') {
+    if (state.image.activeJobId !== data.id) return;
+    setProcessStep('generate', 'active', `${data.stage || 'Generating'} ${data.step || 0}/${data.totalSteps || '?'}`);
+    return;
+  }
+  if (data.type === 'result') {
+    if (state.image.activeJobId !== data.id) return;
+    const actionId = state.image.activeActionId;
+    state.image.busy = false;
+    state.image.activeJobId = null;
+    state.image.activeActionId = null;
+    setProcessStep('generate', 'done', 'Image artifact rendered');
+    setProcessStep('render', 'done', 'Generated image added to chat');
+    appendImageMessage(data);
+    if (actionId) {
+      recordExtensionResult(actionId, {
+        action_id: actionId,
+        status: 'approved_executed',
+        output: {
+          prompt: data.prompt || '',
+          seed: data.seed || null,
+          backend: data.metadata?.backend || 'preview-worker',
+        },
+        artifact_refs: data.id ? [`browser:image:${data.id}`] : [],
+      });
+    }
+    finishProcessTrace('Image Ready');
+    setControlsBusy(false);
+    syncImageModeControls();
+    return;
+  }
+  if (data.type === 'error') {
+    const error = new Error(data.message || 'image generation error');
+    if (state.image.loadPromise) settleImageRuntime(error);
+    const actionId = state.image.activeActionId;
+    state.image.busy = false;
+    state.image.activeJobId = null;
+    state.image.activeActionId = null;
+    if (actionId) {
+      recordExtensionResult(actionId, {
+        action_id: actionId,
+        status: 'failed',
+        error: error.message,
+      });
+    }
+    setProcessStep('generate', 'error', error.message);
+    finishProcessTrace('Error');
+    setControlsBusy(false);
+    appendMessage('assistant', `Image generation failed: ${error.message}`);
+    log(error.message);
+    syncImageModeControls();
+  }
+}
+
 function targetMaxTokens() {
   return Math.max(Number(els.tokens.value || 560), Number(modeConfig().minTokens || 560));
 }
@@ -474,6 +793,7 @@ async function loadAgentCore() {
     state.core = new AgentLiteCore('browser-session', state.mode, MAX_CONTEXT_ITEMS);
     state.coreReady = true;
     setPill(els.corePill, 'core ready', 'ready');
+    exposeExtensionApi();
     log('WASM agent core ready');
   } catch (error) {
     state.core = null;
@@ -639,6 +959,42 @@ async function dbSet(key, value) {
   await new Promise((resolve, reject) => {
     const tx = db.transaction(DB_STORE, 'readwrite');
     tx.objectStore(DB_STORE).put(value, key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function dbDump() {
+  const db = await openDb();
+  const entries = await new Promise((resolve, reject) => {
+    const out = [];
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const req = tx.objectStore(DB_STORE).openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      out.push([cursor.key, cursor.value]);
+      cursor.continue();
+    };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  return entries;
+}
+
+async function dbRestore(entries) {
+  if (!Array.isArray(entries) || !entries.length) return;
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    const store = tx.objectStore(DB_STORE);
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const [key, value] = entry;
+      if (typeof key === 'string' && key.length <= 256) store.put(value, key);
+    }
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
@@ -1023,6 +1379,161 @@ function generateUtilityText(prompt, options = {}) {
     options,
   });
   return promise;
+}
+
+function buildTranslationPrompt(text, options = {}) {
+  const source = String(options.sourceLanguage || translationSourceLabel() || 'Auto').trim();
+  const target = String(options.targetLanguage || translationTargetLabel() || 'Spanish').trim();
+  const modality = String(options.modality || 'text');
+  return [
+    '<AK_CHAT> <AK_RESPOND>',
+    'Return exactly this decision format: Action: respond, then Content: the translation only.',
+    `Task: Translate ${modality === 'audio' ? 'the speech transcript' : 'the text'} from ${source} to ${target}.`,
+    'Preserve meaning, names, numbers, punctuation, and paragraph breaks. Do not add explanations, notes, or citations.',
+    '',
+    'Text:',
+    text,
+  ].join('\n');
+}
+
+async function runTranslator(text, options = {}) {
+  const inputText = String(text || '').trim();
+  if (!inputText) throw new Error('No text was provided for translation.');
+  const modality = options.modality === 'audio' ? 'audio' : 'text';
+  const capabilityId = modality === 'audio'
+    ? state.translation.audioCapabilityId
+    : state.translation.textCapabilityId;
+  const proposal = proposeExtensionAction(state.translation.extensionId, capabilityId, {
+    text: inputText,
+    source_language: options.sourceLanguage || translationSourceLabel(),
+    target_language: options.targetLanguage || translationTargetLabel(),
+    modality,
+    surface: 'browser',
+  });
+  if (proposal.status !== 'pending_user_approval') {
+    throw new Error(proposal.error || `translator extension action was ${proposal.status || 'rejected'}`);
+  }
+  state.translation.activeActionId = proposal.action_id || null;
+  if (!state.modelReady || state.loadedModelId !== els.model.value) await loadModel();
+  const prompt = buildTranslationPrompt(inputText, {
+    sourceLanguage: options.sourceLanguage,
+    targetLanguage: options.targetLanguage,
+    modality,
+  });
+  const output = await generateUtilityText(prompt, {
+    maxNewTokens: Math.max(96, targetMaxTokens()),
+    temperature: 0.08,
+  });
+  const packet = recordAssistantTurn(output);
+  const translated = displayTextFromDecision(packet, output).replace(/^Content:\s*/i, '').trim();
+  if (state.translation.activeActionId) {
+    recordExtensionResult(state.translation.activeActionId, {
+      action_id: state.translation.activeActionId,
+      status: 'approved_executed',
+      output: {
+        source_language: options.sourceLanguage || translationSourceLabel(),
+        target_language: options.targetLanguage || translationTargetLabel(),
+        modality,
+        translated_text: translated,
+      },
+      artifact_refs: [],
+    });
+  }
+  state.translation.activeActionId = null;
+  return translated || output;
+}
+
+async function submitTranslationText(text, options = {}) {
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  state.translation.busy = true;
+  syncTranslationControls();
+  try {
+    setProcessStep('runtime', state.modelReady ? 'done' : 'active', state.modelReady ? 'Using loaded runtime' : 'Loading translation runtime');
+    setProcessStep('plan', 'done', `${options.modality === 'audio' ? 'audio' : 'text'} translation via extension`);
+    setProcessStep('compile', 'active', `Preparing ${translationSourceLabel()} to ${translationTargetLabel()} translation`);
+    const translated = await runTranslator(text, options);
+    setProcessStep('compile', 'done', 'Translation prompt ready');
+    setProcessStep('generate', 'done', `${formatCount(translated.length)} translated characters`);
+    setProcessStep('render', 'active', 'Rendering translation');
+    appendMessage('assistant', translated);
+    setProcessStep('render', 'done', 'Translation displayed');
+    finishProcessTrace('Translated');
+  } catch (error) {
+    if (state.translation.activeActionId) {
+      recordExtensionResult(state.translation.activeActionId, {
+        action_id: state.translation.activeActionId,
+        status: 'failed',
+        error: error.message || String(error),
+      });
+    }
+    state.translation.activeActionId = null;
+    setProcessStep('render', 'error', error.message || String(error));
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Translation failed: ${error.message || String(error)}`);
+    log(`translation failed: ${error.message || String(error)}`);
+  } finally {
+    state.translation.busy = false;
+    setControlsBusy(false);
+    syncTranslationControls();
+  }
+}
+
+function speechRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function startAudioTranslation() {
+  const SpeechRecognition = speechRecognitionConstructor();
+  if (!SpeechRecognition) {
+    appendMessage('assistant', 'Audio translation needs browser speech recognition support. You can still paste transcribed text and use Translate mode.');
+    return;
+  }
+  if (state.translation.listening && state.translation.recognition) {
+    state.translation.recognition.stop();
+    return;
+  }
+  setTranslationMode(true);
+  if (!state.translation.enabled) return;
+  const recognition = new SpeechRecognition();
+  recognition.lang = String(els.translationSource?.value || 'en-US') === 'auto' ? 'en-US' : String(els.translationSource.value);
+  recognition.interimResults = false;
+  recognition.continuous = false;
+  state.translation.recognition = recognition;
+  state.translation.listening = true;
+  syncTranslationControls();
+  log('audio translation listening');
+  recognition.onresult = (event) => {
+    const transcript = [...event.results]
+      .map((result) => result[0]?.transcript || '')
+      .join(' ')
+      .trim();
+    state.translation.listening = false;
+    state.translation.recognition = null;
+    syncTranslationControls();
+    if (!transcript) {
+      appendMessage('assistant', 'I did not catch any speech to translate.');
+      return;
+    }
+    appendMessage('user', transcript);
+    submitTranslationText(transcript, {
+      modality: 'audio',
+      sourceLanguage: translationSourceLabel(),
+      targetLanguage: translationTargetLabel(),
+    });
+  };
+  recognition.onerror = (event) => {
+    state.translation.listening = false;
+    state.translation.recognition = null;
+    syncTranslationControls();
+    appendMessage('assistant', `Audio translation failed: ${event.error || 'speech recognition error'}`);
+  };
+  recognition.onend = () => {
+    state.translation.listening = false;
+    state.translation.recognition = null;
+    syncTranslationControls();
+  };
+  recognition.start();
 }
 
 function normalizeText(value) {
@@ -2680,6 +3191,99 @@ function appendMessage(role, text) {
   state.messages.push({ role, text });
 }
 
+function renderStoredMessage(message) {
+  if (message?.artifact?.type === 'image') {
+    const node = document.createElement('article');
+    node.className = 'message assistant image-result';
+    const roleNode = document.createElement('div');
+    roleNode.className = 'role';
+    roleNode.textContent = 'Image Generation';
+    const body = document.createElement('div');
+    body.className = 'body image-artifact';
+    const prompt = document.createElement('div');
+    prompt.className = 'image-prompt';
+    prompt.textContent = message.artifact.prompt || message.text || '';
+    const meta = document.createElement('div');
+    meta.className = 'image-meta';
+    meta.textContent = [
+      message.artifact.model || state.image.modelId,
+      message.artifact.seed ? `seed ${message.artifact.seed}` : '',
+      'artifact metadata restored',
+    ].filter(Boolean).join(' | ');
+    body.append(prompt, meta);
+    node.append(roleNode, body);
+    els.chat.appendChild(node);
+    return;
+  }
+  const node = document.createElement('article');
+  const role = message?.role === 'user' ? 'user' : 'assistant';
+  node.className = `message ${role}`;
+  const roleNode = document.createElement('div');
+  roleNode.className = 'role';
+  roleNode.textContent = role === 'user' ? 'You' : 'Agent Kernel Lite';
+  const body = document.createElement('div');
+  body.className = 'body';
+  renderMessageBody(body, message?.text || '', { linkEvidence: role === 'assistant' });
+  node.append(roleNode, body);
+  els.chat.appendChild(node);
+}
+
+function renderStoredMessages() {
+  els.chat.innerHTML = '';
+  if (!state.messages.length) {
+    els.chat.appendChild(els.empty);
+    return;
+  }
+  els.empty?.remove();
+  for (const message of state.messages) renderStoredMessage(message);
+  els.chat.scrollTop = els.chat.scrollHeight;
+}
+
+function appendImageMessage(result) {
+  els.empty?.remove();
+  const svg = String(result.svg || '');
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const blobUrl = URL.createObjectURL(blob);
+  const metadata = result.metadata || {};
+  const node = document.createElement('article');
+  node.className = 'message assistant image-result';
+  const roleNode = document.createElement('div');
+  roleNode.className = 'role';
+  roleNode.textContent = 'Image Generation';
+  const body = document.createElement('div');
+  body.className = 'body image-artifact';
+  const image = document.createElement('img');
+  image.src = blobUrl;
+  image.alt = String(result.prompt || 'Generated image');
+  image.loading = 'lazy';
+  const prompt = document.createElement('div');
+  prompt.className = 'image-prompt';
+  prompt.textContent = result.prompt || '';
+  const meta = document.createElement('div');
+  meta.className = 'image-meta';
+  meta.textContent = [
+    metadata.model || state.image.modelId,
+    metadata.backend || 'preview',
+    result.seed ? `seed ${result.seed}` : '',
+    result.elapsedMs ? `${Math.round(result.elapsedMs)} ms` : '',
+  ].filter(Boolean).join(' | ');
+  body.append(image, prompt, meta);
+  node.append(roleNode, body);
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+  state.messages.push({
+    role: 'assistant',
+    text: `[image] ${result.prompt || ''}`,
+    artifact: {
+      type: 'image',
+      id: result.id,
+      prompt: result.prompt || '',
+      seed: result.seed || null,
+      model: metadata.model || state.image.modelId,
+    },
+  });
+}
+
 function paperMeta(row) {
   return [
     row.paper_id || row.canonical_paper_id || '',
@@ -2832,20 +3436,33 @@ function appendRetrieval(rows, { locked = state.processActive } = {}) {
 }
 
 function setControlsBusy(busy) {
-  els.send.disabled = busy || state.modelBusy || !state.modelReady;
+  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || (state.image.enabled ? !state.image.ready : state.modelBusy || !state.modelReady);
   els.prompt.disabled = busy;
-  els.loadModel.disabled = busy || state.modelBusy;
-  if (els.unloadModel) els.unloadModel.disabled = busy || state.modelBusy || !state.worker;
+  els.loadModel.disabled = state.image.enabled || busy || state.modelBusy;
+  if (els.unloadModel) els.unloadModel.disabled = state.image.enabled || busy || state.modelBusy || !state.worker;
   els.loadPack.disabled = busy;
+  if (els.audioTranslate) els.audioTranslate.disabled = busy || state.translation.busy;
   syncModelControls();
 }
 
 async function submitPrompt(event) {
   event.preventDefault();
   const text = els.prompt.value.trim();
-  if (!text || state.modelBusy) return;
+  if (!text || state.modelBusy || state.image.busy) return;
   els.prompt.value = '';
   appendMessage('user', text);
+  if (state.image.enabled) {
+    await submitImagePrompt(text);
+    return;
+  }
+  if (state.translation.enabled) {
+    await submitTranslationText(text, {
+      modality: 'text',
+      sourceLanguage: translationSourceLabel(),
+      targetLanguage: translationTargetLabel(),
+    });
+    return;
+  }
   resetProcessTrace(text);
   setControlsBusy(true);
   try {
@@ -2943,6 +3560,60 @@ async function submitPrompt(event) {
   }
 }
 
+async function submitImagePrompt(text) {
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  try {
+    setProcessStep('runtime', state.image.ready ? 'done' : 'active', state.image.ready ? 'Using image backend' : 'Loading image backend');
+    await loadImageRuntime();
+    const proposal = proposeExtensionAction(state.image.extensionId, state.image.capabilityId, {
+      prompt: text,
+      model: state.image.modelId,
+      surface: 'browser',
+    });
+    if (proposal.status !== 'pending_user_approval') {
+      throw new Error(proposal.error || `image extension action was ${proposal.status || 'rejected'}`);
+    }
+    const jobId = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    state.image.busy = true;
+    state.image.activeJobId = jobId;
+    state.image.activeActionId = proposal.action_id || null;
+    setProcessStep('plan', 'done', 'Image mode selected by toggle');
+    setProcessStep('compile', 'done', 'Image prompt packet ready');
+    setProcessStep('generate', 'active', 'Starting image generation');
+    syncImageModeControls();
+    ensureImageWorker().postMessage({
+      type: 'generate',
+      id: jobId,
+      prompt: text,
+      options: {
+        width: 384,
+        height: 384,
+        steps: 6,
+        seed: Math.floor(Math.random() * 1_000_000_000),
+      },
+    });
+  } catch (error) {
+    const actionId = state.image.activeActionId;
+    state.image.busy = false;
+    state.image.activeJobId = null;
+    state.image.activeActionId = null;
+    if (actionId) {
+      recordExtensionResult(actionId, {
+        action_id: actionId,
+        status: 'failed',
+        error: error.message || String(error),
+      });
+    }
+    setControlsBusy(false);
+    setProcessStep('render', 'error', error.message || String(error));
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Could not generate image: ${error.message || String(error)}`);
+    log(error.message || String(error));
+    syncImageModeControls();
+  }
+}
+
 async function resetChat() {
   state.messages = [];
   state.paperContextRows = [];
@@ -2972,36 +3643,467 @@ function setMode(mode) {
   }
   setPill(els.modePill, config.pill, state.mode === 'deep_research' ? 'busy' : 'ready');
   els.send.textContent = 'Send';
-  els.prompt.placeholder = config.placeholder;
+  els.prompt.placeholder = state.image.enabled
+    ? 'Describe the image to generate...'
+    : state.translation.enabled
+      ? `Text to translate to ${translationTargetLabel()}...`
+      : config.placeholder;
   log(`mode set: ${config.label}`);
 }
 
-function registerBuiltinExtensions() {
-  if (!state.coreReady || !state.core?.register_extension_manifest) return;
-  const manifest = {
-    id: 'code_draft',
-    name: 'Code Draft',
-    version: '0.1.0',
-    approval_policy: 'always_ask',
-    capabilities: [
-      {
-        id: 'code.generate_draft',
-        description: 'Generate code drafts from chat with explicit user approval.',
-        scopes: ['chat.context', 'artifact.proposal'],
-      },
-    ],
-    metadata: {
-      browser_surface: 'extension',
-      default_enabled: false,
-      code_execution: false,
+function parseCoreJson(raw, fallback = {}) {
+  try {
+    return JSON.parse(String(raw || '{}'));
+  } catch {
+    return fallback;
+  }
+}
+
+function registerExtensionManifest(manifest) {
+  if (!state.coreReady || !(state.core?.install_extension_manifest || state.core?.register_extension_manifest)) {
+    return { status: 'error', error: 'extension core is not ready' };
+  }
+  try {
+    const install = state.core.install_extension_manifest || state.core.register_extension_manifest;
+    return parseCoreJson(install.call(state.core, JSON.stringify(manifest)));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error) };
+  }
+}
+
+function isLocalDevelopmentUrl(url) {
+  return ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(url.hostname);
+}
+
+function isGitHubReleaseAssetUrl(url) {
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') return false;
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (parts.length < 6) return false;
+  const [, , releases, download, tag, ...assetParts] = parts;
+  if (releases !== 'releases' || download !== 'download') return false;
+  if (!tag || tag === 'latest' || tag === 'main' || tag === 'master') return false;
+  return assetParts.length > 0 && !url.pathname.includes('/refs/heads/');
+}
+
+function assertReleaseInstallUrl(rawUrl, label = 'extension asset') {
+  const url = new URL(String(rawUrl || '').trim(), window.location.href);
+  if (isGitHubReleaseAssetUrl(url)) return url;
+  if (url.origin === window.location.origin && isLocalDevelopmentUrl(url)) return url;
+  throw new Error(`${label} must be a GitHub Release asset URL, not a branch/raw/latest URL.`);
+}
+
+function extensionCodeUrls(manifest) {
+  const metadata = manifest?.metadata || {};
+  return [
+    metadata.adapter_url,
+    metadata.adapter_script,
+    metadata.worker,
+    metadata.worker_url,
+    metadata.module,
+    metadata.module_url,
+  ].filter(Boolean);
+}
+
+function validateExtensionReleaseManifest(manifest) {
+  for (const assetUrl of extensionCodeUrls(manifest)) {
+    assertReleaseInstallUrl(assetUrl, 'extension code asset');
+  }
+}
+
+async function installExtensionFromUrl(manifestUrl) {
+  const url = assertReleaseInstallUrl(manifestUrl, 'extension manifest');
+  const response = await fetch(url.href, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`extension manifest fetch failed: ${response.status}`);
+  const manifest = await response.json();
+  validateExtensionReleaseManifest(manifest);
+  manifest.source = manifest.source || 'remote';
+  manifest.imported_from = manifest.imported_from || url.href;
+  manifest.metadata = {
+    ...(manifest.metadata || {}),
+    install_url: url.href,
+    release_only: true,
+  };
+  return registerExtensionManifest(manifest);
+}
+
+function uninstallExtension(extensionId) {
+  if (!state.coreReady || !state.core?.uninstall_extension) {
+    return { status: 'error', error: 'extension core is not ready', extension_id: extensionId };
+  }
+  try {
+    return parseCoreJson(state.core.uninstall_extension(String(extensionId || '')));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error), extension_id: extensionId };
+  }
+}
+
+function setExtensionEnabled(extensionId, enabled) {
+  if (!state.coreReady || !state.core?.set_extension_enabled) {
+    return { status: 'error', error: 'extension core is not ready', extension_id: extensionId };
+  }
+  try {
+    return parseCoreJson(state.core.set_extension_enabled(String(extensionId || ''), Boolean(enabled)));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error), extension_id: extensionId };
+  }
+}
+
+function listExtensionManifests() {
+  if (!state.coreReady || !state.core?.list_extension_manifests) {
+    return { status: 'error', error: 'extension core is not ready', extensions: [] };
+  }
+  try {
+    return parseCoreJson(state.core.list_extension_manifests(), { status: 'error', extensions: [] });
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error), extensions: [] };
+  }
+}
+
+function extensionStatusText(manifest) {
+  const source = manifest.source || 'user';
+  const enabled = manifest.enabled ? 'enabled' : 'off';
+  return `${source} | ${enabled}`;
+}
+
+function extensionSetupText(manifest) {
+  if (manifest.id === state.image.extensionId) return 'Enable it to switch the composer into image generation mode. This extension is available for development and future release installs.';
+  if (manifest.id === state.translation.extensionId) return 'Requires browser speech/model setup before audio translation can run.';
+  return manifest.metadata?.setup || 'Installed from manifest. Enable only after the adapter setup is complete.';
+}
+
+function setInstalledExtensionEnabled(extensionId, enabled) {
+  if (extensionId === state.image.extensionId) {
+    setImageMode(enabled);
+    return;
+  }
+  if (extensionId === state.translation.extensionId) {
+    setTranslationMode(enabled);
+    renderExtensionList();
+    return;
+  }
+  const result = setExtensionEnabled(extensionId, enabled);
+  if (result.status === 'error' || result.status === 'disabled') {
+    appendMessage('assistant', `Extension could not be ${enabled ? 'enabled' : 'disabled'}: ${result.error || result.status}`);
+    log(`extension toggle failed: ${result.error || result.status}`);
+  } else {
+    log(`extension ${extensionId} ${enabled ? 'enabled' : 'disabled'}`);
+  }
+  renderExtensionList();
+}
+
+function renderExtensionList() {
+  if (!els.extensionList) return;
+  const result = listExtensionManifests();
+  const manifests = Array.isArray(result.extensions) ? result.extensions : [];
+  els.extensionList.innerHTML = '';
+  if (!manifests.length) {
+    const empty = document.createElement('p');
+    empty.className = 'extension-detail';
+    empty.textContent = 'No extensions installed.';
+    els.extensionList.appendChild(empty);
+    return;
+  }
+  for (const manifest of manifests) {
+    const card = document.createElement('details');
+    card.className = 'extension-card';
+    const summary = document.createElement('summary');
+    const title = document.createElement('div');
+    title.className = 'extension-title';
+    const name = document.createElement('strong');
+    name.textContent = manifest.name || manifest.id;
+    const status = document.createElement('span');
+    status.textContent = extensionStatusText(manifest);
+    title.append(name, status);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = `image-toggle-button${manifest.enabled ? ' active' : ''}`;
+    toggle.textContent = manifest.enabled ? 'On' : 'Off';
+    toggle.setAttribute('aria-pressed', manifest.enabled ? 'true' : 'false');
+    toggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setInstalledExtensionEnabled(manifest.id, !manifest.enabled);
+    });
+    summary.append(title, toggle);
+
+    const settings = document.createElement('div');
+    settings.className = 'extension-settings';
+    const setup = document.createElement('p');
+    setup.className = 'extension-detail';
+    setup.textContent = extensionSetupText(manifest);
+    const caps = document.createElement('p');
+    caps.className = 'extension-detail';
+    caps.textContent = `Capabilities: ${(manifest.capabilities || []).map((capability) => capability.id).join(', ') || 'none'}`;
+    const scopes = document.createElement('p');
+    scopes.className = 'extension-detail';
+    const scopeList = (manifest.capabilities || []).flatMap((capability) => capability.scopes || []);
+    scopes.textContent = `Scopes: ${scopeList.length ? [...new Set(scopeList)].join(', ') : 'none'}`;
+    settings.append(setup, caps, scopes);
+    if (manifest.imported_from) {
+      const imported = document.createElement('p');
+      imported.className = 'extension-detail';
+      imported.textContent = `Installed from: ${manifest.imported_from}`;
+      settings.appendChild(imported);
+    }
+    if (manifest.id !== state.image.extensionId) {
+      const uninstall = document.createElement('button');
+      uninstall.type = 'button';
+      uninstall.className = 'secondary';
+      uninstall.textContent = 'Uninstall';
+      uninstall.addEventListener('click', () => {
+        const uninstalled = uninstallExtension(manifest.id);
+        if (uninstalled.status === 'uninstalled') log(`uninstalled extension: ${manifest.name || manifest.id}`);
+        else log(`extension uninstall failed: ${uninstalled.error || manifest.id}`);
+        renderExtensionList();
+      });
+      settings.appendChild(uninstall);
+    }
+    card.append(summary, settings);
+    els.extensionList.appendChild(card);
+  }
+}
+
+async function installExtensionFromInput() {
+  const url = String(els.extensionManifestUrl?.value || '').trim();
+  if (!url) return;
+  try {
+    const result = await installExtensionFromUrl(url);
+    if (result.status !== 'installed') throw new Error(result.error || result.status || 'install failed');
+    if (els.extensionManifestUrl) els.extensionManifestUrl.value = '';
+    log(`installed extension: ${result.extension_id}`);
+    renderExtensionList();
+  } catch (error) {
+    appendMessage('assistant', `Extension install failed: ${error.message || String(error)}`);
+    log(`extension install failed: ${error.message || String(error)}`);
+  }
+}
+
+function proposeExtensionAction(extensionId, capabilityId, input = {}) {
+  if (!state.coreReady || !state.core?.propose_extension_action) {
+    return { status: 'error', error: 'extension core is not ready', extension_id: extensionId };
+  }
+  try {
+    return parseCoreJson(state.core.propose_extension_action(
+      String(extensionId || ''),
+      String(capabilityId || ''),
+      JSON.stringify(input),
+    ));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error), extension_id: extensionId, capability_id: capabilityId };
+  }
+}
+
+function recordExtensionResult(actionId, receipt) {
+  if (!state.coreReady || !state.core?.record_extension_result) {
+    return { status: 'error', error: 'extension core is not ready', action_id: actionId };
+  }
+  try {
+    return parseCoreJson(state.core.record_extension_result(String(actionId || ''), JSON.stringify(receipt || {})));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error), action_id: actionId };
+  }
+}
+
+function exportLocalStorage() {
+  const out = {};
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !key.startsWith('agent-kernel-lite-')) continue;
+      out[key] = localStorage.getItem(key);
+    }
+  } catch (error) {
+    log(`session export skipped localStorage: ${error.message || String(error)}`);
+  }
+  return out;
+}
+
+function restoreLocalStorage(values) {
+  if (!values || typeof values !== 'object') return;
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (!key.startsWith('agent-kernel-lite-')) continue;
+      if (typeof value === 'string') localStorage.setItem(key, value);
+    }
+  } catch (error) {
+    log(`session restore skipped localStorage: ${error.message || String(error)}`);
+  }
+}
+
+async function buildSessionExport() {
+  const extensions = listExtensionManifests();
+  return {
+    type: 'agent_kernel_lite_session',
+    version: SESSION_EXPORT_VERSION,
+    exported_at: new Date().toISOString(),
+    app: {
+      url: window.location.href,
+      user_agent: navigator.userAgent,
+      release_repo: GITHUB_RELEASE_REPO,
+      release_root: GITHUB_RELEASE_ROOT,
+      release_only_installs: true,
+      integrity: state.appIntegrity,
+    },
+    settings: {
+      theme: state.theme,
+      mode: state.mode,
+      max_tokens: Number(els.tokens?.value || 160),
+      pack_rows: Number(els.pack?.value || 50000),
+      device: els.device?.value || 'auto',
+      model: els.model?.value || '',
+      image_enabled: Boolean(state.image.enabled),
+      translation_enabled: Boolean(state.translation.enabled),
+      translation_source: els.translationSource?.value || 'auto',
+      translation_target: els.translationTarget?.value || 'Spanish',
+    },
+    session: {
+      messages: state.messages,
+      paper_context_rows: state.paperContextRows,
+      pending_context_rows: state.pendingContextRows,
+      retrieval_rows: state.retrievalRows.slice(0, 32),
+    },
+    extensions: {
+      status: extensions.status,
+      manifests: extensions.extensions || [],
+    },
+    storage: {
+      local_storage: exportLocalStorage(),
+      indexed_db: await dbDump().catch((error) => {
+        log(`session export skipped IndexedDB metadata: ${error.message || String(error)}`);
+        return [];
+      }),
+      cache_name: CACHE_NAME,
+      cache_exported: false,
     },
   };
+}
+
+function downloadJsonFile(filename, value) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportSession() {
   try {
-    state.core.register_extension_manifest(JSON.stringify(manifest));
-    log('registered code drafting as an extension capability');
+    const bundle = await buildSessionExport();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadJsonFile(`agent-kernel-lite-session-${stamp}.json`, bundle);
+    log('session export ready');
   } catch (error) {
-    log(`extension registration failed: ${error.message || String(error)}`);
+    appendMessage('assistant', `Session export failed: ${error.message || String(error)}`);
+    log(`session export failed: ${error.message || String(error)}`);
   }
+}
+
+function normalizeSessionBundle(raw) {
+  const bundle = raw && typeof raw === 'object' ? raw : {};
+  if (bundle.type !== 'agent_kernel_lite_session') {
+    throw new Error('Not an Agent Kernel Lite session file.');
+  }
+  if (Number(bundle.version || 0) > SESSION_EXPORT_VERSION) {
+    throw new Error(`Session file version ${bundle.version} is newer than this app supports.`);
+  }
+  return bundle;
+}
+
+async function restoreExtensions(extensionBundle) {
+  const manifests = Array.isArray(extensionBundle?.manifests) ? extensionBundle.manifests : [];
+  for (const manifest of manifests) {
+    if (!manifest?.id || !manifest?.capabilities?.length) continue;
+    const wasEnabled = Boolean(manifest.enabled);
+    const cleanManifest = { ...manifest, enabled: false, default_enabled: false };
+    const installed = registerExtensionManifest(cleanManifest);
+    if (installed.status !== 'installed') {
+      log(`extension restore skipped ${manifest.id}: ${installed.error || installed.status}`);
+      continue;
+    }
+    if (wasEnabled) setExtensionEnabled(manifest.id, true);
+  }
+}
+
+async function restoreSessionBundle(rawBundle) {
+  const bundle = normalizeSessionBundle(rawBundle);
+  const settings = bundle.settings || {};
+  if (settings.theme) setTheme(settings.theme);
+  if (settings.mode) setMode(settings.mode);
+  if (els.tokens && settings.max_tokens) els.tokens.value = String(settings.max_tokens);
+  if (els.pack && settings.pack_rows) els.pack.value = String(settings.pack_rows);
+  if (els.device && settings.device) els.device.value = String(settings.device);
+  if (els.model && settings.model) {
+    const modelValue = String(settings.model);
+    if ([...els.model.options].some((option) => option.value === modelValue)) els.model.value = modelValue;
+  }
+  if (els.translationSource && settings.translation_source) els.translationSource.value = String(settings.translation_source);
+  if (els.translationTarget && settings.translation_target) els.translationTarget.value = String(settings.translation_target);
+  restoreLocalStorage(bundle.storage?.local_storage);
+  await dbRestore(bundle.storage?.indexed_db || []).catch((error) => {
+    log(`session restore skipped IndexedDB metadata: ${error.message || String(error)}`);
+  });
+  await restoreExtensions(bundle.extensions);
+  state.messages = Array.isArray(bundle.session?.messages) ? bundle.session.messages : [];
+  state.paperContextRows = Array.isArray(bundle.session?.paper_context_rows) ? bundle.session.paper_context_rows : [];
+  state.pendingContextRows = Array.isArray(bundle.session?.pending_context_rows) ? bundle.session.pending_context_rows : [];
+  state.retrievalRows = Array.isArray(bundle.session?.retrieval_rows) ? bundle.session.retrieval_rows : [];
+  renderStoredMessages();
+  if (Boolean(settings.image_enabled) && !state.image.enabled) setImageMode(true);
+  else if (!settings.image_enabled && state.image.enabled) setImageMode(false);
+  if (Boolean(settings.translation_enabled) && !state.translation.enabled) setTranslationMode(true);
+  else if (!settings.translation_enabled && state.translation.enabled) setTranslationMode(false);
+  await refreshStorage();
+  log('session restored');
+}
+
+async function importSessionFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    await restoreSessionBundle(JSON.parse(text));
+  } catch (error) {
+    appendMessage('assistant', `Session import failed: ${error.message || String(error)}`);
+    log(`session import failed: ${error.message || String(error)}`);
+  } finally {
+    if (els.importSessionInput) els.importSessionInput.value = '';
+  }
+}
+
+function exposeExtensionApi() {
+  window.AgentKernelExtensions = Object.freeze({
+    install: registerExtensionManifest,
+    installFromUrl: installExtensionFromUrl,
+    uninstall: uninstallExtension,
+    enable: (extensionId) => setExtensionEnabled(extensionId, true),
+    disable: (extensionId) => setExtensionEnabled(extensionId, false),
+    list: listExtensionManifests,
+    propose: proposeExtensionAction,
+    record: recordExtensionResult,
+    translateText: (text, options = {}) => runTranslator(text, { ...options, modality: 'text' }),
+    translateAudio: (input, options = {}) => {
+      const text = typeof input === 'string' ? input : input?.transcript || input?.text || '';
+      return runTranslator(text, { ...options, modality: 'audio' });
+    },
+    exportSession: buildSessionExport,
+    restoreSession: restoreSessionBundle,
+  });
+}
+
+function registerBuiltinExtensions() {
+  const manifests = [];
+  for (const manifest of manifests) {
+    const result = registerExtensionManifest(manifest);
+    if (result.status === 'installed') {
+      log(`installed extension: ${manifest.name}`);
+    } else {
+      log(`extension install failed: ${result.error || manifest.id}`);
+    }
+  }
+  renderExtensionList();
 }
 
 async function init() {
@@ -3044,11 +4146,26 @@ async function init() {
   els.chatMode?.addEventListener('click', () => setMode('chat'));
   els.thinkMode?.addEventListener('click', () => setMode('think'));
   els.deepResearchMode?.addEventListener('click', () => setMode('deep_research'));
+  els.imageMode?.addEventListener('click', () => setImageMode(!state.image.enabled));
+  els.translationMode?.addEventListener('click', () => setTranslationMode(!state.translation.enabled));
+  els.translationSource?.addEventListener('change', syncTranslationControls);
+  els.translationTarget?.addEventListener('change', syncTranslationControls);
+  els.audioTranslate?.addEventListener('click', startAudioTranslation);
   els.loadModel.addEventListener('click', () => loadModel({ force: true }).catch((error) => log(error.message || String(error))));
   els.unloadModel?.addEventListener('click', () => unloadModel());
   els.loadPack.addEventListener('click', () => loadResearchPack());
   els.persist.addEventListener('click', () => requestPersistentStorage());
   els.reset.addEventListener('click', resetChat);
+  els.exportSession?.addEventListener('click', () => exportSession());
+  els.importSession?.addEventListener('click', () => els.importSessionInput?.click());
+  els.importSessionInput?.addEventListener('change', () => importSessionFile(els.importSessionInput.files?.[0]));
+  els.installExtension?.addEventListener('click', () => installExtensionFromInput());
+  els.extensionManifestUrl?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      installExtensionFromInput();
+    }
+  });
   els.themeToggle?.addEventListener('click', toggleTheme);
   els.mobileToggle?.addEventListener('click', () => document.body.classList.toggle('controls-hidden'));
   if (navigator.storage?.persisted) {
@@ -3061,6 +4178,9 @@ async function init() {
       : 'Dev structure check via local vLLM.'
     : 'WASM on-device runtime. No server-side inference.';
   setMode('chat');
+  syncImageModeControls();
+  syncTranslationControls();
+  refreshAppIntegrity();
   await refreshStorage();
   syncModelControls();
   log('agent kernel lite ready');

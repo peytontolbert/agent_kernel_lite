@@ -19,6 +19,21 @@ impl Default for ApprovalPolicy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionSource {
+    Official,
+    User,
+    Local,
+    Remote,
+}
+
+impl Default for ExtensionSource {
+    fn default() -> Self {
+        ExtensionSource::User
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionCapability {
     pub id: String,
     pub description: String,
@@ -46,6 +61,14 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub version: String,
     #[serde(default)]
+    pub source: ExtensionSource,
+    #[serde(default)]
+    pub imported_from: String,
+    #[serde(default)]
+    pub default_enabled: bool,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
     pub approval_policy: ApprovalPolicy,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
@@ -58,6 +81,7 @@ impl ExtensionManifest {
         self.id = compact_whitespace(&self.id);
         self.name = compact_whitespace(&self.name);
         self.version = compact_whitespace(&self.version);
+        self.imported_from = compact_whitespace(&self.imported_from);
         for capability in &mut self.capabilities {
             capability.normalize();
         }
@@ -83,6 +107,15 @@ impl ExtensionManifest {
         self.capabilities
             .iter()
             .any(|capability| capability.id == normalized)
+    }
+
+    pub fn disable_on_register(&mut self) {
+        self.enabled = false;
+        self.default_enabled = false;
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 }
 
@@ -142,11 +175,32 @@ mod tests {
         let raw = r#"{
             "id": " github ",
             "name": " GitHub ",
+            "source": "official",
+            "imported_from": " builtin ",
+            "enabled": true,
             "capabilities": [{"id": " github.read_repo ", "description": " Read repository "}]
         }"#;
         let manifest = parse_manifest(raw).expect("manifest should parse");
         assert_eq!(manifest.id, "github");
+        assert_eq!(manifest.source, ExtensionSource::Official);
+        assert_eq!(manifest.imported_from, "builtin");
+        assert!(manifest.enabled);
         assert!(manifest.supports_capability("github.read_repo"));
         assert_eq!(manifest.approval_policy, ApprovalPolicy::AlwaysAsk);
+    }
+
+    #[test]
+    fn disables_manifest_on_registration_boundary() {
+        let raw = r#"{
+            "id": "local_tool",
+            "name": "Local Tool",
+            "default_enabled": true,
+            "enabled": true,
+            "capabilities": [{"id": "local.run", "description": "Run local adapter"}]
+        }"#;
+        let mut manifest = parse_manifest(raw).expect("manifest should parse");
+        manifest.disable_on_register();
+        assert!(!manifest.enabled);
+        assert!(!manifest.default_enabled);
     }
 }

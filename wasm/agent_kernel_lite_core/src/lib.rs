@@ -356,14 +356,17 @@ impl AgentLiteCore {
 
     pub fn register_extension_manifest(&mut self, manifest_json: String) -> String {
         match parse_manifest(&manifest_json) {
-            Ok(manifest) => {
+            Ok(mut manifest) => {
+                manifest.disable_on_register();
                 let id = manifest.id.clone();
                 self.extension_manifests
                     .retain(|existing| existing.id != id);
                 self.extension_manifests.push(manifest);
                 json!({
-                    "status": "registered",
+                    "status": "installed",
                     "extension_id": id,
+                    "enabled": false,
+                    "installed_extension_count": self.extension_manifests.len(),
                     "registered_extension_count": self.extension_manifests.len(),
                 })
                 .to_string()
@@ -374,6 +377,74 @@ impl AgentLiteCore {
             })
             .to_string(),
         }
+    }
+
+    pub fn install_extension_manifest(&mut self, manifest_json: String) -> String {
+        self.register_extension_manifest(manifest_json)
+    }
+
+    pub fn uninstall_extension(&mut self, extension_id: String) -> String {
+        let normalized_extension_id = compact_whitespace(&extension_id);
+        let before = self.extension_manifests.len();
+        self.extension_manifests
+            .retain(|manifest| manifest.id != normalized_extension_id);
+        if self.extension_manifests.len() == before {
+            return json!({
+                "status": "error",
+                "error": "extension is not installed",
+                "extension_id": normalized_extension_id,
+            })
+            .to_string();
+        }
+        json!({
+            "status": "uninstalled",
+            "extension_id": normalized_extension_id,
+            "installed_extension_count": self.extension_manifests.len(),
+        })
+        .to_string()
+    }
+
+    pub fn set_extension_enabled(&mut self, extension_id: String, enabled: bool) -> String {
+        let normalized_extension_id = compact_whitespace(&extension_id);
+        let Some(manifest) = self
+            .extension_manifests
+            .iter_mut()
+            .find(|manifest| manifest.id == normalized_extension_id)
+        else {
+            return json!({
+                "status": "error",
+                "error": "extension is not registered",
+                "extension_id": normalized_extension_id,
+            })
+            .to_string();
+        };
+        if manifest.approval_policy == ApprovalPolicy::Disabled && enabled {
+            return json!({
+                "status": "disabled",
+                "error": "extension approval policy is disabled",
+                "extension_id": normalized_extension_id,
+                "enabled": false,
+            })
+            .to_string();
+        }
+        manifest.set_enabled(enabled);
+        json!({
+            "status": if enabled { "enabled" } else { "disabled" },
+            "extension_id": normalized_extension_id,
+            "enabled": manifest.enabled,
+        })
+        .to_string()
+    }
+
+    pub fn list_extension_manifests(&self) -> String {
+        json!({
+            "status": "ok",
+            "extensions": self.extension_manifests,
+            "installed_extension_count": self.extension_manifests.len(),
+            "registered_extension_count": self.extension_manifests.len(),
+            "enabled_extension_count": self.extension_manifests.iter().filter(|manifest| manifest.enabled).count(),
+        })
+        .to_string()
     }
 
     pub fn propose_extension_action(
@@ -396,6 +467,14 @@ impl AgentLiteCore {
             })
             .to_string();
         };
+        if !manifest.enabled {
+            return json!({
+                "status": "disabled",
+                "error": "extension is not enabled",
+                "extension_id": normalized_extension_id,
+            })
+            .to_string();
+        }
         if manifest.approval_policy == ApprovalPolicy::Disabled {
             return json!({
                 "status": "disabled",
@@ -937,11 +1016,23 @@ mod tests {
             json!({
                 "id": "github",
                 "name": "GitHub",
+                "source": "official",
+                "default_enabled": true,
+                "enabled": true,
                 "capabilities": [{"id": "github.read_repo", "description": "read repo"}]
             })
             .to_string(),
         );
-        assert!(registered.contains("\"status\":\"registered\""));
+        assert!(registered.contains("\"status\":\"installed\""));
+        assert!(registered.contains("\"enabled\":false"));
+        let disabled_proposal = core.propose_extension_action(
+            "github".to_string(),
+            "github.read_repo".to_string(),
+            json!({"repo": "owner/name"}).to_string(),
+        );
+        assert!(disabled_proposal.contains("extension is not enabled"));
+        let enabled = core.set_extension_enabled("github".to_string(), true);
+        assert!(enabled.contains("\"status\":\"enabled\""));
         let proposal = core.propose_extension_action(
             "github".to_string(),
             "github.read_repo".to_string(),
@@ -966,5 +1057,8 @@ mod tests {
         );
         assert!(receipt.contains("approved_executed"));
         assert!(core.snapshot_json().contains("action_ledger"));
+        assert!(core.list_extension_manifests().contains("enabled_extension_count"));
+        let uninstalled = core.uninstall_extension("github".to_string());
+        assert!(uninstalled.contains("\"status\":\"uninstalled\""));
     }
 }

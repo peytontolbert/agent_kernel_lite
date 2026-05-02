@@ -40,6 +40,10 @@ This is intentionally a lite demo:
 - Hugging Face Dataset Viewer fallback when no pack is loaded
 - best-effort browser Cache API and IndexedDB storage
 - optional persistent storage request
+- browser-installed extensions. The v1 shell ships with no default-installed
+  extensions; users install release manifests before enabling capabilities.
+- portable session export/import for restoring a private local focus session
+  across Safari/browser installs.
 
 The production model source is:
 
@@ -85,9 +89,145 @@ tokenizer metadata. The worker ignores remote executable runtime paths and loads
 the app-hosted runtime from `vendor/model-stack-bitnet/` to avoid strict browser
 module MIME checks on Hugging Face `resolve` URLs. The Rust core still parses
 and governs the generated text through `finish_model_reply`; code execution
-remains disabled in the browser. The app registers `code.generate_draft` as an
-extension capability so code generation can be enabled later through the
-extension action bus.
+remains disabled in the browser.
+
+## Browser Extensions
+
+Extensions live behind the **Extensions** menu. They are installed into the
+browser adapter by manifest, then enabled or disabled independently from their
+card. Clicking a card expands setup details, declared capabilities, scopes, and
+install source. Installing an extension only makes its capabilities available
+for approval; it does not enable execution. This keeps external surfaces such
+as YouTube, Discord, X, or local user tools out of the minimal kernel unless the
+user imports them and completes setup.
+
+The v1 app install includes no default extensions. Image generation remains a
+development/future extension and can be installed from a release manifest when
+it is ready to ship:
+
+```json
+{
+  "id": "image_generation",
+  "name": "Image Generation",
+  "source": "official",
+  "default_enabled": false,
+  "approval_policy": "always_ask",
+  "capabilities": [
+    {
+      "id": "image.generate",
+      "description": "Generate an image artifact from a user prompt in the browser.",
+      "scopes": ["prompt.read", "artifact.image.write"]
+    }
+  ]
+}
+```
+
+Custom extensions use the same shape. A user extension should declare a stable
+`id`, user-facing `name`, capability IDs, scope strings, and adapter metadata:
+
+```json
+{
+  "id": "youtube_tools",
+  "name": "YouTube Tools",
+  "version": "0.1.0",
+  "source": "user",
+  "approval_policy": "always_ask",
+  "capabilities": [
+    {
+      "id": "youtube.search",
+      "description": "Search YouTube through a user-provided adapter.",
+      "scopes": ["network.youtube", "results.read"]
+    }
+  ],
+  "metadata": {
+    "adapter": "browser",
+    "homepage": "https://github.com/example/youtube_tools",
+    "adapter_url": "https://github.com/example/youtube_tools/releases/download/v0.1.0/adapter.js"
+  }
+}
+```
+
+Extension installs are release-only. The browser accepts manifest URLs from
+GitHub Release assets, for example:
+
+```text
+https://github.com/owner/repo/releases/download/v0.1.0/extension.json
+```
+
+It rejects branch URLs such as `raw.githubusercontent.com/.../main/...`,
+`github.com/.../blob/main/...`, and `latest` URLs. If a manifest points to
+adapter code, worker code, or a module URL, those code assets must also be
+GitHub Release asset URLs. This keeps the app pinned to immutable release
+artifacts instead of whatever the latest commit on `main` happens to be.
+
+When the app is loaded, browser code can install and manage manifests through:
+
+```js
+await window.AgentKernelExtensions.installFromUrl(
+  'https://github.com/owner/repo/releases/download/v0.1.0/extension.json'
+);
+window.AgentKernelExtensions.enable('youtube_tools');
+window.AgentKernelExtensions.disable('youtube_tools');
+window.AgentKernelExtensions.list();
+```
+
+The core records proposed extension actions and receipts, but adapter code owns
+actual execution. A model output cannot execute an extension directly.
+
+## Release-Only App Loading
+
+Production should treat `peytontolbert.com/agent_kernel/` as a small stable
+shell. The shell should load app code, WASM bindings, WASM bytes, and extension
+manifests from tagged GitHub Release assets, not from `main` or raw branch URLs.
+The example release manifest in `app-release-manifest.example.json` captures the
+intended shape.
+
+That split keeps the hosted shell small while allowing the release assets to be
+cached independently. It also means an extension is not part of the installed
+surface until the user installs a release manifest. Localhost development URLs
+are still allowed by the browser installer so extension work can be tested before
+publishing a release.
+
+The Status panel shows an app hash. It is a SHA-256 digest derived from the
+served `index.html`, app JavaScript, WASM binding JavaScript, and WASM bytes.
+The full per-asset hashes are included in exported session bundles under
+`app.integrity`. Release automation should publish the same hashes beside the
+GitHub Release assets so users can compare the running app with the release they
+intended to install.
+
+## Session Backup
+
+The browser can export a portable JSON bundle from **Export Session** and restore
+it with **Import Session**. The bundle contains:
+
+- UI settings: theme, mode, token length, selected model/device, selected paper
+  pack size, and extension mode state
+- chat messages and selected paper context rows
+- installed extension manifests and enabled/disabled state
+- app-scoped `localStorage` keys
+- small IndexedDB metadata records used by the browser adapter
+
+The export intentionally does not include large Cache API entries such as model
+weights, downloaded paper packs, ONNX files, or vector indexes. Those assets are
+restored by URL/manifests and can be downloaded again after import. This keeps
+the file small enough for iPhone Safari sharing and gives a native iOS/Android
+app a stable bridge format for importing browser sessions later.
+
+## Native App Direction
+
+The iOS and Android app should treat this JSON session file as the first import
+format. The native shell can keep the same kernel concepts while replacing
+browser-limited adapters with stronger platform capabilities:
+
+- app-owned private document storage instead of Safari best-effort storage
+- background downloads for model/data packs
+- file-provider/document-picker import and export
+- optional native extension bridges for contacts, share sheets, notifications,
+  local files, and platform-secure credentials
+- the same install/enable/receipt extension contract used by the browser
+
+That keeps Safari, iPhone, and Android sessions interoperable while letting the
+native apps add capabilities that browsers restrict.
 
 ## Browser Runtime Notes
 

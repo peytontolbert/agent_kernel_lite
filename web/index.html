@@ -240,6 +240,126 @@
       color: var(--text);
     }
 
+    .image-toggle-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    .image-toggle-row p {
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .translation-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .image-toggle-button {
+      min-width: 82px;
+      border-color: var(--line);
+      background: var(--button-2);
+      color: var(--soft);
+    }
+
+    .image-toggle-button.active {
+      border-color: rgba(45, 212, 191, 0.54);
+      background: rgba(45, 212, 191, 0.14);
+      color: var(--text);
+    }
+
+    .extensions-panel {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      overflow: hidden;
+    }
+
+    .extensions-panel summary {
+      cursor: pointer;
+      padding: 10px 11px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .extensions-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 10px 10px;
+    }
+
+    .extension-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .extension-card summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      list-style: none;
+    }
+
+    .extension-card summary::-webkit-details-marker { display: none; }
+
+    .extension-title {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+    }
+
+    .extension-title strong {
+      color: var(--text);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .extension-title span,
+    .extension-detail {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .extension-settings {
+      display: grid;
+      gap: 8px;
+      padding: 0 10px 10px;
+    }
+
+    .extension-install {
+      display: grid;
+      gap: 8px;
+    }
+
+    #extensionList {
+      display: grid;
+      gap: 8px;
+    }
+
+    .extension-install input {
+      min-width: 0;
+    }
+
+    .audio-translate-button.listening {
+      border-color: rgba(245, 158, 11, 0.42);
+      background: rgba(245, 158, 11, 0.14);
+      color: var(--text);
+    }
+
     .status-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -375,6 +495,35 @@
     }
 
     .message .body p + p { margin-top: 10px; }
+
+    .image-artifact {
+      display: grid;
+      gap: 10px;
+    }
+
+    .image-artifact img {
+      width: min(100%, 640px);
+      aspect-ratio: 1 / 1;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #080b0f;
+      object-fit: cover;
+    }
+
+    .image-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .image-prompt {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
 
     .code-block {
       margin: 10px 0;
@@ -600,6 +749,8 @@
       gap: 0;
       background: var(--panel);
       padding: 20px 18px;
+      max-height: 100dvh;
+      overflow-y: auto;
     }
 
     main {
@@ -688,6 +839,20 @@
       color: var(--text);
     }
 
+    .image-toggle-button {
+      border-color: var(--line);
+      background: var(--button-2);
+      color: var(--soft);
+      min-height: 34px;
+    }
+
+    .image-toggle-button.active {
+      border-color: rgba(19, 114, 100, 0.18);
+      background: #ffffff;
+      box-shadow: 0 8px 20px rgba(19, 35, 45, 0.08);
+      color: var(--text);
+    }
+
     .button-row.compact { grid-template-columns: 1fr; }
 
     .backend-config {
@@ -712,6 +877,12 @@
       margin-top: 16px;
       border-top: 1px solid var(--line);
       padding-top: 12px;
+    }
+
+    .settings-block {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
     }
 
     .status-details summary {
@@ -782,6 +953,10 @@
       width: min(680px, 100%);
       border-color: rgba(19, 114, 100, 0.18);
       background: #e7f4f1;
+    }
+
+    .message.image-result {
+      width: min(700px, 100%);
     }
 
     .message .role {
@@ -856,6 +1031,10 @@
     .message .body,
     .message .body p {
       color: var(--text);
+    }
+
+    .image-artifact img {
+      background: #f8fafb;
     }
 
     .inline-evidence {
@@ -1312,36 +1491,27 @@
       <button id="thinkModeButton" class="mode-button" type="button" data-mode="think" aria-pressed="false">Think</button>
       <button id="deepResearchModeButton" class="mode-button" type="button" data-mode="deep_research" aria-pressed="false">Deep</button>
     </div>
-    <label for="tokenSelect">Length</label>
-    <select id="tokenSelect">
-      <option value="160" selected>Short</option>
-      <option value="256">Medium</option>
-      <option value="384">Long</option>
-    </select>
 
-    <h2>Research</h2>
-    <label for="packSelect">Paper pack</label>
-    <select id="packSelect">
-      <option value="50000">50k papers</option>
-      <option value="200000">200k papers</option>
-      <option value="1000000">1M metadata</option>
-    </select>
-    <div class="button-row">
-      <button id="loadPackButton" type="button">Load Research</button>
-      <button id="persistButton" type="button" class="secondary">Keep Offline</button>
-    </div>
+    <details class="extensions-panel" id="extensionsPanel">
+      <summary>Extensions</summary>
+      <div class="extensions-body">
+        <div id="extensionList"></div>
+        <div class="extension-install">
+          <label for="extensionManifestUrl">Install GitHub release manifest</label>
+          <input id="extensionManifestUrl" type="url" placeholder="https://github.com/owner/repo/releases/download/v1/extension.json" autocomplete="off">
+          <button id="installExtensionButton" type="button" class="secondary">Install Extension</button>
+        </div>
+      </div>
+    </details>
 
-    <div class="button-row compact">
-      <button id="resetChatButton" type="button" class="secondary">New Chat</button>
-    </div>
-
-    <details class="status-details" open>
+    <details class="status-details">
       <summary>Status</summary>
       <div class="status-grid">
         <div class="metric"><span>Runtime</span><strong id="modelMetric">Idle</strong></div>
         <div class="metric"><span>Library</span><strong id="packMetric">None</strong></div>
         <div class="metric"><span>Storage</span><strong id="storageMetric">0 MB</strong></div>
         <div class="metric"><span>Rows</span><strong id="rowsMetric">0</strong></div>
+        <div class="metric"><span>App hash</span><strong id="appHashMetric">Checking</strong></div>
       </div>
 
       <div class="pill-row">
@@ -1354,6 +1524,36 @@
 
       <div id="log" class="log" aria-live="polite"></div>
     </details>
+
+    <div class="settings-block">
+      <label for="tokenSelect">Length</label>
+      <select id="tokenSelect">
+        <option value="160" selected>Short</option>
+        <option value="256">Medium</option>
+        <option value="384">Long</option>
+      </select>
+
+      <h2>Research</h2>
+      <label for="packSelect">Paper pack</label>
+      <select id="packSelect">
+        <option value="50000">50k papers</option>
+        <option value="200000">200k papers</option>
+        <option value="1000000">1M metadata</option>
+      </select>
+      <div class="button-row">
+        <button id="loadPackButton" type="button">Load Research</button>
+        <button id="persistButton" type="button" class="secondary">Keep Offline</button>
+      </div>
+
+      <div class="button-row compact">
+        <button id="resetChatButton" type="button" class="secondary">New Chat</button>
+      </div>
+      <div class="button-row">
+        <button id="exportSessionButton" type="button" class="secondary">Export Session</button>
+        <button id="importSessionButton" type="button" class="secondary">Import Session</button>
+      </div>
+      <input id="importSessionInput" type="file" accept="application/json,.json" hidden>
+    </div>
   </aside>
 
   <main>
