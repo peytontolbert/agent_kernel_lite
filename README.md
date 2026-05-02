@@ -2,7 +2,7 @@
 
 Standalone browser-first Agent Kernel Lite workspace.
 
-This repository was split out of `/data/agentkernel` so the lite research assistant,
+This repository was split out of `https://github.com/peytontolbert/agent_kernel` so the lite research assistant,
 custom BitNet browser runtime, and Rust/WASM core can evolve independently from the
 larger Agent Kernel project.
 
