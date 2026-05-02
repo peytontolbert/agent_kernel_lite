@@ -101,9 +101,11 @@ for approval; it does not enable execution. This keeps external surfaces such
 as YouTube, Discord, X, or local user tools out of the minimal kernel unless the
 user imports them and completes setup.
 
-The v1 app install includes no default extensions. Image generation remains a
-development/future extension and can be installed from a release manifest when
-it is ready to ship:
+The v1 app install includes no default-installed extensions. The Extensions menu
+does display the official extensions available from `web/extensions/catalog.json`
+so users can click to install them. Installing only adds the manifest to the
+installed surface; the user still has to enable the extension before it can act.
+Image generation remains a development/future extension:
 
 ```json
 {

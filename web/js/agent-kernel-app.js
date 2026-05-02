@@ -24,6 +24,7 @@ const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
+const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
 const MODE_CONFIG = {
   chat: {
     label: 'Chat',
@@ -183,6 +184,7 @@ const state = {
   liveStatusNode: null,
   activeTurn: null,
   appIntegrity: null,
+  availableExtensions: [],
   theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
 };
 
@@ -199,6 +201,7 @@ const els = {
   imageMode: document.getElementById('imageModeButton'),
   imageModeDetail: document.getElementById('imageModeDetail'),
   extensionList: document.getElementById('extensionList'),
+  availableExtensionList: document.getElementById('availableExtensionList'),
   extensionManifestUrl: document.getElementById('extensionManifestUrl'),
   installExtension: document.getElementById('installExtensionButton'),
   translationMode: document.getElementById('translationModeButton'),
@@ -3671,8 +3674,12 @@ function registerExtensionManifest(manifest) {
   }
 }
 
+function extensionInstallSucceeded(result) {
+  return result?.status === 'installed' || result?.status === 'registered';
+}
+
 function isLocalDevelopmentUrl(url) {
-  return ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(url.hostname);
+  return ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(url.hostname);
 }
 
 function isGitHubReleaseAssetUrl(url) {
@@ -3688,7 +3695,7 @@ function isGitHubReleaseAssetUrl(url) {
 function assertReleaseInstallUrl(rawUrl, label = 'extension asset') {
   const url = new URL(String(rawUrl || '').trim(), window.location.href);
   if (isGitHubReleaseAssetUrl(url)) return url;
-  if (url.origin === window.location.origin && isLocalDevelopmentUrl(url)) return url;
+  if (isLocalDevelopmentUrl(new URL(window.location.href)) && isLocalDevelopmentUrl(url)) return url;
   throw new Error(`${label} must be a GitHub Release asset URL, not a branch/raw/latest URL.`);
 }
 
@@ -3724,6 +3731,51 @@ async function installExtensionFromUrl(manifestUrl) {
     release_only: true,
   };
   return registerExtensionManifest(manifest);
+}
+
+async function loadAvailableExtensions() {
+  try {
+    const response = await fetch(new URL(AVAILABLE_EXTENSIONS_CATALOG_URL, window.location.href).href, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`catalog fetch failed: ${response.status}`);
+    const catalog = await response.json();
+    const entries = Array.isArray(catalog.extensions) ? catalog.extensions : [];
+    state.availableExtensions = entries.map((entry) => ({
+      ...entry,
+      manifest_url: new URL(entry.manifest || entry.manifest_url || '', response.url).href,
+    })).filter((entry) => entry.id && entry.manifest_url);
+    log(`available extensions loaded: ${state.availableExtensions.length}`);
+  } catch (error) {
+    state.availableExtensions = [];
+    log(`available extensions unavailable: ${error.message || String(error)}`);
+  }
+  renderExtensionList();
+}
+
+async function installAvailableExtension(extensionId) {
+  const entry = state.availableExtensions.find((item) => item.id === extensionId);
+  if (!entry) {
+    appendMessage('assistant', `Extension is not available: ${extensionId}`);
+    return;
+  }
+  try {
+    const response = await fetch(entry.manifest_url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`manifest fetch failed: ${response.status}`);
+    const manifest = await response.json();
+    manifest.source = manifest.source || 'official';
+    manifest.imported_from = manifest.imported_from || entry.manifest_url;
+    manifest.metadata = {
+      ...(manifest.metadata || {}),
+      available_catalog: AVAILABLE_EXTENSIONS_CATALOG_URL,
+      available_extension_id: extensionId,
+    };
+    const result = registerExtensionManifest(manifest);
+    if (!extensionInstallSucceeded(result)) throw new Error(result.error || result.status || 'install failed');
+    log(`installed available extension: ${manifest.name || manifest.id}`);
+    renderExtensionList();
+  } catch (error) {
+    appendMessage('assistant', `Extension install failed: ${error.message || String(error)}`);
+    log(`available extension install failed: ${error.message || String(error)}`);
+  }
 }
 
 function uninstallExtension(extensionId) {
@@ -3795,6 +3847,7 @@ function renderExtensionList() {
   if (!els.extensionList) return;
   const result = listExtensionManifests();
   const manifests = Array.isArray(result.extensions) ? result.extensions : [];
+  const installedIds = new Set(manifests.map((manifest) => manifest.id));
   els.extensionList.innerHTML = '';
   if (!manifests.length) {
     const empty = document.createElement('p');
@@ -3861,6 +3914,54 @@ function renderExtensionList() {
     card.append(summary, settings);
     els.extensionList.appendChild(card);
   }
+  renderAvailableExtensionList(installedIds);
+}
+
+function renderAvailableExtensionList(installedIds = new Set()) {
+  if (!els.availableExtensionList) return;
+  els.availableExtensionList.innerHTML = '';
+  const available = state.availableExtensions.filter((entry) => !installedIds.has(entry.id));
+  if (!available.length) {
+    const empty = document.createElement('p');
+    empty.className = 'extension-detail';
+    empty.textContent = state.availableExtensions.length ? 'All available extensions are installed.' : 'No available extensions found.';
+    els.availableExtensionList.appendChild(empty);
+    return;
+  }
+  for (const entry of available) {
+    const card = document.createElement('details');
+    card.className = 'extension-card';
+    const summary = document.createElement('summary');
+    const title = document.createElement('div');
+    title.className = 'extension-title';
+    const name = document.createElement('strong');
+    name.textContent = entry.name || entry.id;
+    const status = document.createElement('span');
+    status.textContent = entry.source || 'available';
+    title.append(name, status);
+    const install = document.createElement('button');
+    install.type = 'button';
+    install.className = 'secondary';
+    install.textContent = 'Install';
+    install.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      installAvailableExtension(entry.id);
+    });
+    summary.append(title, install);
+
+    const settings = document.createElement('div');
+    settings.className = 'extension-settings';
+    const description = document.createElement('p');
+    description.className = 'extension-detail';
+    description.textContent = entry.description || 'Install this extension before enabling its capabilities.';
+    const setup = document.createElement('p');
+    setup.className = 'extension-detail';
+    setup.textContent = entry.setup || 'Setup runs after install.';
+    settings.append(description, setup);
+    card.append(summary, settings);
+    els.availableExtensionList.appendChild(card);
+  }
 }
 
 async function installExtensionFromInput() {
@@ -3868,7 +3969,7 @@ async function installExtensionFromInput() {
   if (!url) return;
   try {
     const result = await installExtensionFromUrl(url);
-    if (result.status !== 'installed') throw new Error(result.error || result.status || 'install failed');
+    if (!extensionInstallSucceeded(result)) throw new Error(result.error || result.status || 'install failed');
     if (els.extensionManifestUrl) els.extensionManifestUrl.value = '';
     log(`installed extension: ${result.extension_id}`);
     renderExtensionList();
@@ -4020,7 +4121,7 @@ async function restoreExtensions(extensionBundle) {
     const wasEnabled = Boolean(manifest.enabled);
     const cleanManifest = { ...manifest, enabled: false, default_enabled: false };
     const installed = registerExtensionManifest(cleanManifest);
-    if (installed.status !== 'installed') {
+    if (!extensionInstallSucceeded(installed)) {
       log(`extension restore skipped ${manifest.id}: ${installed.error || installed.status}`);
       continue;
     }
@@ -4097,7 +4198,7 @@ function registerBuiltinExtensions() {
   const manifests = [];
   for (const manifest of manifests) {
     const result = registerExtensionManifest(manifest);
-    if (result.status === 'installed') {
+    if (extensionInstallSucceeded(result)) {
       log(`installed extension: ${manifest.name}`);
     } else {
       log(`extension install failed: ${result.error || manifest.id}`);
@@ -4180,6 +4281,7 @@ async function init() {
   setMode('chat');
   syncImageModeControls();
   syncTranslationControls();
+  loadAvailableExtensions();
   refreshAppIntegrity();
   await refreshStorage();
   syncModelControls();

@@ -10,6 +10,7 @@
     "wasm": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v0.1.0/agent_kernel_lite_core_bg.wasm"
   },
   "default_extensions": [],
+  "available_extensions": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v0.1.0/extensions/catalog.json",
   "asset_policy": {
     "release_assets_only": true,
     "reject_branch_urls": true,

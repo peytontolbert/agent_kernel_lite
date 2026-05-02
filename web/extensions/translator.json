@@ -1,0 +1,24 @@
+{
+  "id": "translator",
+  "name": "Translator",
+  "version": "0.1.0",
+  "source": "official",
+  "default_enabled": false,
+  "approval_policy": "always_ask",
+  "capabilities": [
+    {
+      "id": "translation.text",
+      "description": "Translate typed or pasted text between languages in the browser.",
+      "scopes": ["prompt.read", "model.generate"]
+    },
+    {
+      "id": "translation.audio",
+      "description": "Translate speech by transcribing browser audio input, then translating the transcript.",
+      "scopes": ["microphone.read", "speech.transcript.read", "model.generate"]
+    }
+  ],
+  "metadata": {
+    "adapter": "browser-speech-recognition",
+    "setup": "Text translation uses the loaded local model. Audio translation requires browser speech recognition support."
+  }
+}

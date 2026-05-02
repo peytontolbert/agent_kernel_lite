@@ -1,0 +1,20 @@
+{
+  "id": "image_generation",
+  "name": "Image Generation",
+  "version": "0.1.0-dev",
+  "source": "local-dev",
+  "default_enabled": false,
+  "approval_policy": "always_ask",
+  "capabilities": [
+    {
+      "id": "image.generate",
+      "description": "Generate a browser image artifact from a prompt using the local AgentKernel Lite BitDiT model.",
+      "scopes": ["prompt.read", "artifact.image.write"]
+    }
+  ],
+  "metadata": {
+    "adapter": "browser",
+    "model_id": "agentkernel_lite_image_bitdit_hf_cifar_distilled_v1",
+    "development_only": true
+  }
+}
