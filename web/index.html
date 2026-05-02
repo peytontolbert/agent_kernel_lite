@@ -280,6 +280,7 @@
       border-radius: 8px;
       background: rgba(255, 255, 255, 0.03);
       overflow: hidden;
+      flex: 0 0 auto;
     }
 
     .extensions-panel summary {
@@ -692,9 +693,10 @@
       body { display: block; overflow: hidden; }
       aside {
         position: fixed;
-        inset: auto 10px max(10px, env(safe-area-inset-bottom)) 10px;
+        inset: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)) 10px;
         z-index: 20;
-        max-height: min(48dvh, 460px);
+        max-height: none;
+        overflow-y: auto;
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
         touch-action: pan-y;
@@ -706,7 +708,7 @@
       main { height: 100dvh; }
       header { padding: 10px; }
       h1 { font-size: 17px; }
-      .chat-scroll { padding: 12px 10px calc(48dvh + 24px); }
+      .chat-scroll { padding: 12px 10px 88px; }
       body.controls-hidden .chat-scroll { padding-bottom: 88px; }
       .composer { padding: 10px; }
       .composer-inner { grid-template-columns: 1fr; }
@@ -751,6 +753,10 @@
       padding: 20px 18px;
       max-height: 100dvh;
       overflow-y: auto;
+    }
+
+    aside > * {
+      flex: 0 0 auto;
     }
 
     main {
@@ -1215,10 +1221,10 @@
 
       aside {
         position: fixed;
-        inset: auto 10px max(10px, env(safe-area-inset-bottom)) 10px;
+        inset: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)) 10px;
         z-index: 30;
-        max-height: min(72dvh, 560px);
-        overflow: auto;
+        max-height: none;
+        overflow-y: auto;
         background: rgba(255, 255, 255, 0.97);
         border: 1px solid var(--line);
         border-radius: 8px;
