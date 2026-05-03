@@ -2,13 +2,13 @@
   "schema": "agent_kernel_lite_app_release",
   "version": "0.1.0",
   "repo": "peytontolbert/agent_kernel_lite",
-  "release_tag": "v8",
+  "release_tag": "v9",
   "entry": {
-    "html": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v8/index.html",
-    "manifest": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v8/agent_kernel.webmanifest",
-    "script": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v8/agent-kernel-app.js",
-    "wasm_js": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v8/agent_kernel_lite_core.js",
-    "wasm": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v8/agent_kernel_lite_core_bg.wasm"
+    "html": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v9/index.html",
+    "manifest": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v9/agent_kernel.webmanifest",
+    "script": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v9/agent-kernel-app.js",
+    "wasm_js": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v9/agent_kernel_lite_core.js",
+    "wasm": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v9/agent_kernel_lite_core_bg.wasm"
   },
   "default_extensions": [],
   "available_extensions": "./extensions/catalog.json",
