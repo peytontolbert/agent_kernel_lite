@@ -6,7 +6,7 @@
       "id": "computer_use",
       "name": "Computer Use",
       "source": "official",
-      "manifest": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v2/computer_use.json",
+      "manifest": "./computer_use.json",
       "description": "Pair with Agent Kernel Desktop or the local computer bridge to orchestrate Codex, Claude Code, and Cursor sessions.",
       "setup": "Requires pairing the local computer bridge before enabling a provider."
     }

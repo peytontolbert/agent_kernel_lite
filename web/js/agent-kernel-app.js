@@ -99,13 +99,13 @@ const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
 const GITHUB_RELEASE_TAG = 'v2';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
-const AVAILABLE_EXTENSIONS_CATALOG_URL = `${PINNED_GITHUB_RELEASE_ROOT}/catalog.json`;
+const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
 const LOCAL_AVAILABLE_EXTENSIONS = [
   {
     id: 'computer_use',
     name: 'Computer Use',
     source: 'official',
-    manifest: `${PINNED_GITHUB_RELEASE_ROOT}/computer_use.json`,
+    manifest: './extensions/computer_use.json',
     description: 'Pair with Agent Kernel Desktop or the local computer bridge to orchestrate Codex, Claude Code, and Cursor sessions.',
     setup: 'Requires pairing the local computer bridge before enabling a provider.',
   },

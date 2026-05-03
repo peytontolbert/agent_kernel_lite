@@ -177,8 +177,8 @@ async function verify() {
 }
 
 async function init() {
-  const stored = await chrome.storage.local.get({ releaseTag: 'v2' });
-  els.tag.value = stored.releaseTag || 'v2';
+  const stored = await chrome.storage.local.get({ releaseTag: 'v3' });
+  els.tag.value = stored.releaseTag || 'v3';
   els.verify.addEventListener('click', () => verify());
   els.copy.addEventListener('click', async () => {
     if (!lastReport) return;
