@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v6';
+const CACHE_NAME = 'agent-kernel-lite-v7';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -98,7 +98,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v6';
+const GITHUB_RELEASE_TAG = 'v7';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -1152,6 +1152,12 @@ function normalizeCodexBridgeInput(value) {
   }
   if (/^bridge\/route_[A-Za-z0-9_-]{24,96}$/i.test(clean)) {
     return `${COMPUTER_DEFAULT_RELAY_URL}/${clean}`;
+  }
+  if (/^(\d{1,3}\.){3}\d{1,3}:\d+$/i.test(clean) || /^[A-Za-z0-9-]+\.local:\d+$/i.test(clean)) {
+    return `http://${clean}`;
+  }
+  if (/^https:\/\/((10|127)\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|localhost(?::|$)|[A-Za-z0-9-]+\.local(?::|$))/i.test(clean)) {
+    return clean.replace(/^https:\/\//i, 'http://');
   }
   return clean;
 }
