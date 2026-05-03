@@ -22,7 +22,7 @@ https://peytontolbert.com/agent_kernel/
 Current release:
 
 ```text
-https://github.com/peytontolbert/agent_kernel_lite/releases/tag/v3
+https://github.com/peytontolbert/agent_kernel_lite/releases/tag/v4
 ```
 
 The app shell is intended to be served from the website while release assets are
@@ -30,9 +30,9 @@ pinned to GitHub Releases. The app does not load executable JavaScript from
 Hugging Face. Hugging Face is used for model/data assets such as model tensors,
 tokenizers, paper packs, embeddings, and full-text paper rows.
 
-## v3 Scope
+## v4 Scope
 
-The v3 shell includes:
+The v4 shell includes:
 
 - browser chat UI with `Chat`, `Think`, and `Deep` modes
 - Rust/WASM core for turn state, context packets, model decision parsing,
@@ -47,13 +47,13 @@ The v3 shell includes:
 - app hash display in Status
 - separate browser extension verifier package
 
-No extensions are default-installed in v3. The app shows available official
+No extensions are default-installed in v4. The app shows available official
 extension manifests from `web/extensions/catalog.json`, currently:
 
 - `computer_use`
 
 Users must click **Install**, then explicitly enable an installed extension
-before it can act. Image Generation is kept out of the official v3 catalog
+before it can act. Image Generation is kept out of the official v4 catalog
 until it is release-ready.
 
 ## Verification
@@ -76,10 +76,10 @@ browser-extension-verifier/
 
 The verifier runs outside the web app, fetches `SHA256SUMS` directly from the
 selected GitHub Release, hashes the live assets from the active tab, and reports
-pass/fail. The v3 release includes:
+pass/fail. The v4 release includes:
 
 ```text
-agent-kernel-lite-verifier-v3.tar.gz
+agent-kernel-lite-verifier-v4.tar.gz
 verifier-SHA256SUMS
 ```
 
@@ -133,20 +133,22 @@ imports.
 
 ## Release Assets
 
-The v3 GitHub Release publishes individual shell assets and a tarball:
+The v4 GitHub Release publishes individual shell assets and a tarball:
 
 ```text
 index.html
 agent_kernel.webmanifest
 agent-kernel-app.js
+llm-worker.js
+model-stack-bitnet-vendor.tar.gz
 agent_kernel_lite_core.js
 agent_kernel_lite_core_bg.wasm
 app-release-manifest.json
 catalog.json
 computer_use.json
-agent-kernel-lite-v3-shell.tar.gz
+agent-kernel-lite-v4-shell.tar.gz
 SHA256SUMS
-agent-kernel-lite-verifier-v3.tar.gz
+agent-kernel-lite-verifier-v4.tar.gz
 verifier-SHA256SUMS
 ```
 

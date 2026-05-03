@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v2';
+const CACHE_NAME = 'agent-kernel-lite-v4';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -96,7 +96,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v2';
+const GITHUB_RELEASE_TAG = 'v4';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -111,6 +111,16 @@ const LOCAL_AVAILABLE_EXTENSIONS = [
   },
 ];
 const RELEASE_AVAILABLE_EXTENSION_IDS = new Set(LOCAL_AVAILABLE_EXTENSIONS.map((entry) => entry.id));
+
+function resolveAvailableExtensionManifestUrl(entry, catalogUrl) {
+  const manifest = String(entry?.manifest || entry?.manifest_url || '').trim();
+  if (!manifest) return '';
+  if (/^https?:\/\//i.test(manifest)) return manifest;
+  if (manifest.startsWith('./extensions/') || manifest.startsWith('extensions/')) {
+    return new URL(manifest.replace(/^\.?\//, './'), window.location.href).href;
+  }
+  return new URL(manifest, catalogUrl).href;
+}
 const MODE_CONFIG = {
   chat: {
     label: 'Chat',
@@ -5203,16 +5213,16 @@ async function loadAvailableExtensions() {
     const entryIds = new Set(entries.map((entry) => entry?.id).filter((id) => RELEASE_AVAILABLE_EXTENSION_IDS.has(id)));
     state.availableExtensions = LOCAL_AVAILABLE_EXTENSIONS.map((entry) => ({
       ...entry,
-      manifest_url: new URL(entry.manifest, response.url).href,
+      manifest_url: resolveAvailableExtensionManifestUrl(entry, response.url),
     }));
     if (entryIds.size !== state.availableExtensions.length || entryIds.size !== entries.length) {
-      log('available extensions constrained to pinned v2 release allowlist');
+      log('available extensions constrained to pinned release allowlist');
     }
     log(`available extensions loaded: ${state.availableExtensions.length}`);
   } catch (error) {
     state.availableExtensions = LOCAL_AVAILABLE_EXTENSIONS.map((entry) => ({
       ...entry,
-      manifest_url: new URL(entry.manifest, window.location.href).href,
+      manifest_url: resolveAvailableExtensionManifestUrl(entry, window.location.href),
     }));
     log(`available extensions using local fallback: ${error.message || String(error)}`);
   }
