@@ -1,0 +1,146 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f8fafb;
+  --panel: #ffffff;
+  --text: #13232d;
+  --muted: #5c6b73;
+  --line: #d9e2e6;
+  --ok: #137264;
+  --bad: #b42318;
+  --warn: #9a5b00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #080b0f;
+    --panel: #11161d;
+    --text: #f3f6f7;
+    --muted: #9aa8b0;
+    --line: #29323a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 420px;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+header {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+}
+
+label {
+  display: block;
+  margin: 10px 0 5px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+input,
+button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+}
+
+input {
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+button {
+  padding: 7px 11px;
+  background: var(--ok);
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+button.secondary {
+  width: 100%;
+  background: var(--panel);
+  color: var(--text);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.summary,
+.details {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.summary {
+  padding: 10px;
+  font-weight: 750;
+}
+
+.summary.ok { border-color: rgba(19, 114, 100, 0.4); color: var(--ok); }
+.summary.bad { border-color: rgba(180, 35, 24, 0.45); color: var(--bad); }
+.summary.warn { border-color: rgba(154, 91, 0, 0.45); color: var(--warn); }
+.summary.neutral { color: var(--muted); }
+
+.details {
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.asset {
+  display: grid;
+  gap: 3px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.asset:last-child { border-bottom: 0; }
+
+.asset strong {
+  overflow-wrap: anywhere;
+}
+
+.asset code {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.asset.ok strong { color: var(--ok); }
+.asset.bad strong { color: var(--bad); }
+.asset.warn strong { color: var(--warn); }
+
+footer { margin-top: 10px; }

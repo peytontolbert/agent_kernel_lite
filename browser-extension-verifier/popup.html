@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Kernel Lite Verifier</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Agent Kernel Lite Verifier</h1>
+    <p>Hashes live app assets outside the page and compares them with the GitHub Release.</p>
+  </header>
+
+  <label for="releaseTag">Release tag</label>
+  <div class="row">
+    <input id="releaseTag" value="v1" autocomplete="off" spellcheck="false">
+    <button id="verifyButton" type="button">Verify</button>
+  </div>
+
+  <section id="summary" class="summary neutral">Open Agent Kernel Lite, then verify.</section>
+  <section id="details" class="details" aria-live="polite"></section>
+
+  <footer>
+    <button id="copyButton" type="button" class="secondary">Copy Report</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

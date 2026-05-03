@@ -197,6 +197,12 @@ The full per-asset hashes are included in exported session bundles under
 GitHub Release assets so users can compare the running app with the release they
 intended to install.
 
+For manipulation-resistant verification, users can install the separate
+`browser-extension-verifier` package from this repository. That extension runs
+outside the web app, fetches release `SHA256SUMS` directly from GitHub, hashes
+the live app assets from the active tab, and reports whether the served app
+matches the selected release.
+
 ## Session Backup
 
 The browser can export a portable JSON bundle from **Export Session** and restore

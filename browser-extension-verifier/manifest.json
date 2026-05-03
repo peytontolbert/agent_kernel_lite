@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Agent Kernel Lite Verifier",
+  "version": "0.1.0",
+  "description": "Verify Agent Kernel Lite web app assets against pinned GitHub Release SHA-256 hashes.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "https://peytontolbert.com/agent_kernel/*",
+    "https://github.com/peytontolbert/agent_kernel_lite/releases/download/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "action": {
+    "default_title": "Verify Agent Kernel Lite",
+    "default_popup": "popup.html"
+  }
+}
