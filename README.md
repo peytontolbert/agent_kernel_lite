@@ -1,81 +1,201 @@
 # Agent Kernel Lite
 
-Standalone browser-first Agent Kernel Lite workspace.
+Agent Kernel Lite is a browser-first local research assistant and extension
+shell. It pairs a small Rust/WASM agent core with browser-side model execution,
+local research retrieval, release-pinned extension installs, portable session
+backup, and an external verifier extension for checking the app assets users are
+running.
 
-This repository was split out of `https://github.com/peytontolbert/agent_kernel` so the lite research assistant,
-custom BitNet browser runtime, and Rust/WASM core can evolve independently from the
-larger Agent Kernel project.
+This repository was split out of
+`https://github.com/peytontolbert/agent_kernel` so the lite browser app,
+model-stack runtime, and Rust/WASM core can evolve independently from the larger
+Agent Kernel project.
 
 ## Live App
 
-The public browser deployment lives at:
+Public deployment:
 
 ```text
 https://peytontolbert.com/agent_kernel/
 ```
 
-The current production model bundle is hosted on Hugging Face:
+Current release:
 
 ```text
-https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet
+https://github.com/peytontolbert/agent_kernel_lite/releases/tag/v1
 ```
 
-Direct model-stack manifest URL:
+The app shell is intended to be served from the website while release assets are
+pinned to GitHub Releases. The app does not load executable JavaScript from
+Hugging Face. Hugging Face is used for model/data assets such as model tensors,
+tokenizers, paper packs, embeddings, and full-text paper rows.
+
+## v1 Scope
+
+The v1 shell includes:
+
+- browser chat UI with `Chat`, `Think`, and `Deep` modes
+- Rust/WASM core for turn state, context packets, model decision parsing,
+  extension manifests, extension action proposals, receipts, and snapshots
+- browser-side BitNet/model-stack runtime integration
+- local paper retrieval over downloaded paper metadata/vector packs
+- selected-paper context persistence inside the session
+- extension menu with **Installed** and **Available** sections
+- release-only custom extension manifest install
+- localhost development exception for extension testing
+- portable session export/import for restoring local focus sessions
+- app hash display in Status
+- separate browser extension verifier package
+
+No extensions are default-installed in v1. The app shows available official
+extension manifests from `web/extensions/catalog.json`, currently:
+
+- `image_generation`
+- `codex`
+- `translator`
+
+Users must click **Install**, then explicitly enable an installed extension
+before it can act.
+
+## Verification
+
+The app Status panel computes an app hash from the served shell assets:
+
+- `index.html`
+- `js/agent-kernel-app.js`
+- `wasm/agent_kernel_lite_core/pkg/agent_kernel_lite_core.js`
+- `wasm/agent_kernel_lite_core/pkg/agent_kernel_lite_core_bg.wasm`
+
+Release assets include `SHA256SUMS` so users can verify the website against the
+release.
+
+For stronger verification, install the separate browser extension in:
 
 ```text
-https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json
+browser-extension-verifier/
 ```
 
-The app serves executable JavaScript/WASM runtime files from this repository.
-Hugging Face is used for model tensors, tokenizers, paper metadata, embeddings,
-and full-text paper rows.
+The verifier runs outside the web app, fetches `SHA256SUMS` directly from the
+selected GitHub Release, hashes the live assets from the active tab, and reports
+pass/fail. The v1 release includes:
+
+```text
+agent-kernel-lite-verifier-v1.tar.gz
+verifier-SHA256SUMS
+```
+
+## Extensions
+
+Agent Kernel Lite has two extension concepts:
+
+- **In-app Agent Kernel extensions**: browser app capabilities represented by
+  manifests, installed into the local app, then enabled/disabled by the user.
+- **Browser verifier extension**: an actual browser extension users install to
+  verify the web app independently from the page.
+
+In-app extension manifests are installed from:
+
+- the app's available catalog at `web/extensions/catalog.json`
+- custom GitHub Release asset URLs
+- localhost URLs during development
+
+Production custom installs reject mutable branch/latest URLs such as:
+
+```text
+raw.githubusercontent.com/.../main/...
+github.com/.../blob/main/...
+latest
+```
+
+Use immutable release assets such as:
+
+```text
+https://github.com/owner/repo/releases/download/v0.1.0/extension.json
+```
+
+An installed extension still starts disabled. Adapter code owns execution; model
+output cannot execute extensions directly.
+
+## Session Backup
+
+The web app can export/import a portable JSON session bundle. The bundle stores:
+
+- UI settings: theme, mode, token length, selected model/device, paper pack size
+- installed extension manifests and enabled/disabled state
+- chat messages and selected paper context rows
+- app-scoped `localStorage`
+- small IndexedDB metadata records
+- app integrity metadata when available
+
+Large Cache API entries are intentionally not exported. Model weights, ONNX
+files, paper packs, and vector indexes should be redownloaded from their
+manifests. This keeps the backup practical for Safari and for future iOS/Android
+imports.
+
+## Release Assets
+
+The v1 GitHub Release publishes individual shell assets and a tarball:
+
+```text
+index.html
+agent-kernel-app.js
+agent_kernel_lite_core.js
+agent_kernel_lite_core_bg.wasm
+app-release-manifest.json
+catalog.json
+codex.json
+image_generation.dev.json
+translator.json
+agent-kernel-lite-v1-shell.tar.gz
+SHA256SUMS
+agent-kernel-lite-verifier-v1.tar.gz
+verifier-SHA256SUMS
+```
+
+`web/app-release-manifest.example.json` documents the release manifest shape for
+future shell bootstrapping.
 
 ## Hugging Face Assets
 
 Runtime model:
 
-- `PeytonT/agentkernel-lite-100m-bitnet` - Agent Kernel Lite 100M BitNet encoder-decoder model bundle.
+- `PeytonT/agentkernel-lite-100m-bitnet`
+
+Direct model-stack manifest:
+
+```text
+https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json
+```
 
 Browser research retrieval:
 
-- `PeytonT/paper_universe_interactive` - paper metadata packs used by the browser.
-- `PeytonT/paper_universe_interactive/semantic_m1` - row-aligned semantic vector packs.
-- `PeytonT/1m-paper-embedding-model-lite-onnx` - lite paper embedding model used for browser-side ranking.
-- `PeytonT/1m_papers_text` - 1M full-text paper dataset accessed through the Hugging Face Dataset Viewer API.
+- `PeytonT/paper_universe_interactive`
+- `PeytonT/paper_universe_interactive/semantic_m1`
+- `PeytonT/1m-paper-embedding-model-lite-onnx`
+- `PeytonT/1m_papers_text`
 
-Research-library training/rebuild assets referenced by docs and scripts:
+Related training/rebuild assets referenced by docs/scripts:
 
-- `PeytonT/repo_graph` - repository graph dataset for code/repository retrieval experiments.
-- `PeytonT/1m-papers-abstract-keywords` - paper keyword extraction/refresh dataset referenced by integration docs.
+- `PeytonT/repo_graph`
+- `PeytonT/1m-papers-abstract-keywords`
 
-## Browser Decode Speed
-
-Latest local browser WASM benchmark after the custom BitNet decoder-kernel
-optimizations:
-
-| Encoder context | Total decode speed | Steady decode speed |
-| --- | ---: | ---: |
-| 66 tokens | ~368 tok/s | ~408 tok/s |
-| 130 tokens | ~360 tok/s | ~413 tok/s |
-| 258 tokens | ~275 tok/s | ~334 tok/s |
-| 514 tokens | ~176 tok/s | ~226 tok/s |
-
-Full browser-worker path for a 64-token generation measured about `500ms` in
-the local test harness. These numbers were measured on the local development
-machine in browser WASM; iPhone/Safari numbers should be benchmarked separately
-as the production mobile target.
+Large research datasets and model checkpoints are intentionally not vendored
+directly into this repository.
 
 ## Layout
 
-- `web/` - runnable browser app export, including local model runtime assets.
-- `web/models/agentkernel_lite_100m_bitnet_v11/` - current local model bundle.
-- `web/vendor/model-stack-bitnet/` - browser runtime used by the app.
-- `wasm/agent_kernel_lite_core/` - Rust/WASM agent-kernel-lite core.
-- `model-stack/browser/bitnet/` - model-stack browser BitNet JS runtime source.
-- `model-stack/browser/bitnet_wasm/` - custom Rust/WASM BitNet kernels.
-- `scripts/` - lite training, export, evaluation, and dataset utilities.
-- `docs/` - architecture and training notes for Agent Kernel Lite.
-- `tests/` - targeted lite tests copied from the parent workspace.
+- `web/`: runnable browser app export
+- `web/extensions/`: available in-app extension catalog and manifests
+- `web/wasm/agent_kernel_lite_core/pkg/`: browser-loaded Rust/WASM core package
+- `wasm/agent_kernel_lite_core/`: Rust source for the agent core
+- `web/vendor/model-stack-bitnet/`: app-hosted model-stack runtime
+- `model-stack/browser/bitnet/`: model-stack browser BitNet JS runtime source
+- `model-stack/browser/bitnet_wasm/`: custom Rust/WASM BitNet kernels
+- `browser-extension-verifier/`: installable browser extension for release hash
+  verification
+- `scripts/`: training, export, evaluation, and utility scripts
+- `docs/`: architecture, integration, and planning notes
+- `tests/`: targeted lite tests
 
 ## Run Locally
 
@@ -87,7 +207,18 @@ python3 -m http.server 8797 --bind 127.0.0.1
 Open:
 
 ```text
-http://127.0.0.1:8797/?localModel=1
+http://127.0.0.1:8797/
+```
+
+Localhost is allowed for development extension installs. Production installs are
+release-only.
+
+## Rebuild Rust Agent Core WASM
+
+```bash
+cd agent_kernel_lite/wasm/agent_kernel_lite_core
+wasm-pack build --target web --release
+rsync -a --delete pkg/ ../../web/wasm/agent_kernel_lite_core/pkg/
 ```
 
 ## Rebuild WASM BitNet Kernel
@@ -101,26 +232,23 @@ cp ../bitnet/pkg/model_stack_bitnet_wasm.js ../../../../web/models/agentkernel_l
 cp ../bitnet/pkg/model_stack_bitnet_wasm_bg.wasm ../../../../web/models/agentkernel_lite_100m_bitnet_v11/runtime/
 ```
 
-## Rebuild Rust Agent Core WASM
+## Browser Decode Speed
 
-```bash
-cd agent_kernel_lite/wasm/agent_kernel_lite_core
-wasm-pack build --target web --release
-```
+Latest local browser WASM benchmark after custom BitNet decoder-kernel
+optimizations:
 
-The browser app expects the built package under:
+| Encoder context | Total decode speed | Steady decode speed |
+| --- | ---: | ---: |
+| 66 tokens | ~368 tok/s | ~408 tok/s |
+| 130 tokens | ~360 tok/s | ~413 tok/s |
+| 258 tokens | ~275 tok/s | ~334 tok/s |
+| 514 tokens | ~176 tok/s | ~226 tok/s |
 
-```text
-web/wasm/agent_kernel_lite_core/pkg/
-```
+Full browser-worker path for a 64-token generation measured about `500ms` in
+the local test harness. iPhone/Safari numbers should be benchmarked separately.
 
-## Notes
-
-Related public repositories and datasets:
+## Related Projects
 
 - `model-stack`: https://github.com/peytontolbert/model-stack
 - `Research_Library`: https://github.com/peytontolbert/Research_Library
 - `PeytonT/1m_papers_text`: https://huggingface.co/datasets/PeytonT/1m_papers_text
-
-Large research datasets and model checkpoints are intentionally not vendored
-directly into this repository.
