@@ -146,6 +146,16 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[st
     handler.wfile.write(raw)
 
 
+def html_response(handler: BaseHTTPRequestHandler, status: int, html_text: str) -> None:
+    raw = html_text.encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
 def options_response(handler: BaseHTTPRequestHandler, status: int = 204, payload: dict[str, Any] | None = None) -> None:
     raw = b"" if status == 204 else json.dumps(payload or {}, separators=(",", ":")).encode("utf-8")
     handler.send_response(status)
@@ -211,6 +221,8 @@ class BridgeState:
         self.allowed_origins = set(DEFAULT_ALLOWED_ORIGINS)
         for origin in args.allow_origin:
             self.allowed_origins.add(str(origin).rstrip("/"))
+        self.mobile_token = secrets.token_urlsafe(24)
+        self.mobile_grants: dict[str, dict[str, Any]] = {}
         self.pairing: dict[str, dict[str, Any]] = {}
         self.pairing_approval_lock = threading.Lock()
         self.grants = self.load_grants()
@@ -464,6 +476,42 @@ class BridgeState:
             answer = input("> ").strip()
         if answer != "APPROVE":
             raise ValueError("pairing was rejected on the computer")
+
+    def approve_mobile_console(self, token: str) -> dict[str, Any]:
+        if not secrets.compare_digest(str(token or ""), self.mobile_token):
+            raise ValueError("mobile console token is invalid")
+        if not sys.stdin.isatty():
+            raise ValueError("local computer approval is required, but this bridge has no interactive terminal")
+        grant_id = f"mobile_{secrets.token_urlsafe(18)}"
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        with self.pairing_approval_lock:
+            print("", flush=True)
+            print("Approve Agent Kernel mobile console?", flush=True)
+            print(f"Mobile code: {code}", flush=True)
+            print("Type APPROVE to allow this phone to use the local Computer Use console.", flush=True)
+            answer = input("> ").strip()
+        if answer != "APPROVE":
+            raise ValueError("mobile console was rejected on the computer")
+        grant = {
+            "grant_id": grant_id,
+            "created_at": time.time(),
+            "expires_at": time.time() + 60 * 60 * 12,
+        }
+        self.mobile_grants[grant_id] = grant
+        return {"status": "approved", "grant_id": grant_id, "code": code, "expires_at": grant["expires_at"]}
+
+    def require_mobile_grant(self, body: dict[str, Any]) -> dict[str, Any]:
+        grant_id = str(body.get("grant_id") or "")
+        grant = self.mobile_grants.get(grant_id)
+        if not grant or float(grant.get("expires_at") or 0) < time.time():
+            self.mobile_grants.pop(grant_id, None)
+            raise ValueError("mobile console is not approved")
+        return grant
+
+    def active_mobile_sessions(self) -> list[dict[str, Any]]:
+        with self.sessions_lock:
+            session_ids = list(self.sessions.keys())
+        return [self.session_snapshot(session_id, 0) for session_id in session_ids]
 
     def derive_key(self, grant: dict[str, Any]) -> bytes:
         browser_public = public_key_from_jwk(grant["browser_public_jwk"])
@@ -798,6 +846,171 @@ class BridgeState:
         }
 
 
+MOBILE_PAGE_HTML = r'''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Kernel Mobile Computer Use</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101418; color: #eef4f2; }
+    header, main, form { padding: 14px; }
+    header { border-bottom: 1px solid #26323a; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .muted { color: #aebbc2; font-size: 13px; }
+    button, input, select, textarea { width: 100%; font: inherit; border-radius: 8px; border: 1px solid #33434c; padding: 10px; margin-top: 8px; }
+    button { background: #76d69d; color: #08120c; font-weight: 700; border: 0; }
+    button.secondary { background: #24313a; color: #eef4f2; }
+    textarea { min-height: 88px; resize: vertical; background: #182128; color: #eef4f2; }
+    input, select { background: #182128; color: #eef4f2; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .session { border: 1px solid #2c3a43; border-radius: 8px; padding: 10px; margin: 10px 0; background: #151d23; }
+    .messages { padding: 14px; padding-bottom: 130px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b1014; border: 1px solid #26323a; padding: 10px; border-radius: 8px; }
+    form { position: fixed; left: 0; right: 0; bottom: 0; background: #101418; border-top: 1px solid #26323a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Computer Use</h1>
+    <div id="status" class="muted">Not approved.</div>
+    <button id="approveButton" type="button">Approve This Phone</button>
+  </header>
+  <main>
+    <label>Workspace <select id="workspaceSelect"></select></label>
+    <label>Session <select id="sessionSelect"></select></label>
+    <div class="row">
+      <button id="refreshButton" class="secondary" type="button">Refresh</button>
+      <button id="newSessionButton" class="secondary" type="button">New Session</button>
+    </div>
+    <div id="sessionList"></div>
+    <div class="messages" id="messages"></div>
+  </main>
+  <form id="messageForm">
+    <textarea id="promptInput" placeholder="Message Codex..."></textarea>
+    <button type="submit">Send</button>
+  </form>
+  <script>
+    const TOKEN = __TOKEN__;
+    const WORKSPACES = __WORKSPACES__;
+    let grantId = localStorage.getItem('agent-kernel-mobile-grant') || '';
+    let activeSessionId = localStorage.getItem('agent-kernel-mobile-session') || '';
+    const statusEl = document.getElementById('status');
+    const workspaceSelect = document.getElementById('workspaceSelect');
+    const sessionSelect = document.getElementById('sessionSelect');
+    const sessionList = document.getElementById('sessionList');
+    const messages = document.getElementById('messages');
+    const promptInput = document.getElementById('promptInput');
+    for (const workspace of WORKSPACES) {
+      const option = document.createElement('option');
+      option.value = workspace;
+      option.textContent = workspace;
+      workspaceSelect.appendChild(option);
+    }
+    async function api(path, body = {}) {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN, grant_id: grantId, ...body }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || payload.status || response.status);
+      return payload;
+    }
+    function eventText(event) {
+      if (event.text) return event.text;
+      if (event.parsed?.msg?.text) return event.parsed.msg.text;
+      if (event.parsed?.msg?.message) return event.parsed.msg.message;
+      if (event.parsed?.item?.text) return event.parsed.item.text;
+      if (event.parsed?.item?.message) return event.parsed.item.message;
+      return '';
+    }
+    function renderSession(session) {
+      if (!session) return;
+      statusEl.textContent = `Approved. Session ${session.status || ''}`;
+      messages.innerHTML = '';
+      for (const event of session.events || []) {
+        const text = eventText(event);
+        if (!text) continue;
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        messages.appendChild(pre);
+      }
+    }
+    async function refresh() {
+      if (!grantId) {
+        statusEl.textContent = 'Not approved.';
+        return;
+      }
+      const payload = await api('/mobile/api/sessions');
+      const sessions = payload.sessions || [];
+      sessionSelect.innerHTML = '';
+      sessionList.innerHTML = '';
+      for (const session of sessions) {
+        const option = document.createElement('option');
+        option.value = session.session_id;
+        option.textContent = `${session.workspace} - ${session.status}`;
+        sessionSelect.appendChild(option);
+        const card = document.createElement('div');
+        card.className = 'session';
+        card.textContent = `${session.workspace} - ${session.status}`;
+        card.addEventListener('click', () => {
+          activeSessionId = session.session_id;
+          localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+          sessionSelect.value = activeSessionId;
+          renderSession(session);
+        });
+        sessionList.appendChild(card);
+      }
+      if (!activeSessionId && sessions[0]) activeSessionId = sessions[0].session_id;
+      if (activeSessionId) {
+        sessionSelect.value = activeSessionId;
+        const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
+        renderSession(detail);
+      }
+    }
+    document.getElementById('approveButton').addEventListener('click', async () => {
+      statusEl.textContent = 'Waiting for desktop approval...';
+      const payload = await api('/mobile/api/approve');
+      grantId = payload.grant_id;
+      localStorage.setItem('agent-kernel-mobile-grant', grantId);
+      statusEl.textContent = `Approved. Code ${payload.code}`;
+      refresh();
+    });
+    document.getElementById('refreshButton').addEventListener('click', refresh);
+    document.getElementById('newSessionButton').addEventListener('click', () => {
+      activeSessionId = '';
+      localStorage.removeItem('agent-kernel-mobile-session');
+      messages.innerHTML = '';
+      promptInput.focus();
+    });
+    sessionSelect.addEventListener('change', () => {
+      activeSessionId = sessionSelect.value;
+      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+      refresh();
+    });
+    document.getElementById('messageForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const prompt = promptInput.value.trim();
+      if (!prompt) return;
+      promptInput.value = '';
+      const body = { workspace: workspaceSelect.value, provider: 'codex', prompt };
+      const result = activeSessionId
+        ? await api('/mobile/api/send', { ...body, session_id: activeSessionId })
+        : await api('/mobile/api/start', body);
+      activeSessionId = result.session_id;
+      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+      renderSession(result);
+      window.setTimeout(refresh, 1200);
+    });
+    window.setInterval(refresh, 3000);
+    refresh().catch((error) => { statusEl.textContent = error.message || String(error); });
+  </script>
+</body>
+</html>'''
+
+
 class Handler(BaseHTTPRequestHandler):
     state: BridgeState
 
@@ -820,6 +1033,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
+        if path in {"", "/", "/mobile"}:
+            self.handle_mobile_page()
+            return
         if path == "/pair":
             self.handle_pair_page()
             return
@@ -831,6 +1047,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         try:
+            if path.startswith("/mobile/api/"):
+                self.handle_mobile_api(path, read_json(self))
+                return
             origin = self.require_request_origin()
             if path == "/pairing/start":
                 json_response(self, 200, self.state.start_pairing_request(origin, read_json(self)))
@@ -844,6 +1063,44 @@ class Handler(BaseHTTPRequestHandler):
                 json_response(self, 404, {"status": "error", "error": "not found"})
         except Exception as exc:
             json_response(self, 400, {"status": "error", "error": str(exc)})
+
+    def handle_mobile_api(self, path: str, body: dict[str, Any]) -> None:
+        if path == "/mobile/api/approve":
+            json_response(self, 200, self.state.approve_mobile_console(str(body.get("token") or "")))
+            return
+        self.state.require_mobile_grant(body)
+        if path == "/mobile/api/health":
+            json_response(self, 200, self.state.health_payload())
+        elif path == "/mobile/api/sessions":
+            json_response(self, 200, {"status": "ok", "sessions": self.state.active_mobile_sessions()})
+        elif path == "/mobile/api/start":
+            json_response(self, 200, self.state.start_codex_session({
+                "provider": body.get("provider") or "codex",
+                "workspace": body.get("workspace") or "",
+                "model": body.get("model") or "",
+                "prompt": body.get("prompt") or "",
+            }))
+        elif path == "/mobile/api/send":
+            json_response(self, 200, self.state.send_codex_followup({
+                "provider": body.get("provider") or "codex",
+                "session_id": body.get("session_id") or "",
+                "model": body.get("model") or "",
+                "prompt": body.get("prompt") or "",
+            }))
+        elif path == "/mobile/api/status":
+            json_response(self, 200, self.state.session_snapshot(str(body.get("session_id") or ""), int(body.get("since") or 0)))
+        else:
+            json_response(self, 404, {"status": "error", "error": "not found"})
+
+    def handle_mobile_page(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        token = str((query.get("t") or [""])[0])
+        if not secrets.compare_digest(token, self.state.mobile_token):
+            html_response(self, 403, "<!doctype html><title>Agent Kernel</title><p>Invalid or missing mobile console token.</p>")
+            return
+        workspaces = [str(item) for item in self.state.allowed_workspaces]
+        page = MOBILE_PAGE_HTML.replace("__TOKEN__", json.dumps(token)).replace("__WORKSPACES__", json.dumps(workspaces))
+        html_response(self, 200, page)
 
     def handle_pair_page(self) -> None:
         query = parse_qs(urlparse(self.path).query)
@@ -1203,8 +1460,10 @@ def main() -> None:
     print(f"Allowed workspace roots: {', '.join(str(item) for item in state.allowed_workspaces)}", flush=True)
     if state.host == "0.0.0.0":
         print("Phone pairing page: http://<computer-lan-ip>:45731/pair", flush=True)
+        print(f"Mobile Computer Use: http://<computer-lan-ip>:{state.port}/mobile?t={state.mobile_token}", flush=True)
     else:
         print(f"Pairing page: http://{state.host}:{state.port}/pair", flush=True)
+        print(f"Mobile Computer Use: http://{state.host}:{state.port}/mobile?t={state.mobile_token}", flush=True)
     print("Keep this terminal open while using the Computer Use extension.", flush=True)
     server.serve_forever()
 
