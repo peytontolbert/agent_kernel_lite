@@ -874,12 +874,13 @@ class Handler(BaseHTTPRequestHandler):
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent Kernel Computer Pairing</title>
   <style>
-    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; line-height: 1.45; background: #101418; color: #f4f7f8; }}
-    main {{ max-width: 620px; margin: 0 auto; }}
+    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; line-height: 1.45; background: #101418; color: #f4f7f8; }}
+    main {{ max-width: 620px; margin: 0 auto; padding: 20px; }}
     button {{ font: inherit; padding: 12px 16px; border-radius: 8px; border: 0; background: #72d6a0; color: #07120b; font-weight: 700; }}
     code, pre {{ background: #1f2930; border-radius: 6px; padding: 2px 5px; }}
     pre {{ padding: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }}
     .muted {{ color: #b8c2c8; }}
+    iframe {{ width: 100%; min-height: 72vh; border: 1px solid #33414a; border-radius: 8px; background: white; }}
   </style>
 </head>
 <body>
@@ -887,8 +888,10 @@ class Handler(BaseHTTPRequestHandler):
     <h1>Pair Agent Kernel</h1>
     <p class="muted">This local page lets the HTTPS Agent Kernel app talk to the desktop bridge without a hosted relay.</p>
     <p><button id="openApp" type="button">Open Agent Kernel</button></p>
+    <p><button id="embedApp" type="button">Open Here</button></p>
     <p>Status: <span id="status">waiting</span></p>
     <pre id="log"></pre>
+    <div id="frameHost"></div>
   </main>
   <script>
     const appUrl = {app_url_js};
@@ -899,19 +902,38 @@ class Handler(BaseHTTPRequestHandler):
     function log(line) {{
       logEl.textContent = `${{new Date().toLocaleTimeString()}} ${{line}}\\n${{logEl.textContent}}`;
     }}
-    function sendReady() {{
-      if (!appWindow || appWindow.closed) return;
-      appWindow.postMessage({{
+    function sendReadyTo(target) {{
+      if (!target) return;
+      target.postMessage({{
         type: 'agent-kernel-computer-broker-ready',
         bridgeUrl: window.location.origin,
         token: new URL(appUrl).searchParams.get('computerBrokerToken') || '',
       }}, appOrigin);
+    }}
+    function sendReady() {{
+      if (appWindow && !appWindow.closed) sendReadyTo(appWindow);
+      const frame = document.getElementById('agentKernelFrame');
+      if (frame && frame.contentWindow) sendReadyTo(frame.contentWindow);
     }}
     document.getElementById('openApp').addEventListener('click', () => {{
       appWindow = window.open(appUrl, 'agent-kernel-lite');
       statusEl.textContent = appWindow ? 'app opened' : 'popup blocked';
       log(appWindow ? 'Opened Agent Kernel app.' : 'Popup blocked. Allow popups for this local pairing page.');
       sendReady();
+    }});
+    document.getElementById('embedApp').addEventListener('click', () => {{
+      let frame = document.getElementById('agentKernelFrame');
+      if (!frame) {{
+        frame = document.createElement('iframe');
+        frame.id = 'agentKernelFrame';
+        frame.allow = 'clipboard-read; clipboard-write';
+        document.getElementById('frameHost').appendChild(frame);
+      }}
+      frame.src = appUrl;
+      appWindow = frame.contentWindow;
+      statusEl.textContent = 'app embedded';
+      log('Embedded Agent Kernel app.');
+      frame.addEventListener('load', sendReady);
     }});
     window.addEventListener('message', async (event) => {{
       if (event.origin !== appOrigin) return;

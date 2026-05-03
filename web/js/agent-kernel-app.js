@@ -19,7 +19,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v12';
+const CACHE_NAME = 'agent-kernel-lite-v13';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -99,7 +99,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v12';
+const GITHUB_RELEASE_TAG = 'v13';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -1320,7 +1320,13 @@ function brokerOriginAllowed(origin) {
 }
 
 function setupComputerBrokerTransport() {
-  if (!window.opener) return;
+  const brokerTargets = () => {
+    const targets = [];
+    if (window.opener) targets.push(window.opener);
+    if (window.parent && window.parent !== window) targets.push(window.parent);
+    return targets;
+  };
+  if (!brokerTargets().length) return;
   window.addEventListener('message', (event) => {
     const message = event.data || {};
     if (message.type === 'agent-kernel-computer-broker-ready') {
@@ -1356,11 +1362,13 @@ function setupComputerBrokerTransport() {
     }
   });
   const sayHello = () => {
-    if (!window.opener || state.codex.broker.connected) return;
-    window.opener.postMessage({
-      type: 'agent-kernel-computer-broker-hello',
-      token: state.codex.broker.token,
-    }, '*');
+    if (state.codex.broker.connected) return;
+    for (const target of brokerTargets()) {
+      target.postMessage({
+        type: 'agent-kernel-computer-broker-hello',
+        token: state.codex.broker.token,
+      }, '*');
+    }
   };
   sayHello();
   window.setInterval(sayHello, 1000);
