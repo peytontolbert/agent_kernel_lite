@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import html
 import hashlib
 import json
 import os
@@ -855,13 +854,19 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.scheme != "https":
                 raise ValueError("app URL must be https")
             query_items = parse_qs(parsed.query)
+            token = secrets.token_urlsafe(18)
             query_items["computerBroker"] = ["1"]
-            app_url = parsed._replace(query=urlencode(query_items, doseq=True)).geturl()
+            query_items["computerBrokerToken"] = [token]
+            app_url = parsed._replace(
+                query=urlencode(query_items, doseq=True),
+                fragment=f"computerBroker=1&computerBrokerToken={token}",
+            ).geturl()
         except Exception:
-            app_url = "https://peytontolbert.com/agent_kernel/?computerBroker=1"
-        escaped_app_url = html.escape(app_url, quote=True)
+            token = secrets.token_urlsafe(18)
+            app_url = f"https://peytontolbert.com/agent_kernel/?computerBroker=1&computerBrokerToken={token}#computerBroker=1&computerBrokerToken={token}"
         app_origin = f"{urlparse(app_url).scheme}://{urlparse(app_url).netloc}"
-        escaped_app_origin = html.escape(app_origin, quote=True)
+        app_url_js = json.dumps(app_url)
+        app_origin_js = json.dumps(app_origin)
         page = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -886,8 +891,8 @@ class Handler(BaseHTTPRequestHandler):
     <pre id="log"></pre>
   </main>
   <script>
-    const appUrl = "{escaped_app_url}";
-    const appOrigin = "{escaped_app_origin}";
+    const appUrl = {app_url_js};
+    const appOrigin = {app_origin_js};
     let appWindow = null;
     const statusEl = document.getElementById('status');
     const logEl = document.getElementById('log');
@@ -899,6 +904,7 @@ class Handler(BaseHTTPRequestHandler):
       appWindow.postMessage({{
         type: 'agent-kernel-computer-broker-ready',
         bridgeUrl: window.location.origin,
+        token: new URL(appUrl).searchParams.get('computerBrokerToken') || '',
       }}, appOrigin);
     }}
     document.getElementById('openApp').addEventListener('click', () => {{

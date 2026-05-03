@@ -8,6 +8,7 @@ const HF = {
 };
 
 const URL_PARAMS = new URLSearchParams(window.location.search);
+const HASH_PARAMS = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
 const DEV_BACKEND = String(URL_PARAMS.get('backend') || '').trim().toLowerCase();
 const DEVICE_PARAM = String(URL_PARAMS.get('device') || '').trim().toLowerCase();
 const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
@@ -18,7 +19,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v11';
+const CACHE_NAME = 'agent-kernel-lite-v12';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -98,7 +99,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v11';
+const GITHUB_RELEASE_TAG = 'v12';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -299,7 +300,8 @@ const state = {
     lastStatus: null,
     seq: 0,
     broker: {
-      enabled: URL_PARAMS.get('computerBroker') === '1',
+      enabled: URL_PARAMS.get('computerBroker') === '1' || HASH_PARAMS.get('computerBroker') === '1',
+      token: URL_PARAMS.get('computerBrokerToken') || HASH_PARAMS.get('computerBrokerToken') || '',
       connected: false,
       origin: '',
       bridgeUrl: '',
@@ -1318,11 +1320,14 @@ function brokerOriginAllowed(origin) {
 }
 
 function setupComputerBrokerTransport() {
-  if (!state.codex.broker.enabled || !window.opener) return;
+  if (!window.opener) return;
   window.addEventListener('message', (event) => {
     const message = event.data || {};
     if (message.type === 'agent-kernel-computer-broker-ready') {
       if (!brokerOriginAllowed(event.origin)) return;
+      if (state.codex.broker.token && message.token !== state.codex.broker.token) return;
+      if (!state.codex.broker.enabled && !state.codex.broker.token) return;
+      state.codex.broker.enabled = true;
       state.codex.broker.connected = true;
       state.codex.broker.origin = event.origin;
       state.codex.broker.bridgeUrl = String(message.bridgeUrl || event.origin).replace(/\/+$/, '');
@@ -1352,7 +1357,10 @@ function setupComputerBrokerTransport() {
   });
   const sayHello = () => {
     if (!window.opener || state.codex.broker.connected) return;
-    window.opener.postMessage({ type: 'agent-kernel-computer-broker-hello' }, '*');
+    window.opener.postMessage({
+      type: 'agent-kernel-computer-broker-hello',
+      token: state.codex.broker.token,
+    }, '*');
   };
   sayHello();
   window.setInterval(sayHello, 1000);
