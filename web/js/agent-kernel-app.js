@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v7';
+const CACHE_NAME = 'agent-kernel-lite-v8';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -98,7 +98,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v7';
+const GITHUB_RELEASE_TAG = 'v8';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -1162,18 +1162,6 @@ function normalizeCodexBridgeInput(value) {
   return clean;
 }
 
-function needsHostedBridgeInput() {
-  return window.location.protocol === 'https:' && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(codexBridgeUrl());
-}
-
-function ensureCodexBridgeUrlForPairing() {
-  if (!needsHostedBridgeInput()) return true;
-  const value = window.prompt('Paste the Phone bridge URL or route ID printed by Agent Kernel Desktop.');
-  if (!value) return false;
-  setCodexBridgeUrl(value);
-  return true;
-}
-
 function codexWorkspace() {
   return String(localStorage.getItem(CODEX_WORKSPACE_STORAGE_KEY) || '').trim();
 }
@@ -1312,7 +1300,6 @@ async function codexBridgeHealth() {
 }
 
 async function pairCodexBridge() {
-  if (!ensureCodexBridgeUrlForPairing()) throw new Error('Pairing cancelled.');
   if (!window.crypto?.subtle) throw new Error('Codex pairing requires WebCrypto support.');
   const keyPair = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
@@ -5372,11 +5359,11 @@ function setInstalledExtensionEnabled(extensionId, enabled) {
 function appendCodexSettings(settings, manifest) {
   const bridgeLabel = document.createElement('label');
   bridgeLabel.className = 'extension-detail';
-  bridgeLabel.textContent = 'Phone bridge URL or route ID';
+  bridgeLabel.textContent = 'Bridge URL';
   const bridgeInput = document.createElement('input');
   bridgeInput.type = 'text';
   bridgeInput.value = codexBridgeUrl();
-  bridgeInput.placeholder = `${COMPUTER_DEFAULT_RELAY_URL}/bridge/route_...`;
+  bridgeInput.placeholder = 'http://192.168.0.85:45731';
   bridgeInput.autocomplete = 'off';
   bridgeInput.addEventListener('change', () => {
     setCodexBridgeUrl(bridgeInput.value);
