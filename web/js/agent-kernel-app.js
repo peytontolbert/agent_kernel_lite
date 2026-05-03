@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v4';
+const CACHE_NAME = 'agent-kernel-lite-v5';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -96,7 +96,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v4';
+const GITHUB_RELEASE_TAG = 'v5';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -526,23 +526,23 @@ function syncModelControls() {
   const imageMode = Boolean(state.image.enabled);
   const imageBusy = Boolean(state.image.busy);
   const translationBusy = Boolean(state.translation.busy || state.translation.listening);
-  const codexMode = extensionEnabled(state.codex.extensionId);
+  const computerSessionMode = document.body.classList.contains('computer-session-open');
   const codexBusy = Boolean(state.codex.busy);
   if (els.loadModel) {
-    els.loadModel.disabled = imageMode || codexMode || loading || state.processActive;
+    els.loadModel.disabled = imageMode || computerSessionMode || loading || state.processActive;
     els.loadModel.textContent = loaded ? 'Reload Runtime' : loading ? 'Loading...' : 'Load Runtime';
   }
   if (els.unloadModel) {
-    els.unloadModel.disabled = imageMode || codexMode || loading || state.processActive || !state.worker;
+    els.unloadModel.disabled = imageMode || computerSessionMode || loading || state.processActive || !state.worker;
   }
   if (els.send) {
-    els.send.disabled = state.processActive || imageBusy || translationBusy || codexBusy || (codexMode ? !state.codex.paired : imageMode ? !state.image.ready : loading || !loaded);
+    els.send.disabled = state.processActive || imageBusy || translationBusy || codexBusy || (computerSessionMode ? !state.codex.paired : imageMode ? !state.image.ready : loading || !loaded);
     els.send.textContent = imageMode
       ? imageBusy ? 'Generating...' : 'Generate'
       : state.translation.enabled
         ? state.translation.busy ? 'Translating...' : 'Translate'
-        : codexMode
-          ? codexBusy ? 'Running...' : 'Run Codex'
+        : computerSessionMode
+          ? codexBusy ? 'Running...' : 'Send'
           : 'Send';
   }
   syncTranslationControls();
@@ -4030,6 +4030,7 @@ function setComputerConsoleOpen(open) {
   if (!nextOpen) renderStoredMessages();
   if (!nextOpen && els.prompt) els.prompt.placeholder = modeConfig().placeholder;
   renderComputerConsole();
+  syncModelControls();
 }
 
 function computerOutputText(session) {
@@ -4329,6 +4330,7 @@ function renderComputerSessionPage(session) {
   if (!session) return;
   document.body.classList.remove('computer-console-open');
   document.body.classList.add('computer-session-open');
+  syncModelControls();
   els.chat.innerHTML = '';
   const header = document.createElement('article');
   header.className = 'message assistant computer-session-header';
@@ -4738,6 +4740,7 @@ async function handleComputerAction(action, sessionId = state.codex.activeSessio
       document.body.classList.add('computer-console-open');
       if (els.prompt) els.prompt.placeholder = modeConfig().placeholder;
       renderComputerConsole();
+      syncModelControls();
     } else if (action === 'remove') {
       removeComputerSession(sessionId);
     }
@@ -4828,10 +4831,8 @@ async function submitCodexPrompt(text) {
       });
     }
     setProcessStep('generate', status === 'approved_executed' ? 'done' : 'error', `Codex exit ${result.exit_code ?? 'unknown'}`);
-    const diff = status === 'approved_executed' ? await readCodexDiff(result.session_id || state.codex.sessionId, result.workspace || workspace) : null;
-    setProcessStep('render', 'done', diff?.diff ? 'Codex result and diff displayed' : 'Codex result displayed');
-    const diffText = diff?.diff ? `\n\nDiff:\n\`\`\`diff\n${String(diff.diff).slice(0, 8000)}${diff.truncated ? '\n... diff truncated ...' : ''}\n\`\`\`` : '';
-    appendMessage('assistant', `${summarizeCodexOutput(result)}${diffText}`);
+    setProcessStep('render', 'done', 'Codex result displayed');
+    appendMessage('assistant', summarizeCodexOutput(result));
     finishProcessTrace(status === 'approved_executed' ? 'Codex Done' : 'Codex Failed');
   } catch (error) {
     if (state.codex.activeActionId) {
@@ -4897,10 +4898,6 @@ async function submitPrompt(event) {
       sourceLanguage: translationSourceLabel(),
       targetLanguage: translationTargetLabel(),
     });
-    return;
-  }
-  if (extensionEnabled(state.codex.extensionId)) {
-    await submitCodexPrompt(text);
     return;
   }
   resetProcessTrace(text);
