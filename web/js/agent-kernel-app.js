@@ -18,13 +18,99 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v1';
+const CACHE_NAME = 'agent-kernel-lite-v2';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
+const EXTENSION_CACHE_DB_KEY = 'installed_extensions_v1';
+const COMPUTER_PAIRING_DB_KEY = 'computer_bridge_pairing_v1';
+const COMPUTER_WORKSPACE_STORAGE_KEY = 'agent-kernel-lite-computer-workspace';
+const COMPUTER_BRIDGE_URL_STORAGE_KEY = 'agent-kernel-lite-computer-bridge-url';
+const COMPUTER_PROVIDER_STORAGE_KEY = 'agent-kernel-lite-computer-provider';
+const COMPUTER_MODEL_STORAGE_KEY = 'agent-kernel-lite-computer-model';
+const COMPUTER_DEFAULT_BRIDGE_URL = 'http://127.0.0.1:45731';
+const COMPUTER_BRIDGE_PROTOCOL = 'agent-kernel-computer-bridge/v1';
+const COMPUTER_SLASH_COMMANDS = [
+  { name: 'diff', description: 'show git diff for this workspace' },
+  { name: 'status', description: 'show current terminal configuration' },
+  { name: 'model', description: 'show or set the Codex model', args: true },
+  { name: 'models', description: 'show or set the Codex model', args: true },
+  { name: 'permissions', description: 'show bridge workspace and sandbox permissions' },
+  { name: 'approvals', description: 'show bridge workspace and sandbox permissions' },
+  { name: 'clear', description: 'clear this terminal view and start fresh' },
+  { name: 'new', description: 'start a new terminal for this workspace' },
+  { name: 'review', description: 'review current changes and find issues', args: true },
+  { name: 'init', description: 'create AGENTS.md instructions for Codex' },
+  { name: 'compact', description: 'ask Codex to summarize the conversation' },
+  { name: 'copy', description: 'copy the last Codex response' },
+  { name: 'mention', description: 'insert @ for a file mention', localOnly: true },
+  { name: 'ps', description: 'list active computer terminals' },
+  { name: 'stop', description: 'cancel the running Codex turn' },
+  { name: 'quit', description: 'return to the terminal list' },
+  { name: 'exit', description: 'return to the terminal list' },
+  { name: 'help', description: 'show available commands' },
+];
+const CODEX_INIT_PROMPT = `Generate a file named AGENTS.md that serves as a contributor guide for this repository.
+Your goal is to produce a clear, concise, and well-structured document with descriptive headings and actionable explanations for each section.
+Follow the outline below, but adapt as needed. Add sections if relevant, and omit those that do not apply to this project.
+
+Document Requirements
+
+- Title the document "Repository Guidelines".
+- Use Markdown headings (#, ##, etc.) for structure.
+- Keep the document concise. 200-400 words is optimal.
+- Keep explanations short, direct, and specific to this repository.
+- Provide examples where helpful, such as commands, directory paths, and naming patterns.
+- Maintain a professional, instructional tone.
+
+Recommended Sections
+
+Project Structure & Module Organization
+
+- Outline the project structure, including where the source code, tests, and assets are located.
+
+Build, Test, and Development Commands
+
+- List key commands for building, testing, and running locally.
+- Briefly explain what each command does.
+
+Coding Style & Naming Conventions
+
+- Specify indentation rules, language-specific style preferences, and naming patterns.
+- Include any formatting or linting tools used.
+
+Testing Guidelines
+
+- Identify testing frameworks and coverage requirements.
+- State test naming conventions and how to run tests.
+
+Commit & Pull Request Guidelines
+
+- Summarize commit message conventions found in the project's Git history.
+- Outline pull request requirements, such as descriptions, linked issues, and screenshots.
+
+Optional: add other sections if relevant, such as Security & Configuration Tips, Architecture Overview, or Agent-Specific Instructions.`;
+const CODEX_PAIRING_DB_KEY = COMPUTER_PAIRING_DB_KEY;
+const CODEX_WORKSPACE_STORAGE_KEY = COMPUTER_WORKSPACE_STORAGE_KEY;
+const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
+const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
+const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
+const GITHUB_RELEASE_TAG = 'v2';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
-const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
+const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
+const AVAILABLE_EXTENSIONS_CATALOG_URL = `${PINNED_GITHUB_RELEASE_ROOT}/catalog.json`;
+const LOCAL_AVAILABLE_EXTENSIONS = [
+  {
+    id: 'computer_use',
+    name: 'Computer Use',
+    source: 'official',
+    manifest: `${PINNED_GITHUB_RELEASE_ROOT}/computer_use.json`,
+    description: 'Pair with Agent Kernel Desktop or the local computer bridge to orchestrate Codex, Claude Code, and Cursor sessions.',
+    setup: 'Requires pairing the local computer bridge before enabling a provider.',
+  },
+];
+const RELEASE_AVAILABLE_EXTENSION_IDS = new Set(LOCAL_AVAILABLE_EXTENSIONS.map((entry) => entry.id));
 const MODE_CONFIG = {
   chat: {
     label: 'Chat',
@@ -166,7 +252,7 @@ const state = {
     activeActionId: null,
     extensionId: 'image_generation',
     capabilityId: 'image.generate',
-    modelId: 'agentkernel_lite_image_bitdit_hf_cifar_distilled_v1',
+    modelId: URL_PARAMS.get('imageModel') || 'agentkernel_lite_image_bitdit_hf_cifar_distilled_v1',
   },
   translation: {
     enabled: false,
@@ -177,6 +263,29 @@ const state = {
     textCapabilityId: 'translation.text',
     audioCapabilityId: 'translation.audio',
     activeActionId: null,
+  },
+  codex: {
+    extensionId: 'computer_use',
+    startCapabilityId: 'computer.session.start',
+    sendCapabilityId: 'computer.session.send',
+    statusCapabilityId: 'computer.session.status',
+    cancelCapabilityId: 'computer.session.cancel',
+    diffCapabilityId: 'computer.diff.read',
+    bridgeUrl: localStorage.getItem(COMPUTER_BRIDGE_URL_STORAGE_KEY) || COMPUTER_DEFAULT_BRIDGE_URL,
+    provider: localStorage.getItem(COMPUTER_PROVIDER_STORAGE_KEY) || 'codex',
+    model: localStorage.getItem(COMPUTER_MODEL_STORAGE_KEY) || '',
+    providers: [],
+    paired: false,
+    pairing: null,
+    busy: false,
+    activeActionId: null,
+    sessionId: '',
+    activeSessionId: '',
+    sessions: [],
+    pollTimers: new Map(),
+    eventCount: 0,
+    lastStatus: null,
+    seq: 0,
   },
   processRunId: 0,
   generationRunId: 0,
@@ -242,8 +351,20 @@ const els = {
   sessionLine: document.getElementById('sessionLine'),
   runtimeLine: document.getElementById('runtimeLine'),
   statusDock: document.getElementById('statusDock'),
+  commandPalette: document.getElementById('commandPalette'),
+  computerConsole: document.getElementById('computerConsole'),
+  computerConsoleButton: document.getElementById('computerConsoleButton'),
+  computerWorkspace: document.getElementById('computerWorkspaceInput'),
+  computerProvider: document.getElementById('computerProviderSelect'),
+  computerStart: document.getElementById('computerStartButton'),
+  computerNewTerminalForm: document.getElementById('computerNewTerminalForm'),
+  computerCreateTerminal: document.getElementById('computerCreateTerminalButton'),
+  computerCancelTerminal: document.getElementById('computerCancelTerminalButton'),
+  computerSessionList: document.getElementById('computerSessionList'),
+  computerSessionDetail: document.getElementById('computerSessionDetail'),
   themeToggle: document.getElementById('themeToggleButton'),
   mobileToggle: document.getElementById('mobileToggleButton'),
+  closeControls: document.getElementById('closeControlsButton'),
 };
 
 function log(message) {
@@ -395,20 +516,24 @@ function syncModelControls() {
   const imageMode = Boolean(state.image.enabled);
   const imageBusy = Boolean(state.image.busy);
   const translationBusy = Boolean(state.translation.busy || state.translation.listening);
+  const codexMode = extensionEnabled(state.codex.extensionId);
+  const codexBusy = Boolean(state.codex.busy);
   if (els.loadModel) {
-    els.loadModel.disabled = imageMode || loading || state.processActive;
+    els.loadModel.disabled = imageMode || codexMode || loading || state.processActive;
     els.loadModel.textContent = loaded ? 'Reload Runtime' : loading ? 'Loading...' : 'Load Runtime';
   }
   if (els.unloadModel) {
-    els.unloadModel.disabled = imageMode || loading || state.processActive || !state.worker;
+    els.unloadModel.disabled = imageMode || codexMode || loading || state.processActive || !state.worker;
   }
   if (els.send) {
-    els.send.disabled = state.processActive || imageBusy || translationBusy || (imageMode ? !state.image.ready : loading || !loaded);
+    els.send.disabled = state.processActive || imageBusy || translationBusy || codexBusy || (codexMode ? !state.codex.paired : imageMode ? !state.image.ready : loading || !loaded);
     els.send.textContent = imageMode
       ? imageBusy ? 'Generating...' : 'Generate'
       : state.translation.enabled
         ? state.translation.busy ? 'Translating...' : 'Translate'
-        : 'Send';
+        : codexMode
+          ? codexBusy ? 'Running...' : 'Run Codex'
+          : 'Send';
   }
   syncTranslationControls();
 }
@@ -671,7 +796,10 @@ function loadImageRuntime() {
     state.image.loadResolve = resolve;
     state.image.loadReject = reject;
   });
-  ensureImageWorker().postMessage({ type: 'load', modelId: state.image.modelId });
+  ensureImageWorker().postMessage({
+    type: 'load',
+    modelId: state.image.modelId,
+  });
   syncImageModeControls();
   return state.image.loadPromise;
 }
@@ -968,6 +1096,242 @@ async function dbSet(key, value) {
   db.close();
 }
 
+async function dbDelete(key) {
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).delete(key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(String(value || ''));
+  const out = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) out[index] = binary.charCodeAt(index);
+  return out;
+}
+
+function utf8Bytes(value) {
+  return new TextEncoder().encode(String(value || ''));
+}
+
+function utf8Text(bytes) {
+  return new TextDecoder().decode(bytes);
+}
+
+function codexBridgeUrl() {
+  return String(state.codex.bridgeUrl || CODEX_DEFAULT_BRIDGE_URL).replace(/\/+$/, '');
+}
+
+function codexWorkspace() {
+  return String(localStorage.getItem(CODEX_WORKSPACE_STORAGE_KEY) || '').trim();
+}
+
+function setCodexWorkspace(value) {
+  localStorage.setItem(CODEX_WORKSPACE_STORAGE_KEY, String(value || '').trim());
+}
+
+function computerProvider() {
+  return String(state.codex.provider || 'codex').trim() || 'codex';
+}
+
+function setComputerProvider(value) {
+  const provider = String(value || 'codex').trim() || 'codex';
+  state.codex.provider = provider;
+  localStorage.setItem(COMPUTER_PROVIDER_STORAGE_KEY, provider);
+}
+
+function computerModel() {
+  return String(state.codex.model || '').trim();
+}
+
+function setComputerModel(value) {
+  const model = String(value || '').trim();
+  state.codex.model = model;
+  if (model) localStorage.setItem(COMPUTER_MODEL_STORAGE_KEY, model);
+  else localStorage.removeItem(COMPUTER_MODEL_STORAGE_KEY);
+}
+
+function setCodexBridgeUrl(value) {
+  const clean = String(value || CODEX_DEFAULT_BRIDGE_URL).trim().replace(/\/+$/, '') || CODEX_DEFAULT_BRIDGE_URL;
+  state.codex.bridgeUrl = clean;
+  localStorage.setItem(CODEX_BRIDGE_URL_STORAGE_KEY, clean);
+}
+
+async function loadCodexPairing() {
+  state.codex.pairing = await dbGet(CODEX_PAIRING_DB_KEY).catch(() => null);
+  state.codex.paired = Boolean(state.codex.pairing?.grant_id && state.codex.pairing?.browser_private_jwk && state.codex.pairing?.bridge_public_jwk);
+  state.codex.seq = Number(state.codex.pairing?.seq || 0);
+  return state.codex.pairing;
+}
+
+async function saveCodexPairing(pairing) {
+  state.codex.pairing = pairing;
+  state.codex.paired = Boolean(pairing?.grant_id);
+  state.codex.seq = Number(pairing?.seq || state.codex.seq || 0);
+  await dbSet(CODEX_PAIRING_DB_KEY, pairing);
+}
+
+async function clearCodexPairing() {
+  const hadPairing = Boolean(state.codex.pairing?.grant_id);
+  if (hadPairing) {
+    await sendCodexBridgeMessage('computer.grant.revoke').catch((error) => {
+      log(`Computer bridge revoke skipped: ${error.message || String(error)}`);
+    });
+  }
+  state.codex.pairing = null;
+  state.codex.paired = false;
+  state.codex.seq = 0;
+  await dbDelete(CODEX_PAIRING_DB_KEY).catch(() => {});
+  renderExtensionList();
+  renderComputerConsole();
+}
+
+async function importEcdhPublicKey(jwk) {
+  return crypto.subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+}
+
+async function importEcdhPrivateKey(jwk) {
+  return crypto.subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+}
+
+async function deriveCodexAesKey(pairing = state.codex.pairing) {
+  if (!pairing?.browser_private_jwk || !pairing?.bridge_public_jwk || !pairing?.grant_id) {
+    throw new Error('Computer bridge is not paired.');
+  }
+  const privateKey = await importEcdhPrivateKey(pairing.browser_private_jwk);
+  const publicKey = await importEcdhPublicKey(pairing.bridge_public_jwk);
+  const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: publicKey }, privateKey, 256);
+  const hkdfKey = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: utf8Bytes(pairing.grant_id),
+      info: utf8Bytes(pairing.origin || window.location.origin),
+    },
+    hkdfKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+async function encryptCodexPayload(payload) {
+  const pairing = state.codex.pairing || await loadCodexPairing();
+  const key = await deriveCodexAesKey(pairing);
+  const seq = Number(pairing.seq || 0) + 1;
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const aad = utf8Bytes(`${pairing.grant_id}:${seq}`);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce, additionalData: aad },
+    key,
+    utf8Bytes(JSON.stringify(payload)),
+  );
+  pairing.seq = seq;
+  await saveCodexPairing(pairing);
+  return {
+    protocol: CODEX_BRIDGE_PROTOCOL,
+    grant_id: pairing.grant_id,
+    seq,
+    nonce: bytesToBase64(nonce),
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+  };
+}
+
+async function decryptCodexEnvelope(envelope) {
+  const pairing = state.codex.pairing || await loadCodexPairing();
+  const key = await deriveCodexAesKey(pairing);
+  const aad = utf8Bytes(`${pairing.grant_id}:${Number(envelope.seq || 0)}`);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: base64ToBytes(envelope.nonce), additionalData: aad },
+    key,
+    base64ToBytes(envelope.ciphertext),
+  );
+  return JSON.parse(utf8Text(new Uint8Array(plaintext)));
+}
+
+async function codexBridgeHealth() {
+  const response = await fetch(`${codexBridgeUrl()}/health`, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Computer bridge health failed: ${response.status}`);
+  const result = await response.json();
+  state.codex.providers = Array.isArray(result.providers) ? result.providers : state.codex.providers;
+  state.codex.bridgeHealth = result;
+  return result;
+}
+
+async function pairCodexBridge() {
+  if (!window.crypto?.subtle) throw new Error('Codex pairing requires WebCrypto support.');
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits'],
+  );
+  const browserPublicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  const browserPrivateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+  const startResponse = await fetch(`${codexBridgeUrl()}/pairing/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      origin: window.location.origin,
+      browser_public_jwk: browserPublicJwk,
+    }),
+  });
+  const start = await startResponse.json();
+  if (!startResponse.ok || start.status !== 'pairing_code_required') {
+    throw new Error(start.error || start.status || 'pairing did not start');
+  }
+  const code = window.prompt('Enter the computer bridge pairing code shown on the working computer. After submitting it, approve the pairing in the computer terminal or Agent Kernel Desktop.');
+  if (!code) throw new Error('Pairing cancelled.');
+  appendMessage('assistant', 'Pairing request sent. Approve it on the working computer to complete setup.');
+  log('Computer bridge pairing waiting for computer approval');
+  const confirmResponse = await fetch(`${codexBridgeUrl()}/pairing/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairing_id: start.pairing_id, code: String(code).trim() }),
+  });
+  const confirm = await confirmResponse.json();
+  if (!confirmResponse.ok || confirm.status !== 'paired') {
+    throw new Error(confirm.error || confirm.status || 'pairing failed');
+  }
+  await saveCodexPairing({
+    protocol: CODEX_BRIDGE_PROTOCOL,
+    bridge_url: codexBridgeUrl(),
+    grant_id: confirm.grant_id,
+    origin: window.location.origin,
+    browser_private_jwk: browserPrivateJwk,
+    browser_public_jwk: browserPublicJwk,
+    bridge_public_jwk: start.bridge_public_jwk,
+    expires_at: confirm.expires_at,
+    seq: 0,
+  });
+  setExtensionEnabled(state.codex.extensionId, true);
+  log('Computer bridge paired');
+  renderExtensionList();
+  renderComputerConsole();
+}
+
+async function sendCodexBridgeMessage(type, payload = {}) {
+  const envelope = await encryptCodexPayload({ type, ...payload });
+  const response = await fetch(`${codexBridgeUrl()}/v1/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  const raw = await response.json();
+  if (!response.ok) throw new Error(raw.error || `Computer bridge message failed: ${response.status}`);
+  return decryptCodexEnvelope(raw);
+}
+
 async function dbDump() {
   const db = await openDb();
   const entries = await new Promise((resolve, reject) => {
@@ -977,7 +1341,7 @@ async function dbDump() {
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor) return;
-      out.push([cursor.key, cursor.value]);
+      if (cursor.key !== CODEX_PAIRING_DB_KEY) out.push([cursor.key, cursor.value]);
       cursor.continue();
     };
     tx.oncomplete = () => resolve(out);
@@ -3244,8 +3608,11 @@ function renderStoredMessages() {
 
 function appendImageMessage(result) {
   els.empty?.remove();
+  const imageBase64 = String(result.imageBase64 || '');
   const svg = String(result.svg || '');
-  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const blob = imageBase64
+    ? base64ToBlob(imageBase64, result.mimeType || 'image/png')
+    : new Blob([svg], { type: 'image/svg+xml' });
   const blobUrl = URL.createObjectURL(blob);
   const metadata = result.metadata || {};
   const node = document.createElement('article');
@@ -3267,6 +3634,7 @@ function appendImageMessage(result) {
   meta.textContent = [
     metadata.model || state.image.modelId,
     metadata.backend || 'preview',
+    metadata.source_resolution ? `source ${metadata.source_resolution}` : '',
     result.seed ? `seed ${result.seed}` : '',
     result.elapsedMs ? `${Math.round(result.elapsedMs)} ms` : '',
   ].filter(Boolean).join(' | ');
@@ -3285,6 +3653,13 @@ function appendImageMessage(result) {
       model: metadata.model || state.image.modelId,
     },
   });
+}
+
+function base64ToBlob(base64, mimeType = 'application/octet-stream') {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType });
 }
 
 function paperMeta(row) {
@@ -3439,20 +3814,1068 @@ function appendRetrieval(rows, { locked = state.processActive } = {}) {
 }
 
 function setControlsBusy(busy) {
-  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || (state.image.enabled ? !state.image.ready : state.modelBusy || !state.modelReady);
+  const codexMode = extensionEnabled(state.codex.extensionId);
+  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || state.codex.busy || (codexMode ? !state.codex.paired : state.image.enabled ? !state.image.ready : state.modelBusy || !state.modelReady);
   els.prompt.disabled = busy;
-  els.loadModel.disabled = state.image.enabled || busy || state.modelBusy;
-  if (els.unloadModel) els.unloadModel.disabled = state.image.enabled || busy || state.modelBusy || !state.worker;
+  els.loadModel.disabled = state.image.enabled || codexMode || busy || state.modelBusy;
+  if (els.unloadModel) els.unloadModel.disabled = state.image.enabled || codexMode || busy || state.modelBusy || !state.worker;
   els.loadPack.disabled = busy;
   if (els.audioTranslate) els.audioTranslate.disabled = busy || state.translation.busy;
   syncModelControls();
 }
 
+function summarizeCodexOutput(result) {
+  const extractText = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value !== 'object') return String(value).trim();
+    const msg = value.msg && typeof value.msg === 'object' ? value.msg : null;
+    const item = value.item && typeof value.item === 'object' ? value.item : null;
+    const eventItem = msg?.item && typeof msg.item === 'object' ? msg.item : null;
+    const candidateItem = eventItem || item;
+    if (candidateItem?.type === 'agent_message') return String(candidateItem.text || candidateItem.message || '').trim();
+    if (msg?.type === 'agent_message') return String(msg.text || msg.message || '').trim();
+    if (value.type === 'agent_message') return String(value.text || value.message || '').trim();
+    if (value.type === 'turn.failed' || value.type === 'error') return String(value.message || value.error?.message || '').trim();
+    if (msg?.type === 'turn.failed' || msg?.type === 'error') return String(msg.message || msg.error?.message || '').trim();
+    if (value.last_agent_message) return String(value.last_agent_message).trim();
+    if (msg?.last_agent_message) return String(msg.last_agent_message).trim();
+    if (value.message && !String(value.type || '').startsWith('turn.')) return String(value.message).trim();
+    if (value.content) return String(value.content).trim();
+    if (value.text && !String(value.type || '').startsWith('turn.')) return String(value.text).trim();
+    return '';
+  };
+  if (Array.isArray(result?.events)) {
+    const eventText = [...result.events].reverse()
+      .map((event) => {
+        const parsed = event?.parsed;
+        if (parsed && typeof parsed === 'object') return extractText(parsed);
+        return event?.text || '';
+      })
+      .find((value) => String(value || '').trim());
+    if (eventText) return String(eventText).trim();
+  }
+  if (result?.summary) return String(result.summary).trim();
+  if (result?.error) return String(result.error).trim();
+  const stdout = String(result?.stdout || '').trim();
+  const stderr = String(result?.stderr || '').trim();
+  if (!stdout && !stderr) return codexTerminalStatus(result?.status) ? `Codex finished with status ${result?.status || 'unknown'}.` : '';
+  const lines = stdout.split(/\r?\n/).filter(Boolean);
+  const finalLine = [...lines].reverse().find((line) => {
+    try {
+      const event = JSON.parse(line);
+      return Boolean(extractText(event));
+    } catch {
+      return line.length > 0 && !line.startsWith('{');
+    }
+  });
+  let summary = '';
+  if (finalLine) {
+    try {
+      const event = JSON.parse(finalLine);
+      summary = extractText(event);
+    } catch {
+      summary = finalLine;
+    }
+  }
+  if (!summary) summary = stdout.slice(-3000);
+  if (stderr && result?.status !== 'completed') summary += `\n\nstderr:\n${stderr}`;
+  return summary.trim();
+}
+
+function codexTerminalStatus(status) {
+  return ['completed', 'failed', 'cancelled'].includes(String(status || ''));
+}
+
+function codexStatusDetail(status) {
+  const events = Array.isArray(status?.events) ? status.events : [];
+  const latest = events[events.length - 1];
+  if (!latest) return `Codex ${status?.status || 'running'}`;
+  const parsed = latest.parsed;
+  if (parsed && typeof parsed === 'object') {
+    const item = parsed.item || parsed.msg?.item || null;
+    if (item?.type === 'command_execution') return shortText(`Command: ${item.command || 'running'}`, 80);
+    if (item?.type === 'agent_message') return 'Codex replied';
+    return shortText(parsed.type || parsed.msg?.type || parsed.event || latest.text || 'Codex event', 80);
+  }
+  return shortText(latest.text || `Codex ${status?.status || 'running'}`, 80);
+}
+
+async function pollCodexSession(sessionId) {
+  let last = state.codex.eventCount || 0;
+  for (;;) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    const encrypted = await sendCodexBridgeMessage('computer.session.status', {
+      session_id: sessionId,
+      since: last,
+    });
+    const result = encrypted.result || {};
+    state.codex.lastStatus = result;
+    state.codex.eventCount = Number(result.event_count || last);
+    last = state.codex.eventCount;
+    setProcessStep('generate', codexTerminalStatus(result.status) ? result.status === 'completed' ? 'done' : 'error' : 'active', codexStatusDetail(result));
+    if (codexTerminalStatus(result.status)) return result;
+  }
+}
+
+async function readCodexDiff(sessionId, workspace, provider = computerProvider()) {
+  const bridgeSessionId = String(sessionId || '').startsWith('terminal_') ? '' : sessionId;
+  const proposal = proposeExtensionAction(state.codex.extensionId, state.codex.diffCapabilityId, {
+    session_id: bridgeSessionId,
+    workspace,
+    bridge_url: codexBridgeUrl(),
+  });
+  if (proposal.status !== 'pending_user_approval') return null;
+  try {
+    const encrypted = await sendCodexBridgeMessage('computer.diff.read', { session_id: bridgeSessionId, workspace, provider });
+    recordExtensionResult(proposal.action_id, {
+      action_id: proposal.action_id,
+      status: encrypted.result?.status === 'ok' ? 'approved_executed' : 'failed',
+      output: {
+        workspace: encrypted.result?.workspace || workspace,
+        diff_chars: String(encrypted.result?.diff || '').length,
+        truncated: Boolean(encrypted.result?.truncated),
+      },
+      artifact_refs: [],
+      error: encrypted.result?.stderr || '',
+    });
+    return encrypted.result || null;
+  } catch (error) {
+    recordExtensionResult(proposal.action_id, {
+      action_id: proposal.action_id,
+      status: 'failed',
+      error: error.message || String(error),
+    });
+    return null;
+  }
+}
+
+function computerSessionTitle(session) {
+  return session?.model || computerModel() || 'Codex default';
+}
+
+function computerWorkspaceName(session) {
+  return String(session?.workspace || '').split('/').filter(Boolean).pop() || 'workspace';
+}
+
+function activeComputerSession() {
+  if (!state.codex.activeSessionId) return null;
+  return state.codex.sessions.find((session) => session.id === state.codex.activeSessionId) || null;
+}
+
+function upsertComputerSession(patch, options = {}) {
+  const id = String(patch?.id || patch?.session_id || '');
+  if (!id) return null;
+  const activate = options.activate !== false;
+  let session = state.codex.sessions.find((item) => item.id === id);
+  if (!session) {
+    session = {
+      id,
+      provider: computerProvider(),
+      workspace: codexWorkspace(),
+      prompt: '',
+      status: 'starting',
+      eventCount: 0,
+      events: [],
+      output: '',
+      diff: null,
+      actionId: '',
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    state.codex.sessions.unshift(session);
+  }
+  Object.assign(session, patch, { id, updatedAt: Date.now() });
+  if (activate) {
+    state.codex.activeSessionId = id;
+    state.codex.sessionId = id;
+  }
+  if (activate || state.codex.activeSessionId === id) state.codex.lastStatus = session;
+  renderComputerConsole();
+  return session;
+}
+
+function removeComputerSession(sessionId) {
+  state.codex.sessions = state.codex.sessions.filter((session) => session.id !== sessionId);
+  window.clearInterval(state.codex.pollTimers.get(sessionId));
+  state.codex.pollTimers.delete(sessionId);
+  if (state.codex.activeSessionId === sessionId) {
+    state.codex.activeSessionId = '';
+    state.codex.sessionId = state.codex.activeSessionId;
+  }
+  renderComputerConsole();
+}
+
+function setComputerConsoleOpen(open) {
+  const available = extensionEnabled(state.codex.extensionId) && state.codex.paired;
+  const nextOpen = Boolean(open && available);
+  document.body.classList.remove('computer-session-open');
+  document.body.classList.toggle('computer-console-open', nextOpen);
+  if (els.computerConsoleButton) {
+    els.computerConsoleButton.hidden = !available;
+    els.computerConsoleButton.disabled = !available;
+    els.computerConsoleButton.setAttribute('aria-pressed', nextOpen ? 'true' : 'false');
+    els.computerConsoleButton.textContent = nextOpen ? 'Chat' : 'Computer';
+  }
+  if (!nextOpen) renderStoredMessages();
+  if (!nextOpen && els.prompt) els.prompt.placeholder = modeConfig().placeholder;
+  renderComputerConsole();
+}
+
+function computerOutputText(session) {
+  const lines = [];
+  if (session?.status === 'ready') lines.push('Codex terminal ready. Send a message to Codex through the paired bridge.');
+  if (session?.output) lines.push(session.output);
+  if (session?.diff?.diff) {
+    lines.push('');
+    lines.push('diff:');
+    lines.push(String(session.diff.diff).slice(0, 12000));
+    if (session.diff.truncated) lines.push('... diff truncated ...');
+  }
+  return lines.filter(Boolean).join('\n');
+}
+
+function computerSessionMessages(session) {
+  const messages = Array.isArray(session?.messages) ? [...session.messages] : [];
+  if (session?.status === 'ready' && !messages.length) {
+    messages.push({ role: 'assistant', text: 'Codex terminal ready. Send a message to Codex through the paired bridge.' });
+  }
+  if (session?.prompt && !messages.some((message) => message.role === 'user' && message.text === session.prompt)) {
+    messages.push({ role: 'user', text: session.prompt });
+  }
+  const output = computerOutputText(session);
+  if (output && !messages.some((message) => message.role === 'assistant' && message.text === output)) {
+    messages.push({ role: 'assistant', text: output });
+  }
+  return messages;
+}
+
+function computerSessionChatHtml(session) {
+  const messages = computerSessionMessages(session);
+  if (!messages.length) return '<div class="computer-empty">No messages yet.</div>';
+  return messages.map((message) => `
+    <article class="message ${message.role === 'user' ? 'user' : 'assistant'}">
+      <div class="role">${message.role === 'user' ? 'You' : 'Codex'}</div>
+      <div class="body"><p>${escapeHtml(message.text || '')}</p></div>
+    </article>
+  `).join('');
+}
+
+function appendComputerMessage(role, text) {
+  els.empty?.remove();
+  const node = document.createElement('article');
+  node.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
+  const roleNode = document.createElement('div');
+  roleNode.className = 'role';
+  roleNode.textContent = role === 'user' ? 'You' : 'Codex';
+  const body = document.createElement('div');
+  body.className = 'body';
+  renderMessageBody(body, text, { linkEvidence: false });
+  node.append(roleNode, body);
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+}
+
+function addComputerSessionMessage(session, role, text) {
+  if (!session || !text) return;
+  session.messages = [...(session.messages || []), { role, text }];
+  session.updatedAt = Date.now();
+  appendComputerMessage(role, text);
+}
+
+function lastComputerAssistantMessage(session) {
+  return [...(session?.messages || [])].reverse().find((message) => message.role === 'assistant' && String(message.text || '').trim())?.text || '';
+}
+
+function formatTokenCount(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return '0';
+  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(number >= 10_000_000 ? 0 : 1)}M`;
+  if (number >= 1_000) return `${(number / 1_000).toFixed(number >= 10_000 ? 0 : 1)}K`;
+  return String(Math.round(number));
+}
+
+function codexUsageFromEvents(events = []) {
+  const usages = [];
+  for (const event of events) {
+    const parsed = event?.parsed;
+    if (!parsed || typeof parsed !== 'object') continue;
+    const usage = parsed.usage || parsed.msg?.usage || parsed.item?.usage || parsed.msg?.item?.usage;
+    if (usage && typeof usage === 'object') usages.push(usage);
+  }
+  const latest = usages[usages.length - 1] || null;
+  const totals = usages.reduce((sum, usage) => {
+    sum.input += Number(usage.input_tokens || 0);
+    sum.cached += Number(usage.cached_input_tokens || 0);
+    sum.output += Number(usage.output_tokens || 0);
+    sum.reasoning += Number(usage.reasoning_output_tokens || 0);
+    return sum;
+  }, { input: 0, cached: 0, output: 0, reasoning: 0 });
+  return { latest, totals, turns: usages.length };
+}
+
+function computerContextStatusText(session) {
+  const usage = codexUsageFromEvents(session?.events || []);
+  if (!usage.latest) {
+    return [
+      'used context: unavailable until Codex completes a turn with usage data',
+      'weekly context: unavailable from the current bridge stream',
+    ];
+  }
+  const latestInput = Number(usage.latest.input_tokens || 0);
+  const latestCached = Number(usage.latest.cached_input_tokens || 0);
+  const latestOutput = Number(usage.latest.output_tokens || 0);
+  const latestReasoning = Number(usage.latest.reasoning_output_tokens || 0);
+  return [
+    `used context: ${formatTokenCount(latestInput)} input tokens (${formatTokenCount(latestCached)} cached), ${formatTokenCount(latestOutput)} output, ${formatTokenCount(latestReasoning)} reasoning`,
+    `session tokens: ${formatTokenCount(usage.totals.input)} input, ${formatTokenCount(usage.totals.output)} output across ${usage.turns} turn${usage.turns === 1 ? '' : 's'}`,
+    'weekly context: unavailable from the current bridge stream',
+  ];
+}
+
+function computerCommandHelpText() {
+  return COMPUTER_SLASH_COMMANDS
+    .filter((command) => !command.localOnly || command.name === 'mention')
+    .map((command) => `/${command.name}${command.args ? ' ...' : ''} - ${command.description}`)
+    .join('\n');
+}
+
+function computerSessionStatusText(session) {
+  const activeCount = state.codex.sessions.length;
+  const codexSession = session.codexSessionId || session.bridgeSessionId || session.id || '';
+  return [
+    `provider: ${session.provider || computerProvider()}`,
+    `model: ${session.model || computerModel() || 'Codex default'}`,
+    `workspace: ${computerWorkspaceName(session)}`,
+    `workspace: ${session.workspace || codexWorkspace()}`,
+    `status: ${session.status || 'unknown'}`,
+    `session: ${shortText(codexSession, 48)}`,
+    `events: ${Number(session.eventCount || 0)}`,
+    `active terminals: ${activeCount}`,
+    ...computerContextStatusText(session),
+  ].join('\n');
+}
+
+function computerPermissionsText(session) {
+  const health = state.codex.bridgeHealth || {};
+  const roots = Array.isArray(health.allowed_workspaces) ? health.allowed_workspaces : [];
+  return [
+    `workspace: ${session.workspace || codexWorkspace()}`,
+    `allowed roots: ${roots.join(', ') || 'unknown'}`,
+    `workspace policy: ${health.workspace_policy || 'selected workspace must be under an allowed root'}`,
+    `sandbox: ${health.sandbox || 'bridge default'}`,
+    `approval policy: ${health.approval_policy || 'bridge default'}`,
+    `pairing: ${state.codex.paired ? 'paired and encrypted' : 'not paired'}`,
+  ].join('\n');
+}
+
+function createLocalComputerTerminal(workspace, provider, options = {}) {
+  const id = `terminal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return upsertComputerSession({
+    id,
+    provider,
+    model: computerModel(),
+    workspace,
+    prompt: '',
+    status: 'ready',
+    eventCount: 0,
+    events: [],
+    output: '',
+    messages: [],
+    actionId: '',
+    bridgeSessionId: '',
+  }, { activate: options.activate !== false });
+}
+
+async function runComputerSlashCommand(session, text) {
+  const match = String(text || '').trim().match(/^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i);
+  if (!match) return false;
+  const name = match[1].toLowerCase();
+  const args = String(match[2] || '').trim();
+  const command = COMPUTER_SLASH_COMMANDS.find((item) => item.name === name);
+  if (!command) return false;
+
+  const visibleCommand = `/${name}${args ? ` ${args}` : ''}`;
+  const promptCommandNames = new Set(['init', 'compact', 'review']);
+  if (name !== 'mention' && !promptCommandNames.has(name)) addComputerSessionMessage(session, 'user', visibleCommand);
+
+  if (name === 'help') {
+    addComputerSessionMessage(session, 'assistant', computerCommandHelpText());
+    return true;
+  }
+  if (name === 'status') {
+    addComputerSessionMessage(session, 'assistant', computerSessionStatusText(session));
+    return true;
+  }
+  if (name === 'permissions' || name === 'approvals') {
+    try {
+      state.codex.bridgeHealth = await codexBridgeHealth();
+    } catch (_error) {
+      // Use the last known bridge state if the health check is temporarily unavailable.
+    }
+    addComputerSessionMessage(session, 'assistant', computerPermissionsText(session));
+    return true;
+  }
+  if (name === 'model' || name === 'models') {
+    if (args) {
+      session.model = args;
+      setComputerModel(args);
+      addComputerSessionMessage(session, 'assistant', `Model set to ${args} for this terminal's next Codex turn.`);
+    } else {
+      addComputerSessionMessage(session, 'assistant', [
+        `current: ${session.model || computerModel() || 'Codex default'}`,
+        'usage: /model <model-id>',
+        'example: /model gpt-5.3-codex',
+      ].join('\n'));
+    }
+    return true;
+  }
+  if (name === 'diff') {
+    const diff = await readCodexDiff(session.id, session.workspace, session.provider);
+    const body = diff?.diff
+      ? `\`\`\`diff\n${String(diff.diff).slice(0, 12000)}${diff.truncated ? '\n... diff truncated ...' : ''}\n\`\`\``
+      : 'No diff found.';
+    session.diff = diff;
+    addComputerSessionMessage(session, 'assistant', body);
+    return true;
+  }
+  if (name === 'copy') {
+    const last = lastComputerAssistantMessage(session);
+    if (!last) {
+      addComputerSessionMessage(session, 'assistant', 'No Codex response to copy yet.');
+      return true;
+    }
+    await navigator.clipboard?.writeText(last);
+    addComputerSessionMessage(session, 'assistant', 'Copied the last Codex response.');
+    return true;
+  }
+  if (name === 'clear') {
+    const oldId = session.id;
+    window.clearInterval(state.codex.pollTimers.get(oldId));
+    state.codex.pollTimers.delete(oldId);
+    const nextId = `terminal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    session.id = nextId;
+    session.bridgeSessionId = '';
+    session.codexSessionId = '';
+    session.messages = [];
+    session.output = '';
+    session.prompt = '';
+    session.diff = null;
+    session.status = 'ready';
+    session.eventCount = 0;
+    session.events = [];
+    state.codex.activeSessionId = nextId;
+    state.codex.sessionId = nextId;
+    renderComputerSessionPage(session);
+    return true;
+  }
+  if (name === 'new') {
+    const next = createLocalComputerTerminal(session.workspace || codexWorkspace(), session.provider || computerProvider(), { activate: true });
+    renderComputerSessionPage(next);
+    return true;
+  }
+  if (name === 'quit' || name === 'exit') {
+    handleComputerAction('back', session.id);
+    return true;
+  }
+  if (name === 'mention') {
+    els.prompt.value = '@';
+    els.prompt.focus();
+    hideComputerCommandPalette();
+    return true;
+  }
+  if (name === 'ps') {
+    const rows = state.codex.sessions.map((item) => `${item.id === session.id ? '*' : '-'} ${computerSessionTitle(item)} | ${item.status || 'unknown'} | ${shortText(item.id, 32)}`);
+    addComputerSessionMessage(session, 'assistant', rows.length ? rows.join('\n') : 'No active computer terminals.');
+    return true;
+  }
+  if (name === 'stop') {
+    if (!(session.status === 'running' || session.status === 'starting')) {
+      addComputerSessionMessage(session, 'assistant', 'No Codex turn is currently running.');
+      return true;
+    }
+    const result = await cancelCodexSession(session.id, session.provider || computerProvider());
+    upsertComputerSession({ id: session.id, status: result?.status || 'cancelled', output: summarizeCodexOutput(result) });
+    addComputerSessionMessage(activeComputerSession() || session, 'assistant', 'Stopped the running Codex turn.');
+    return true;
+  }
+
+  const promptByCommand = {
+    init: CODEX_INIT_PROMPT,
+    compact: 'Summarize this conversation so far into a concise working context for continuing this task.',
+    review: `Review my current changes and find issues.${args ? `\n\nFocus: ${args}` : ''}`,
+  };
+  const prompt = promptByCommand[name];
+  if (prompt) {
+    await sendComputerFollowup(session.id, prompt, visibleCommand);
+    return true;
+  }
+
+  addComputerSessionMessage(session, 'assistant', `/${name} is not available in the web terminal yet.`);
+  return true;
+}
+
+function renderComputerSessionPage(session) {
+  if (!session) return;
+  document.body.classList.remove('computer-console-open');
+  document.body.classList.add('computer-session-open');
+  els.chat.innerHTML = '';
+  const header = document.createElement('article');
+  header.className = 'message assistant computer-session-header';
+  header.innerHTML = `
+    <div class="role">Codex Terminal</div>
+    <div class="body">
+      <div class="computer-session-heading">
+        <div>
+          <p>${escapeHtml(computerSessionTitle(session))}</p>
+          <p class="computer-workspace">${escapeHtml(computerWorkspaceName(session))} · ${escapeHtml(session.workspace || '')}</p>
+        </div>
+        <button type="button" class="secondary" data-computer-action="back">Back</button>
+      </div>
+    </div>
+  `;
+  for (const button of header.querySelectorAll('[data-computer-action]')) {
+    button.addEventListener('click', () => handleComputerAction(button.dataset.computerAction, session.id));
+  }
+  els.chat.appendChild(header);
+  for (const message of computerSessionMessages(session)) appendComputerMessage(message.role, message.text);
+  els.chat.scrollTop = els.chat.scrollHeight;
+  if (els.prompt) els.prompt.placeholder = 'Message Codex...';
+  if (els.send) els.send.textContent = 'Send';
+}
+
+function matchingComputerCommands(value) {
+  const text = String(value || '');
+  if (!document.body.classList.contains('computer-session-open')) return [];
+  if (!text.startsWith('/') || text.startsWith('/ ')) return [];
+  const name = text.slice(1).split(/\s+/)[0].toLowerCase();
+  return COMPUTER_SLASH_COMMANDS
+    .filter((command) => !name || command.name.startsWith(name))
+    .slice(0, 8);
+}
+
+function renderComputerCommandPalette() {
+  if (!els.commandPalette) return;
+  const matches = matchingComputerCommands(els.prompt?.value || '');
+  els.commandPalette.hidden = !matches.length;
+  els.commandPalette.innerHTML = '';
+  for (const command of matches) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'command-option';
+    button.innerHTML = `
+      <strong>/${escapeHtml(command.name)}</strong>
+      <span>${escapeHtml(command.description)}</span>
+    `;
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', () => {
+      els.prompt.value = `/${command.name}${command.args ? ' ' : ''}`;
+      hideComputerCommandPalette();
+      els.prompt.focus();
+    });
+    els.commandPalette.appendChild(button);
+  }
+}
+
+function hideComputerCommandPalette() {
+  if (!els.commandPalette) return;
+  els.commandPalette.hidden = true;
+  els.commandPalette.innerHTML = '';
+}
+
+function completeFirstComputerCommand() {
+  const first = matchingComputerCommands(els.prompt?.value || '')[0];
+  if (!first) return false;
+  els.prompt.value = `/${first.name}${first.args ? ' ' : ''}`;
+  hideComputerCommandPalette();
+  return true;
+}
+
+function renderComputerProviderSelect() {
+  if (!els.computerProvider) return;
+  const rows = state.codex.providers.length
+    ? state.codex.providers
+    : [
+      { id: 'codex', name: 'Codex', available: true },
+      { id: 'claude_code', name: 'Claude Code', available: false },
+      { id: 'cursor', name: 'Cursor', available: false },
+    ];
+  const selected = computerProvider();
+  els.computerProvider.innerHTML = '';
+  for (const provider of rows) {
+    const option = document.createElement('option');
+    option.value = provider.id;
+    option.textContent = `${provider.name || provider.id}${provider.available ? '' : ' (not detected)'}`;
+    els.computerProvider.appendChild(option);
+  }
+  els.computerProvider.value = selected;
+}
+
+function renderComputerConsole() {
+  if (!els.computerSessionList || !els.computerSessionDetail) return;
+  if (els.computerWorkspace && !els.computerWorkspace.value) els.computerWorkspace.value = codexWorkspace();
+  renderComputerProviderSelect();
+  els.computerStart.disabled = !state.codex.paired;
+  if (els.computerCreateTerminal) els.computerCreateTerminal.disabled = !state.codex.paired;
+
+  els.computerSessionDetail.hidden = true;
+  els.computerSessionList.hidden = false;
+  els.computerSessionList.innerHTML = '';
+  els.computerSessionList.classList.toggle('empty', !state.codex.sessions.length);
+  if (!state.codex.sessions.length) {
+    const empty = document.createElement('p');
+    empty.className = 'computer-empty';
+    empty.textContent = state.codex.paired
+      ? 'No Codex terminals yet.'
+      : 'Pair the Computer Use bridge before starting terminals.';
+    els.computerSessionList.appendChild(empty);
+  }
+  for (const session of state.codex.sessions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `computer-session-button${state.codex.activeSessionId === session.id ? ' active' : ''}`;
+    button.innerHTML = `
+      <strong>${escapeHtml(computerSessionTitle(session))}</strong>
+      <span>${escapeHtml(session.status || 'unknown')} | ${escapeHtml(shortText(session.id, 28))}</span>
+      <span>${escapeHtml(shortText(session.prompt || session.workspace || computerWorkspaceName(session), 96))}</span>
+    `;
+    button.addEventListener('click', () => {
+      state.codex.activeSessionId = session.id;
+      state.codex.sessionId = session.id;
+      renderComputerSessionPage(session);
+    });
+    els.computerSessionList.appendChild(button);
+  }
+}
+
+function setComputerConsoleStatus(message, mode = '') {
+  if (!els.computerSessionDetail) return;
+  const text = String(message || '').trim();
+  if (!text) return;
+  const active = activeComputerSession();
+  if (active) {
+    upsertComputerSession({ id: active.id, output: text });
+    return;
+  }
+  els.computerSessionDetail.innerHTML = `
+    <div class="computer-detail-title">
+      <strong>Computer Use</strong>
+      <span>${escapeHtml(mode || 'status')}</span>
+    </div>
+    <div class="computer-output">${escapeHtml(text)}</div>
+    <div class="computer-actions"></div>
+  `;
+}
+
+async function startComputerSession() {
+  if (!state.codex.paired) await loadCodexPairing();
+  if (!state.codex.paired) throw new Error('Pair the local computer bridge before starting a session.');
+  const workspace = String(els.computerWorkspace?.value || codexWorkspace()).trim();
+  const provider = String(els.computerProvider?.value || computerProvider()).trim() || 'codex';
+  if (!workspace) throw new Error('Set a repo or workspace path.');
+  setCodexWorkspace(workspace);
+  setComputerProvider(provider);
+  await codexBridgeHealth();
+  createLocalComputerTerminal(workspace, provider, { activate: false });
+}
+
+async function launchComputerSessionFromMessage(session, prompt, displayText = '') {
+  const provider = session.provider || computerProvider();
+  const workspace = session.workspace || codexWorkspace();
+  const model = session.model || computerModel();
+  const proposal = proposeExtensionAction(state.codex.extensionId, state.codex.startCapabilityId, {
+    prompt,
+    workspace,
+    bridge_url: codexBridgeUrl(),
+    provider,
+    model,
+  });
+  if (proposal.status !== 'pending_user_approval') {
+    throw new Error(proposal.error || `Computer Use action was ${proposal.status || 'rejected'}`);
+  }
+  const baseMessages = session.messages || [];
+  const visiblePrompt = String(displayText || prompt);
+  upsertComputerSession({
+    id: session.id,
+    status: 'starting',
+    prompt,
+    output: 'Starting Codex through the paired bridge...',
+    messages: [...baseMessages, { role: 'user', text: visiblePrompt }],
+    actionId: proposal.action_id || '',
+  });
+  const encrypted = await sendCodexBridgeMessage('computer.session.start', {
+    action_id: proposal.action_id,
+    prompt,
+    workspace,
+    provider,
+    model,
+  });
+  const result = encrypted.result || {};
+  if (!result.session_id) throw new Error('Computer bridge did not return a session id.');
+  const oldId = session.id;
+  const output = summarizeCodexOutput(result);
+  const next = {
+    ...session,
+    id: result.session_id,
+    bridgeSessionId: result.session_id,
+    provider,
+    model,
+    workspace: result.workspace || workspace,
+    prompt,
+    status: result.status || 'running',
+    eventCount: Number(result.event_count || 0),
+    events: result.events || [],
+    output,
+    messages: output ? [...baseMessages, { role: 'user', text: visiblePrompt }, { role: 'assistant', text: output }] : [...baseMessages, { role: 'user', text: visiblePrompt }],
+    actionId: proposal.action_id || '',
+    updatedAt: Date.now(),
+  };
+  state.codex.sessions = state.codex.sessions.map((item) => item.id === oldId ? next : item);
+  state.codex.activeSessionId = next.id;
+  state.codex.sessionId = next.id;
+  state.codex.lastStatus = next;
+  renderComputerConsole();
+  recordExtensionResult(proposal.action_id, {
+    action_id: proposal.action_id,
+    status: codexTerminalStatus(result.status) ? result.status === 'completed' ? 'approved_executed' : 'failed' : 'approved_executed',
+    output: {
+      bridge_url: codexBridgeUrl(),
+      workspace: next.workspace,
+      provider,
+      model,
+      session_id: next.id,
+      codex_session_id: result.codex_session_id || '',
+    },
+    artifact_refs: [],
+  });
+  scheduleComputerPoll(next.id);
+  return next;
+}
+
+async function sendComputerFollowup(sessionId, messageText = '', displayText = '') {
+  const session = state.codex.sessions.find((item) => item.id === sessionId);
+  if (!session) throw new Error('No computer session selected.');
+  const prompt = String(
+    document.body.classList.contains('computer-session-open')
+      ? messageText
+      : els.computerSessionDetail?.querySelector('#computerSessionPrompt')?.value || '',
+  ).trim();
+  if (!prompt) throw new Error('Enter a follow-up prompt.');
+  if (session.status === 'ready' || !session.bridgeSessionId && String(session.id || '').startsWith('terminal_')) {
+    await launchComputerSessionFromMessage(session, prompt, displayText);
+    return;
+  }
+  const proposal = proposeExtensionAction(state.codex.extensionId, state.codex.sendCapabilityId, {
+    session_id: session.id,
+    prompt,
+    workspace: session.workspace,
+    bridge_url: codexBridgeUrl(),
+    provider: session.provider,
+    model: session.model || computerModel(),
+  });
+  if (proposal.status !== 'pending_user_approval') {
+    throw new Error(proposal.error || `Computer Use action was ${proposal.status || 'rejected'}`);
+  }
+  const encrypted = await sendCodexBridgeMessage('computer.session.send', {
+    session_id: session.id,
+    action_id: proposal.action_id,
+    prompt,
+    workspace: session.workspace,
+    provider: session.provider,
+    model: session.model || computerModel(),
+  });
+  const result = encrypted.result || {};
+  const output = summarizeCodexOutput(result);
+  const visiblePrompt = String(displayText || prompt);
+  const messages = [...(session.messages || []), { role: 'user', text: visiblePrompt }];
+  if (output) messages.push({ role: 'assistant', text: output });
+  const oldId = session.id;
+  const followupId = result.session_id || session.id;
+  const followup = {
+    ...session,
+    id: followupId,
+    bridgeSessionId: followupId,
+    provider: session.provider,
+    model: session.model || computerModel(),
+    workspace: result.workspace || session.workspace,
+    prompt,
+    status: result.status || 'running',
+    eventCount: Number(result.event_count || 0),
+    events: result.events || [],
+    output,
+    messages,
+    actionId: proposal.action_id || '',
+    updatedAt: Date.now(),
+  };
+  state.codex.sessions = state.codex.sessions.map((item) => item.id === oldId ? followup : item);
+  state.codex.activeSessionId = followup.id;
+  state.codex.sessionId = followup.id;
+  state.codex.lastStatus = followup;
+  renderComputerConsole();
+  recordExtensionResult(proposal.action_id, {
+    action_id: proposal.action_id,
+    status: 'approved_executed',
+    output: {
+      bridge_url: codexBridgeUrl(),
+      workspace: followup.workspace,
+      provider: followup.provider,
+      model: followup.model || '',
+      session_id: followup.id,
+      parent_session_id: session.id,
+    },
+    artifact_refs: [],
+  });
+  scheduleComputerPoll(followup.id);
+}
+
+async function refreshComputerSession(sessionId) {
+  const session = state.codex.sessions.find((item) => item.id === sessionId);
+  if (!session) return null;
+  const encrypted = await sendCodexBridgeMessage('computer.session.status', {
+    session_id: session.id,
+    since: Number(session.eventCount || 0),
+    provider: session.provider,
+  });
+  const result = encrypted.result || {};
+  const events = [...(session.events || []), ...(result.events || [])];
+  const output = summarizeCodexOutput(result) || session.output;
+  const messages = [...(session.messages || [])];
+  if (output && output !== session.output && !messages.some((message) => message.role === 'assistant' && message.text === output)) {
+    messages.push({ role: 'assistant', text: output });
+  }
+  const updated = upsertComputerSession({
+    id: session.id,
+    provider: session.provider,
+    model: result.model || session.model || computerModel(),
+    workspace: result.workspace || session.workspace,
+    status: result.status || session.status,
+    eventCount: Number(result.event_count || events.length || session.eventCount || 0),
+    events,
+    output,
+    messages,
+    exitCode: result.exit_code,
+    elapsedMs: result.elapsed_ms,
+    codexSessionId: result.codex_session_id || session.codexSessionId,
+  }, { activate: state.codex.activeSessionId === session.id });
+  if (codexTerminalStatus(updated.status)) {
+    window.clearInterval(state.codex.pollTimers.get(session.id));
+    state.codex.pollTimers.delete(session.id);
+    if (updated.actionId && !updated.receiptFinalized) {
+      recordExtensionResult(updated.actionId, {
+        action_id: updated.actionId,
+        status: updated.status === 'completed' ? 'approved_executed' : updated.status === 'cancelled' ? 'cancelled' : 'failed',
+        output: {
+          bridge_url: codexBridgeUrl(),
+          workspace: updated.workspace,
+          provider: updated.provider,
+          session_id: updated.id,
+          codex_session_id: updated.codexSessionId || '',
+          exit_code: updated.exitCode,
+          elapsed_ms: updated.elapsedMs,
+        },
+        artifact_refs: [],
+        error: updated.status === 'failed' ? String(updated.output || 'Computer session failed') : '',
+      });
+      updated.receiptFinalized = true;
+    }
+  }
+  if (document.body.classList.contains('computer-session-open') && state.codex.activeSessionId === updated.id) {
+    renderComputerSessionPage(updated);
+  }
+  return updated;
+}
+
+function scheduleComputerPoll(sessionId) {
+  if (!sessionId || state.codex.pollTimers.has(sessionId)) return;
+  const timer = window.setInterval(async () => {
+    try {
+      await refreshComputerSession(sessionId);
+    } catch (error) {
+      const session = state.codex.sessions.find((item) => item.id === sessionId);
+      if (session) upsertComputerSession(
+        { id: sessionId, status: 'failed', output: error.message || String(error) },
+        { activate: state.codex.activeSessionId === sessionId },
+      );
+      window.clearInterval(timer);
+      state.codex.pollTimers.delete(sessionId);
+    }
+  }, 1600);
+  state.codex.pollTimers.set(sessionId, timer);
+}
+
+async function handleComputerAction(action, sessionId = state.codex.activeSessionId) {
+  try {
+    if (action === 'send') await sendComputerFollowup(sessionId);
+    else if (action === 'refresh') await refreshComputerSession(sessionId);
+    else if (action === 'cancel') {
+      const session = state.codex.sessions.find((item) => item.id === sessionId);
+      const result = await cancelCodexSession(sessionId, session?.provider || computerProvider());
+      upsertComputerSession({ id: sessionId, status: result?.status || 'cancelled', output: summarizeCodexOutput(result) });
+    } else if (action === 'diff') {
+      const session = state.codex.sessions.find((item) => item.id === sessionId);
+      if (session) {
+        const diff = await readCodexDiff(session.id, session.workspace, session.provider);
+        upsertComputerSession({ id: session.id, diff });
+      }
+    } else if (action === 'new') {
+      state.codex.activeSessionId = '';
+      state.codex.sessionId = '';
+      renderComputerConsole();
+    } else if (action === 'back') {
+      state.codex.activeSessionId = '';
+      state.codex.sessionId = '';
+      document.body.classList.remove('computer-session-open');
+      document.body.classList.add('computer-console-open');
+      if (els.prompt) els.prompt.placeholder = modeConfig().placeholder;
+      renderComputerConsole();
+    } else if (action === 'remove') {
+      removeComputerSession(sessionId);
+    }
+  } catch (error) {
+    appendMessage('assistant', `Computer Use failed: ${error.message || String(error)}`);
+    log(`Computer Use failed: ${error.message || String(error)}`);
+  }
+}
+
+async function cancelCodexSession(sessionId = state.codex.sessionId, provider = computerProvider()) {
+  if (!sessionId) throw new Error('No Codex session is active.');
+  const proposal = proposeExtensionAction(state.codex.extensionId, state.codex.cancelCapabilityId, {
+    session_id: sessionId,
+    bridge_url: codexBridgeUrl(),
+  });
+  if (proposal.status !== 'pending_user_approval') {
+    throw new Error(proposal.error || `Codex cancel was ${proposal.status || 'rejected'}`);
+  }
+  const encrypted = await sendCodexBridgeMessage('computer.session.cancel', { session_id: sessionId, provider });
+  recordExtensionResult(proposal.action_id, {
+    action_id: proposal.action_id,
+    status: encrypted.result?.status === 'cancelled' ? 'approved_executed' : 'failed',
+    output: {
+      session_id: encrypted.result?.session_id || sessionId,
+      status: encrypted.result?.status || '',
+    },
+    artifact_refs: [],
+  });
+  state.codex.lastStatus = encrypted.result || null;
+  return encrypted.result;
+}
+
+async function submitCodexPrompt(text) {
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  state.codex.busy = true;
+  try {
+    if (!state.codex.paired) await loadCodexPairing();
+    if (!state.codex.paired) throw new Error('Pair the local computer bridge before using Computer Use.');
+    const workspace = codexWorkspace();
+    if (!workspace) throw new Error('Set a repo or workspace path in the Computer Use extension settings.');
+    setProcessStep('runtime', 'active', 'Checking paired computer bridge');
+    await codexBridgeHealth();
+    const followup = Boolean(state.codex.sessionId);
+    const capabilityId = followup ? state.codex.sendCapabilityId : state.codex.startCapabilityId;
+    const proposal = proposeExtensionAction(state.codex.extensionId, capabilityId, {
+      session_id: state.codex.sessionId || '',
+      prompt: text,
+      workspace,
+      bridge_url: codexBridgeUrl(),
+      provider: computerProvider(),
+    });
+    if (proposal.status !== 'pending_user_approval') {
+      throw new Error(proposal.error || `Computer Use action was ${proposal.status || 'rejected'}`);
+    }
+    state.codex.activeActionId = proposal.action_id || null;
+    setProcessStep('runtime', 'done', 'Computer bridge paired');
+    setProcessStep('plan', 'done', followup ? `${computerProvider()} follow-up requested through extension` : `${computerProvider()} session requested through extension`);
+    setProcessStep('generate', 'active', followup ? `Sending ${computerProvider()} follow-up` : `Starting ${computerProvider()} on the working computer`);
+    const encrypted = await sendCodexBridgeMessage(followup ? 'computer.session.send' : 'computer.session.start', {
+      session_id: state.codex.sessionId || '',
+      action_id: state.codex.activeActionId,
+      prompt: text,
+      workspace,
+      provider: computerProvider(),
+    });
+    const started = encrypted.result || {};
+    state.codex.sessionId = started.session_id || state.codex.sessionId;
+    state.codex.eventCount = Number(started.event_count || 0);
+    setProcessStep('generate', 'active', started.session_id ? `Codex session ${shortText(started.session_id, 28)} running` : 'Codex running');
+    const result = codexTerminalStatus(started.status) ? started : await pollCodexSession(state.codex.sessionId);
+    const status = result.status === 'completed' ? 'approved_executed' : 'failed';
+    if (state.codex.activeActionId) {
+      recordExtensionResult(state.codex.activeActionId, {
+        action_id: state.codex.activeActionId,
+        status,
+        output: {
+          bridge_url: codexBridgeUrl(),
+          workspace: result.workspace || workspace,
+          provider: computerProvider(),
+          session_id: result.session_id || state.codex.sessionId,
+          codex_session_id: result.codex_session_id || '',
+          exit_code: result.exit_code,
+          elapsed_ms: result.elapsed_ms,
+        },
+        artifact_refs: [],
+        error: status === 'failed' ? String(result.stderr || result.stdout || 'Codex failed') : '',
+      });
+    }
+    setProcessStep('generate', status === 'approved_executed' ? 'done' : 'error', `Codex exit ${result.exit_code ?? 'unknown'}`);
+    const diff = status === 'approved_executed' ? await readCodexDiff(result.session_id || state.codex.sessionId, result.workspace || workspace) : null;
+    setProcessStep('render', 'done', diff?.diff ? 'Codex result and diff displayed' : 'Codex result displayed');
+    const diffText = diff?.diff ? `\n\nDiff:\n\`\`\`diff\n${String(diff.diff).slice(0, 8000)}${diff.truncated ? '\n... diff truncated ...' : ''}\n\`\`\`` : '';
+    appendMessage('assistant', `${summarizeCodexOutput(result)}${diffText}`);
+    finishProcessTrace(status === 'approved_executed' ? 'Codex Done' : 'Codex Failed');
+  } catch (error) {
+    if (state.codex.activeActionId) {
+      recordExtensionResult(state.codex.activeActionId, {
+        action_id: state.codex.activeActionId,
+        status: 'failed',
+        error: error.message || String(error),
+      });
+    }
+    setProcessStep('render', 'error', error.message || String(error));
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Codex failed: ${error.message || String(error)}`);
+    log(`Codex failed: ${error.message || String(error)}`);
+  } finally {
+    state.codex.activeActionId = null;
+    state.codex.busy = false;
+    setControlsBusy(false);
+    renderExtensionList();
+  }
+}
+
 async function submitPrompt(event) {
   event.preventDefault();
   const text = els.prompt.value.trim();
-  if (!text || state.modelBusy || state.image.busy) return;
+  if (!text) return;
   els.prompt.value = '';
+  hideComputerCommandPalette();
+  if (document.body.classList.contains('computer-session-open')) {
+    const session = activeComputerSession();
+    if (!session) {
+      document.body.classList.remove('computer-session-open');
+      renderStoredMessages();
+      return;
+    }
+    if (text.startsWith('/') && !text.startsWith('/ ')) {
+      const handled = await runComputerSlashCommand(session, text).then((handled) => {
+        if (handled && document.body.classList.contains('computer-session-open')) renderComputerSessionPage(activeComputerSession() || session);
+        return handled;
+      }).catch((error) => {
+        addComputerSessionMessage(activeComputerSession() || session, 'assistant', `Computer command failed: ${error.message || String(error)}`);
+        log(`Computer command failed: ${error.message || String(error)}`);
+        return true;
+      });
+      if (handled) return;
+    }
+    await sendComputerFollowup(session.id, text).then(() => {
+      renderComputerSessionPage(activeComputerSession());
+    }).catch((error) => {
+      appendComputerMessage('assistant', `Computer Use failed: ${error.message || String(error)}`);
+      log(`Computer Use failed: ${error.message || String(error)}`);
+    });
+    return;
+  }
+  if (state.modelBusy || state.image.busy || state.codex.busy) return;
   appendMessage('user', text);
   if (state.image.enabled) {
     await submitImagePrompt(text);
@@ -3464,6 +4887,10 @@ async function submitPrompt(event) {
       sourceLanguage: translationSourceLabel(),
       targetLanguage: translationTargetLabel(),
     });
+    return;
+  }
+  if (extensionEnabled(state.codex.extensionId)) {
+    await submitCodexPrompt(text);
     return;
   }
   resetProcessTrace(text);
@@ -3590,9 +5017,10 @@ async function submitImagePrompt(text) {
       id: jobId,
       prompt: text,
       options: {
-        width: 384,
-        height: 384,
-        steps: 6,
+        width: 512,
+        height: 512,
+        steps: 4,
+        guidance: 0,
         seed: Math.floor(Math.random() * 1_000_000_000),
       },
     });
@@ -3662,13 +5090,22 @@ function parseCoreJson(raw, fallback = {}) {
   }
 }
 
+function normalizeExtensionManifestForCore(manifest) {
+  const clean = { ...(manifest || {}) };
+  const allowedSources = new Set(['official', 'user', 'local', 'remote']);
+  if (!allowedSources.has(clean.source)) clean.source = isLocalDevelopmentUrl(new URL(window.location.href)) ? 'local' : 'user';
+  return clean;
+}
+
 function registerExtensionManifest(manifest) {
   if (!state.coreReady || !(state.core?.install_extension_manifest || state.core?.register_extension_manifest)) {
     return { status: 'error', error: 'extension core is not ready' };
   }
   try {
     const install = state.core.install_extension_manifest || state.core.register_extension_manifest;
-    return parseCoreJson(install.call(state.core, JSON.stringify(manifest)));
+    const result = parseCoreJson(install.call(state.core, JSON.stringify(normalizeExtensionManifestForCore(manifest))));
+    if (extensionInstallSucceeded(result)) persistInstalledExtensions();
+    return result;
   } catch (error) {
     return { status: 'error', error: error.message || String(error) };
   }
@@ -3676,6 +5113,30 @@ function registerExtensionManifest(manifest) {
 
 function extensionInstallSucceeded(result) {
   return result?.status === 'installed' || result?.status === 'registered';
+}
+
+async function persistInstalledExtensions() {
+  const result = listExtensionManifests();
+  const manifests = Array.isArray(result.extensions) ? result.extensions : [];
+  const cache = {
+    version: 1,
+    saved_at: new Date().toISOString(),
+    manifests,
+  };
+  await dbSet(EXTENSION_CACHE_DB_KEY, cache).catch((error) => {
+    log(`extension cache skipped: ${error.message || String(error)}`);
+  });
+}
+
+async function restoreInstalledExtensionsFromCache() {
+  const cache = await dbGet(EXTENSION_CACHE_DB_KEY).catch((error) => {
+    log(`extension cache load skipped: ${error.message || String(error)}`);
+    return null;
+  });
+  const manifests = Array.isArray(cache?.manifests) ? cache.manifests : [];
+  if (!manifests.length) return;
+  await restoreExtensions({ manifests });
+  log(`restored ${manifests.length} cached extension${manifests.length === 1 ? '' : 's'}`);
 }
 
 function isLocalDevelopmentUrl(url) {
@@ -3739,14 +5200,21 @@ async function loadAvailableExtensions() {
     if (!response.ok) throw new Error(`catalog fetch failed: ${response.status}`);
     const catalog = await response.json();
     const entries = Array.isArray(catalog.extensions) ? catalog.extensions : [];
-    state.availableExtensions = entries.map((entry) => ({
+    const entryIds = new Set(entries.map((entry) => entry?.id).filter((id) => RELEASE_AVAILABLE_EXTENSION_IDS.has(id)));
+    state.availableExtensions = LOCAL_AVAILABLE_EXTENSIONS.map((entry) => ({
       ...entry,
-      manifest_url: new URL(entry.manifest || entry.manifest_url || '', response.url).href,
-    })).filter((entry) => entry.id && entry.manifest_url);
+      manifest_url: new URL(entry.manifest, response.url).href,
+    }));
+    if (entryIds.size !== state.availableExtensions.length || entryIds.size !== entries.length) {
+      log('available extensions constrained to pinned v2 release allowlist');
+    }
     log(`available extensions loaded: ${state.availableExtensions.length}`);
   } catch (error) {
-    state.availableExtensions = [];
-    log(`available extensions unavailable: ${error.message || String(error)}`);
+    state.availableExtensions = LOCAL_AVAILABLE_EXTENSIONS.map((entry) => ({
+      ...entry,
+      manifest_url: new URL(entry.manifest, window.location.href).href,
+    }));
+    log(`available extensions using local fallback: ${error.message || String(error)}`);
   }
   renderExtensionList();
 }
@@ -3783,7 +5251,9 @@ function uninstallExtension(extensionId) {
     return { status: 'error', error: 'extension core is not ready', extension_id: extensionId };
   }
   try {
-    return parseCoreJson(state.core.uninstall_extension(String(extensionId || '')));
+    const result = parseCoreJson(state.core.uninstall_extension(String(extensionId || '')));
+    if (result.status === 'uninstalled') persistInstalledExtensions();
+    return result;
   } catch (error) {
     return { status: 'error', error: error.message || String(error), extension_id: extensionId };
   }
@@ -3794,7 +5264,9 @@ function setExtensionEnabled(extensionId, enabled) {
     return { status: 'error', error: 'extension core is not ready', extension_id: extensionId };
   }
   try {
-    return parseCoreJson(state.core.set_extension_enabled(String(extensionId || ''), Boolean(enabled)));
+    const result = parseCoreJson(state.core.set_extension_enabled(String(extensionId || ''), Boolean(enabled)));
+    if (result.status === 'enabled' || result.status === 'disabled') persistInstalledExtensions();
+    return result;
   } catch (error) {
     return { status: 'error', error: error.message || String(error), extension_id: extensionId };
   }
@@ -3811,15 +5283,29 @@ function listExtensionManifests() {
   }
 }
 
+function installedExtension(extensionId) {
+  const result = listExtensionManifests();
+  const manifests = Array.isArray(result.extensions) ? result.extensions : [];
+  return manifests.find((manifest) => manifest.id === extensionId) || null;
+}
+
+function extensionEnabled(extensionId) {
+  return Boolean(installedExtension(extensionId)?.enabled);
+}
+
 function extensionStatusText(manifest) {
   const source = manifest.source || 'user';
   const enabled = manifest.enabled ? 'enabled' : 'off';
+  if (manifest.id === state.codex.extensionId) {
+    return `${source} | ${enabled} | ${state.codex.paired ? 'paired' : 'setup required'}`;
+  }
   return `${source} | ${enabled}`;
 }
 
 function extensionSetupText(manifest) {
   if (manifest.id === state.image.extensionId) return 'Enable it to switch the composer into image generation mode. This extension is available for development and future release installs.';
   if (manifest.id === state.translation.extensionId) return 'Requires browser speech/model setup before audio translation can run.';
+  if (manifest.id === state.codex.extensionId) return 'Pair Agent Kernel Desktop or the local computer bridge on your working computer.';
   return manifest.metadata?.setup || 'Installed from manifest. Enable only after the adapter setup is complete.';
 }
 
@@ -3843,6 +5329,68 @@ function setInstalledExtensionEnabled(extensionId, enabled) {
   renderExtensionList();
 }
 
+function appendCodexSettings(settings, manifest) {
+  const bridgeLabel = document.createElement('label');
+  bridgeLabel.className = 'extension-detail';
+  bridgeLabel.textContent = 'Bridge URL';
+  const bridgeInput = document.createElement('input');
+  bridgeInput.type = 'url';
+  bridgeInput.value = codexBridgeUrl();
+  bridgeInput.autocomplete = 'off';
+  bridgeInput.addEventListener('change', () => {
+    setCodexBridgeUrl(bridgeInput.value);
+    renderExtensionList();
+  });
+
+  const status = document.createElement('p');
+  status.className = 'extension-detail';
+  status.textContent = state.codex.paired
+    ? 'Computer bridge paired.'
+    : 'Pair the local computer bridge to enable Computer Use.';
+
+  const row = document.createElement('div');
+  row.className = 'button-row compact';
+  const pair = document.createElement('button');
+  pair.type = 'button';
+  pair.className = 'secondary';
+  pair.textContent = state.codex.paired ? 'Re-pair' : 'Pair Bridge';
+  pair.addEventListener('click', async () => {
+    try {
+      setCodexBridgeUrl(bridgeInput.value);
+      await pairCodexBridge();
+    } catch (error) {
+      appendMessage('assistant', `Codex pairing failed: ${error.message || String(error)}`);
+      log(`Codex pairing failed: ${error.message || String(error)}`);
+    }
+  });
+  const health = document.createElement('button');
+  health.type = 'button';
+  health.className = 'secondary';
+  health.textContent = 'Check';
+  health.addEventListener('click', async () => {
+    try {
+      setCodexBridgeUrl(bridgeInput.value);
+      const result = await codexBridgeHealth();
+      renderExtensionList();
+      log(`Computer bridge ready: ${result.codex_available ? 'codex found' : 'codex missing'}`);
+      const providerText = (result.providers || []).map((provider) => `${provider.name || provider.id}: ${provider.available ? 'available' : 'missing'}`).join(', ');
+      appendMessage('assistant', `Computer bridge is reachable. Providers: ${providerText || 'none'}. Allowed roots: ${(result.allowed_workspaces || []).join(', ') || 'none'}. Policy: ${result.workspace_policy || 'selected workspace must be under an allowed root'}`);
+    } catch (error) {
+      appendMessage('assistant', `Computer bridge check failed: ${error.message || String(error)}`);
+      log(`Computer bridge check failed: ${error.message || String(error)}`);
+    }
+  });
+  const forget = document.createElement('button');
+  forget.type = 'button';
+  forget.className = 'secondary';
+  forget.textContent = 'Forget Pairing';
+  forget.disabled = !state.codex.paired;
+  forget.addEventListener('click', () => clearCodexPairing());
+  row.append(pair, health, forget);
+
+  settings.append(bridgeLabel, bridgeInput, status, row);
+}
+
 function renderExtensionList() {
   if (!els.extensionList) return;
   const result = listExtensionManifests();
@@ -3854,6 +5402,7 @@ function renderExtensionList() {
     empty.className = 'extension-detail';
     empty.textContent = 'No extensions installed.';
     els.extensionList.appendChild(empty);
+    renderAvailableExtensionList(installedIds);
     return;
   }
   for (const manifest of manifests) {
@@ -3869,36 +5418,53 @@ function renderExtensionList() {
     title.append(name, status);
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = `image-toggle-button${manifest.enabled ? ' active' : ''}`;
-    toggle.textContent = manifest.enabled ? 'On' : 'Off';
-    toggle.setAttribute('aria-pressed', manifest.enabled ? 'true' : 'false');
-    toggle.addEventListener('click', (event) => {
+    const codexUnpaired = manifest.id === state.codex.extensionId && !state.codex.paired;
+    toggle.className = `image-toggle-button${manifest.enabled && !codexUnpaired ? ' active' : ''}`;
+    toggle.textContent = codexUnpaired ? 'Pair' : manifest.enabled ? 'On' : 'Off';
+    toggle.setAttribute('aria-pressed', manifest.enabled && !codexUnpaired ? 'true' : 'false');
+    toggle.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (codexUnpaired) {
+        if (!manifest.enabled) setExtensionEnabled(manifest.id, true);
+        try {
+          await pairCodexBridge();
+        } catch (error) {
+          appendMessage('assistant', `Codex pairing failed: ${error.message || String(error)}`);
+          log(`Codex pairing failed: ${error.message || String(error)}`);
+          renderExtensionList();
+        }
+        return;
+      }
       setInstalledExtensionEnabled(manifest.id, !manifest.enabled);
     });
     summary.append(title, toggle);
 
     const settings = document.createElement('div');
     settings.className = 'extension-settings';
-    const setup = document.createElement('p');
-    setup.className = 'extension-detail';
-    setup.textContent = extensionSetupText(manifest);
-    const caps = document.createElement('p');
-    caps.className = 'extension-detail';
-    caps.textContent = `Capabilities: ${(manifest.capabilities || []).map((capability) => capability.id).join(', ') || 'none'}`;
-    const scopes = document.createElement('p');
-    scopes.className = 'extension-detail';
-    const scopeList = (manifest.capabilities || []).flatMap((capability) => capability.scopes || []);
-    scopes.textContent = `Scopes: ${scopeList.length ? [...new Set(scopeList)].join(', ') : 'none'}`;
-    settings.append(setup, caps, scopes);
-    if (manifest.imported_from) {
-      const imported = document.createElement('p');
-      imported.className = 'extension-detail';
-      imported.textContent = `Installed from: ${manifest.imported_from}`;
-      settings.appendChild(imported);
+    if (manifest.id === state.codex.extensionId) {
+      appendCodexSettings(settings, manifest);
     }
-    if (manifest.id !== state.image.extensionId) {
+    if (manifest.id !== state.codex.extensionId || state.codex.paired) {
+      const setup = document.createElement('p');
+      setup.className = 'extension-detail';
+      setup.textContent = extensionSetupText(manifest);
+      const caps = document.createElement('p');
+      caps.className = 'extension-detail';
+      caps.textContent = `Capabilities: ${(manifest.capabilities || []).map((capability) => capability.id).join(', ') || 'none'}`;
+      const scopes = document.createElement('p');
+      scopes.className = 'extension-detail';
+      const scopeList = (manifest.capabilities || []).flatMap((capability) => capability.scopes || []);
+      scopes.textContent = `Scopes: ${scopeList.length ? [...new Set(scopeList)].join(', ') : 'none'}`;
+      settings.prepend(setup, caps, scopes);
+      if (manifest.imported_from) {
+        const imported = document.createElement('p');
+        imported.className = 'extension-detail';
+        imported.textContent = `Installed from: ${manifest.imported_from}`;
+        settings.appendChild(imported);
+      }
+    }
+    if (manifest.id !== state.image.extensionId && !(manifest.id === state.codex.extensionId && !state.codex.paired)) {
       const uninstall = document.createElement('button');
       uninstall.type = 'button';
       uninstall.className = 'secondary';
@@ -3915,6 +5481,7 @@ function renderExtensionList() {
     els.extensionList.appendChild(card);
   }
   renderAvailableExtensionList(installedIds);
+  setComputerConsoleOpen(document.body.classList.contains('computer-console-open'));
 }
 
 function renderAvailableExtensionList(installedIds = new Set()) {
@@ -4127,6 +5694,7 @@ async function restoreExtensions(extensionBundle) {
     }
     if (wasEnabled) setExtensionEnabled(manifest.id, true);
   }
+  await persistInstalledExtensions();
 }
 
 async function restoreSessionBundle(rawBundle) {
@@ -4189,6 +5757,20 @@ function exposeExtensionApi() {
       const text = typeof input === 'string' ? input : input?.transcript || input?.text || '';
       return runTranslator(text, { ...options, modality: 'audio' });
     },
+    pairCodex: pairCodexBridge,
+    codexHealth: codexBridgeHealth,
+    runCodex: (prompt, options = {}) => sendCodexBridgeMessage('computer.session.start', {
+      prompt,
+      workspace: options.workspace || codexWorkspace(),
+      provider: options.provider || computerProvider(),
+      ...options,
+    }),
+    cancelCodex: cancelCodexSession,
+    codexDiff: (options = {}) => sendCodexBridgeMessage('computer.diff.read', {
+      session_id: options.session_id || state.codex.sessionId,
+      workspace: options.workspace || codexWorkspace(),
+      provider: options.provider || computerProvider(),
+    }),
     exportSession: buildSessionExport,
     restoreSession: restoreSessionBundle,
   });
@@ -4211,6 +5793,7 @@ async function init() {
   setTheme(state.theme, false);
   renderProcessTrace();
   await loadAgentCore();
+  await restoreInstalledExtensionsFromCache();
   registerBuiltinExtensions();
   if (DEV_BACKEND === 'vllm') {
     const option = document.createElement('option');
@@ -4244,6 +5827,16 @@ async function init() {
     log('AgentKernel Lite BitNet bundle attached from Hugging Face');
   }
   els.form.addEventListener('submit', submitPrompt);
+  els.prompt?.addEventListener('input', renderComputerCommandPalette);
+  els.prompt?.addEventListener('focus', renderComputerCommandPalette);
+  els.prompt?.addEventListener('blur', () => window.setTimeout(hideComputerCommandPalette, 120));
+  els.prompt?.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab' && completeFirstComputerCommand()) {
+      event.preventDefault();
+    } else if (event.key === 'Escape') {
+      hideComputerCommandPalette();
+    }
+  });
   els.chatMode?.addEventListener('click', () => setMode('chat'));
   els.thinkMode?.addEventListener('click', () => setMode('think'));
   els.deepResearchMode?.addEventListener('click', () => setMode('deep_research'));
@@ -4267,8 +5860,35 @@ async function init() {
       installExtensionFromInput();
     }
   });
+  els.computerConsoleButton?.addEventListener('click', () => setComputerConsoleOpen(!document.body.classList.contains('computer-console-open')));
+  els.computerWorkspace?.addEventListener('change', () => setCodexWorkspace(els.computerWorkspace.value));
+  els.computerProvider?.addEventListener('change', () => setComputerProvider(els.computerProvider.value));
+  els.computerStart?.addEventListener('click', () => {
+    const open = !els.computerNewTerminalForm?.classList.contains('open');
+    els.computerNewTerminalForm?.classList.toggle('open', open);
+    els.computerStart?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) window.setTimeout(() => els.computerWorkspace?.focus(), 0);
+  });
+  els.computerCancelTerminal?.addEventListener('click', () => {
+    els.computerNewTerminalForm?.classList.remove('open');
+    els.computerStart?.setAttribute('aria-expanded', 'false');
+  });
+  els.computerCreateTerminal?.addEventListener('click', () => startComputerSession().then(() => {
+    els.computerNewTerminalForm?.classList.remove('open');
+    els.computerStart?.setAttribute('aria-expanded', 'false');
+  }).catch((error) => {
+    setComputerConsoleStatus(`Computer Use failed: ${error.message || String(error)}`, 'error');
+    log(`Computer Use failed: ${error.message || String(error)}`);
+  }));
   els.themeToggle?.addEventListener('click', toggleTheme);
-  els.mobileToggle?.addEventListener('click', () => document.body.classList.toggle('controls-hidden'));
+  els.mobileToggle?.addEventListener('click', () => {
+    document.body.classList.toggle('controls-hidden');
+    els.mobileToggle.textContent = document.body.classList.contains('controls-hidden') ? 'Controls' : 'Close';
+  });
+  els.closeControls?.addEventListener('click', () => {
+    document.body.classList.add('controls-hidden');
+    if (els.mobileToggle) els.mobileToggle.textContent = 'Controls';
+  });
   if (navigator.storage?.persisted) {
     const persisted = await navigator.storage.persisted();
     setPill(els.storagePill, persisted ? 'persistent' : 'best effort', persisted ? 'ready' : '');
@@ -4279,6 +5899,9 @@ async function init() {
       : 'Dev structure check via local vLLM.'
     : 'WASM on-device runtime. No server-side inference.';
   setMode('chat');
+  await loadCodexPairing();
+  if (els.computerWorkspace) els.computerWorkspace.value = codexWorkspace();
+  renderComputerConsole();
   syncImageModeControls();
   syncTranslationControls();
   loadAvailableExtensions();

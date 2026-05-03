@@ -27,6 +27,7 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { width: 100%; height: 100%; margin: 0; }
     html {
       overflow: hidden;
@@ -341,6 +342,10 @@
       padding: 0 10px 10px;
     }
 
+    .extension-settings input {
+      min-width: 0;
+    }
+
     .extension-install {
       display: grid;
       gap: 8px;
@@ -453,6 +458,232 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+    }
+
+    .computer-console {
+      position: relative;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      padding: 14px;
+    }
+
+    body.computer-console-open .computer-console {
+      display: grid;
+    }
+
+    body.computer-console-open .chat-scroll,
+    body.computer-console-open .composer,
+    body.computer-session-open .computer-console {
+      display: none;
+    }
+
+    body.computer-session-open .chat-scroll { display: flex; }
+    body.computer-session-open .composer { display: block; }
+
+    body.computer-session-open .status-dock {
+      display: none;
+    }
+
+    body.computer-session-open .chat-scroll {
+      min-height: 0;
+      height: 100%;
+      flex: 1 1 auto;
+    }
+
+    .computer-toolbar {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .computer-new-terminal {
+      display: none;
+      position: absolute;
+      top: 62px;
+      left: 14px;
+      right: 14px;
+      z-index: 4;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) auto auto;
+      gap: 8px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 10px;
+    }
+
+    .computer-new-terminal.open {
+      display: grid;
+    }
+
+    .computer-toolbar label,
+    .computer-new-terminal label {
+      margin: 0;
+    }
+
+    .computer-grid {
+      min-height: 0;
+      height: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .computer-session-list,
+    .computer-detail {
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 22, 29, 0.72);
+    }
+
+    .computer-session-list {
+      display: grid;
+      align-content: start;
+      align-items: start;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .computer-session-list.empty {
+      height: auto;
+      min-height: 0;
+      border-style: dashed;
+      background: transparent;
+      padding: 10px 12px;
+    }
+
+    .computer-session-button {
+      min-height: auto;
+      display: grid;
+      gap: 4px;
+      width: 100%;
+      border-color: var(--line);
+      background: #080b0f;
+      color: var(--soft);
+      text-align: left;
+      padding: 12px;
+    }
+
+    .computer-session-button.active {
+      border-color: rgba(45, 212, 191, 0.48);
+      background: rgba(45, 212, 191, 0.1);
+      color: var(--text);
+    }
+
+    .computer-session-button strong,
+    .computer-detail-title strong {
+      color: var(--text);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .computer-session-button span,
+    .computer-detail-title span,
+    .computer-empty,
+    .computer-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .computer-empty {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+    }
+
+    .computer-detail {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .computer-detail-title {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .computer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .computer-session-header {
+      width: min(900px, 100%);
+      padding: 10px 12px;
+    }
+
+    .computer-session-header .role {
+      margin-bottom: 6px;
+    }
+
+    .computer-session-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .computer-session-heading button {
+      min-height: 34px;
+      padding: 6px 10px;
+    }
+
+    .computer-workspace {
+      margin-top: 2px;
+      color: var(--muted) !important;
+      font-size: 12px !important;
+      line-height: 1.35 !important;
+      white-space: nowrap !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .computer-output,
+    .computer-session-chat {
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-wrap: anywhere;
+    }
+
+    .computer-output {
+      background: #07090d;
+      color: var(--soft);
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+
+    .computer-session-chat {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .computer-followup {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
     }
 
     .message {
@@ -663,6 +894,52 @@
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
       align-items: end;
+    }
+
+    .command-palette {
+      width: min(900px, 100%);
+      max-height: 220px;
+      overflow: auto;
+      margin: 0 auto 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 6px;
+    }
+
+    .command-option {
+      width: 100%;
+      min-height: auto;
+      display: grid;
+      grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      border-color: transparent;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      padding: 8px;
+    }
+
+    .command-option:hover,
+    .command-option:focus {
+      border-color: var(--line);
+      background: var(--button-2);
+    }
+
+    .command-option strong {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .command-option span {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
 
     .composer textarea { min-height: 54px; max-height: 160px; }
@@ -1169,6 +1446,10 @@
       padding: 7px 10px;
     }
 
+    .controls-close {
+      display: none;
+    }
+
     .composer-inner {
       width: min(900px, 100%);
       gap: 8px;
@@ -1232,6 +1513,12 @@
         transform: none;
       }
 
+      .controls-close {
+        display: block;
+        width: 100%;
+        margin-bottom: 10px;
+      }
+
       button.mobile-toggle {
         display: inline-flex !important;
         min-width: auto;
@@ -1249,7 +1536,7 @@
         grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
         justify-items: stretch;
-        padding: 10px 150px 10px 12px;
+        padding: 10px 106px 10px 12px;
       }
 
       header p {
@@ -1272,6 +1559,7 @@
         z-index: 9999;
         display: inline-flex;
         width: auto;
+        max-width: calc(100vw - 24px);
         align-items: center;
         justify-content: flex-end;
         margin-top: 0;
@@ -1279,7 +1567,7 @@
       }
 
       #themeToggleButton {
-        display: inline-flex !important;
+        display: none !important;
         width: auto !important;
         min-width: 58px !important;
         min-height: 34px !important;
@@ -1294,11 +1582,31 @@
         border-color: var(--line) !important;
       }
 
+      #computerConsoleButton {
+        display: inline-flex !important;
+        width: auto !important;
+        min-width: 74px !important;
+        min-height: 34px !important;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        background: var(--button-2) !important;
+        color: var(--soft) !important;
+        border-color: var(--line) !important;
+      }
+
+      #computerConsoleButton[hidden] {
+        display: none !important;
+      }
+
       #mobileToggleButton {
         position: static !important;
         display: inline-flex !important;
         width: auto !important;
-        min-width: 76px !important;
+        min-width: 88px !important;
         min-height: 34px !important;
         align-items: center;
         justify-content: center;
@@ -1319,6 +1627,46 @@
         padding: 16px 12px;
       }
 
+      .computer-console {
+        min-height: 0;
+        height: calc(100dvh - 55px);
+        padding: 10px;
+      }
+
+      .computer-toolbar,
+      .computer-grid,
+      .computer-followup {
+        grid-template-columns: 1fr;
+      }
+
+      .computer-new-terminal {
+        top: 54px;
+        left: 10px;
+        right: 10px;
+        grid-template-columns: 1fr;
+      }
+
+      .computer-session-heading {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .computer-session-heading button {
+        width: 100%;
+      }
+
+      .computer-grid {
+        min-height: 0;
+        height: 100%;
+        grid-template-rows: minmax(0, 1fr);
+      }
+
+      body.computer-session-open .chat-scroll {
+        min-height: 0;
+        height: 100%;
+        padding-bottom: 10px;
+      }
+
       .composer {
         padding: 10px 12px max(10px, env(safe-area-inset-bottom));
       }
@@ -1328,6 +1676,16 @@
         display: grid;
         grid-template-columns: minmax(0, 1fr) 72px;
         gap: 8px;
+      }
+
+      .command-palette {
+        width: 100%;
+        max-height: 180px;
+      }
+
+      .command-option {
+        grid-template-columns: 1fr;
+        gap: 3px;
       }
 
       .composer textarea {
@@ -1396,18 +1754,37 @@
     }
 
     html[data-theme="dark"] .mode-button.active,
+    html[data-theme="dark"] .image-toggle-button.active,
     html[data-theme="dark"] .pill,
     html[data-theme="dark"] .message,
+    html[data-theme="dark"] .computer-session-list,
+    html[data-theme="dark"] .computer-detail,
+    html[data-theme="dark"] .computer-session-button,
+    html[data-theme="dark"] .command-palette,
+    html[data-theme="dark"] .extension-card,
     html[data-theme="dark"] .result-item,
     html[data-theme="dark"] .result-actions a,
     html[data-theme="dark"] .result-action-button {
       background: #11161d;
+      color: var(--text);
     }
 
     html[data-theme="dark"] button.secondary,
-    html[data-theme="dark"] button.ghost {
+    html[data-theme="dark"] button.ghost,
+    html[data-theme="dark"] .image-toggle-button,
+    html[data-theme="dark"] .command-option:hover,
+    html[data-theme="dark"] .command-option:focus {
       background: var(--button-2);
       color: var(--soft);
+    }
+
+    html[data-theme="dark"] .extension-title strong {
+      color: var(--text);
+    }
+
+    html[data-theme="dark"] .extension-title span,
+    html[data-theme="dark"] .extension-detail {
+      color: var(--muted);
     }
 
     html[data-theme="dark"] .metric {
@@ -1472,6 +1849,7 @@
 </head>
 <body class="controls-hidden">
   <aside>
+    <button id="closeControlsButton" class="secondary controls-close" type="button">Close Controls</button>
     <div class="brand">
       <h1>Agent Kernel Lite</h1>
       <p>Local research chat.</p>
@@ -1507,7 +1885,7 @@
         <div id="availableExtensionList"></div>
         <div class="extension-install">
           <label for="extensionManifestUrl">Install GitHub release manifest</label>
-          <input id="extensionManifestUrl" type="url" placeholder="https://github.com/owner/repo/releases/download/v1/extension.json" autocomplete="off">
+          <input id="extensionManifestUrl" type="url" placeholder="https://github.com/owner/repo/releases/download/v2/extension.json" autocomplete="off">
           <button id="installExtensionButton" type="button" class="secondary">Install Extension</button>
         </div>
       </div>
@@ -1573,10 +1951,33 @@
 	        <p id="runtimeLine" class="runtime-line">Runtime will load when the page opens.</p>
 	      </div>
 	      <div class="header-actions">
+	        <button id="computerConsoleButton" class="secondary" type="button" aria-pressed="false" hidden>Computer</button>
 	        <button id="themeToggleButton" class="secondary theme-toggle" type="button" aria-pressed="false">Dark</button>
 	        <button id="mobileToggleButton" class="secondary mobile-toggle" type="button">Controls</button>
 	      </div>
 	    </header>
+
+    <section id="computerConsole" class="computer-console" aria-live="polite">
+      <div class="computer-toolbar">
+        <button id="computerStartButton" type="button" aria-expanded="false" aria-controls="computerNewTerminalForm">New Terminal</button>
+      </div>
+      <div id="computerNewTerminalForm" class="computer-new-terminal">
+        <label for="computerWorkspaceInput">Repo or workspace
+          <input id="computerWorkspaceInput" type="text" placeholder="/data/my_repo" autocomplete="off">
+        </label>
+        <label for="computerProviderSelect">Provider
+          <select id="computerProviderSelect">
+            <option value="codex">Codex</option>
+          </select>
+        </label>
+        <button id="computerCreateTerminalButton" type="button">Create</button>
+        <button id="computerCancelTerminalButton" class="secondary" type="button">Cancel</button>
+      </div>
+      <div class="computer-grid">
+        <div id="computerSessionList" class="computer-session-list"></div>
+        <div id="computerSessionDetail" class="computer-detail"></div>
+      </div>
+    </section>
 
 	    <section id="chatScroll" class="chat-scroll" aria-live="polite">
       <div class="empty" id="emptyState">
@@ -1587,6 +1988,7 @@
 
     <form id="composerForm" class="composer">
       <div id="statusDock" class="status-dock" aria-live="polite"></div>
+      <div id="commandPalette" class="command-palette" hidden></div>
       <div class="composer-inner">
         <textarea id="promptInput" placeholder="Ask a question..." autocomplete="off"></textarea>
         <button id="sendButton" type="submit" disabled>Send</button>
@@ -1594,6 +1996,6 @@
     </form>
   </main>
 
-  <script type="module" src="./js/agent-kernel-app.js?v=20260502-adaptive-spec"></script>
+  <script type="module" src="./js/agent-kernel-app.js?v=20260503-computer-use-v2"></script>
 </body>
 </html>

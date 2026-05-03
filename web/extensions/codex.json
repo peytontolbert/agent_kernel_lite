@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "source": "official",
   "default_enabled": false,
-  "approval_policy": "always_ask",
+  "approval_policy": "trusted_local",
   "capabilities": [
     {
       "id": "codex.session.start",
@@ -13,7 +13,7 @@
     },
     {
       "id": "codex.session.send",
-      "description": "Send a prompt or follow-up to a paired Codex session.",
+      "description": "Send a follow-up prompt to an existing paired Codex session.",
       "scopes": ["prompt.read", "codex.session.write"]
     },
     {
@@ -28,7 +28,7 @@
     },
     {
       "id": "codex.diff.read",
-      "description": "Read Codex-produced diffs for review in the app.",
+      "description": "Read the workspace diff after Codex runs.",
       "scopes": ["workspace.diff.read"]
     }
   ],
@@ -37,6 +37,8 @@
     "bridge_name": "agent-kernel-codex-bridge",
     "loopback_only": true,
     "default_port": 45731,
-    "setup": "Install and pair the local Codex bridge before enabling this extension."
+    "encrypted_transport": "p256-ecdh+hkdf-sha256+aes-256-gcm",
+    "setup_command": "python scripts/run_agentkernel_lite_codex_bridge.py --workspace /path/to/repo",
+    "setup": "Clone or download this repo on the working computer, install Codex CLI, then run the local bridge pairing script from the repo root. Pairing is the user approval gate; Codex runs do not start with extra approval prompts. The bridge defaults to Codex no-sandbox mode for hosts where bubblewrap sandboxing is unavailable; pass --sandbox workspace-write or --sandbox read-only when those modes work locally."
   }
 }

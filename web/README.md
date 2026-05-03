@@ -40,7 +40,7 @@ This is intentionally a lite demo:
 - Hugging Face Dataset Viewer fallback when no pack is loaded
 - best-effort browser Cache API and IndexedDB storage
 - optional persistent storage request
-- browser-installed extensions. The v1 shell ships with no default-installed
+- browser-installed extensions. The v2 shell ships with no default-installed
   extensions; users install release manifests before enabling capabilities.
 - portable session export/import for restoring a private local focus session
   across Safari/browser installs.
@@ -101,24 +101,28 @@ for approval; it does not enable execution. This keeps external surfaces such
 as YouTube, Discord, X, or local user tools out of the minimal kernel unless the
 user imports them and completes setup.
 
-The v1 app install includes no default-installed extensions. The Extensions menu
+The v2 app install includes no default-installed extensions. The Extensions menu
 does display the official extensions available from `web/extensions/catalog.json`
 so users can click to install them. Installing only adds the manifest to the
 installed surface; the user still has to enable the extension before it can act.
-Image generation remains a development/future extension:
+For v2, the official catalog exposes Computer Use only. Image Generation remains
+a development/future extension and is not advertised by the official catalog.
+The app shell also constrains fetched catalog entries to the pinned v2 allowlist
+so a stale release catalog cannot re-advertise development extensions.
+The Computer Use manifest shape is:
 
 ```json
 {
-  "id": "image_generation",
-  "name": "Image Generation",
+  "id": "computer_use",
+  "name": "Computer Use",
   "source": "official",
   "default_enabled": false,
-  "approval_policy": "always_ask",
+  "approval_policy": "trusted_local",
   "capabilities": [
     {
-      "id": "image.generate",
-      "description": "Generate an image artifact from a user prompt in the browser.",
-      "scopes": ["prompt.read", "artifact.image.write"]
+      "id": "computer.session.start",
+      "description": "Launch and manage a paired local computer agent terminal.",
+      "scopes": ["workspace.read", "computer.session.write"]
     }
   ]
 }

@@ -17,11 +17,11 @@ For the active tab, the verifier hashes:
 It compares those hashes with the release's `SHA256SUMS` asset, for example:
 
 ```text
-https://github.com/peytontolbert/agent_kernel_lite/releases/download/v1/SHA256SUMS
+https://github.com/peytontolbert/agent_kernel_lite/releases/download/v2/SHA256SUMS
 ```
 
 The extension rejects mutable release names such as `latest`, `main`, and
-`master`. Use a concrete release tag such as `v1`.
+`master`. Use a concrete release tag such as `v2`.
 
 ## Install For Local Testing
 

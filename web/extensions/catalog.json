@@ -3,28 +3,12 @@
   "version": "0.1.0",
   "extensions": [
     {
-      "id": "image_generation",
-      "name": "Image Generation",
+      "id": "computer_use",
+      "name": "Computer Use",
       "source": "official",
-      "manifest": "./image_generation.dev.json",
-      "description": "Generate browser image artifacts from prompts.",
-      "setup": "Development preview. Requires local image worker/model assets in this checkout."
-    },
-    {
-      "id": "codex",
-      "name": "Codex",
-      "source": "official",
-      "manifest": "./codex.json",
-      "description": "Pair with a local Codex bridge for workspace-aware coding sessions.",
-      "setup": "Requires installing and pairing the local Codex bridge before use."
-    },
-    {
-      "id": "translator",
-      "name": "Translator",
-      "source": "official",
-      "manifest": "./translator.json",
-      "description": "Translate typed text and speech transcripts through the browser adapter.",
-      "setup": "Text translation uses the loaded local model. Audio translation requires browser speech recognition support."
+      "manifest": "https://github.com/peytontolbert/agent_kernel_lite/releases/download/v2/computer_use.json",
+      "description": "Pair with Agent Kernel Desktop or the local computer bridge to orchestrate Codex, Claude Code, and Cursor sessions.",
+      "setup": "Requires pairing the local computer bridge before enabling a provider."
     }
   ]
 }
