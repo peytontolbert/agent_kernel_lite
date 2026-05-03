@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v5';
+const CACHE_NAME = 'agent-kernel-lite-v6';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -29,6 +29,8 @@ const COMPUTER_BRIDGE_URL_STORAGE_KEY = 'agent-kernel-lite-computer-bridge-url';
 const COMPUTER_PROVIDER_STORAGE_KEY = 'agent-kernel-lite-computer-provider';
 const COMPUTER_MODEL_STORAGE_KEY = 'agent-kernel-lite-computer-model';
 const COMPUTER_DEFAULT_BRIDGE_URL = 'http://127.0.0.1:45731';
+const COMPUTER_DEFAULT_RELAY_URL = `${window.location.origin}/agent_kernel/api/relay`;
+const COMPUTER_ROUTE_ID_PATTERN = /^route_[A-Za-z0-9_-]{24,96}$/;
 const COMPUTER_BRIDGE_PROTOCOL = 'agent-kernel-computer-bridge/v1';
 const COMPUTER_SLASH_COMMANDS = [
   { name: 'diff', description: 'show git diff for this workspace' },
@@ -96,7 +98,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v5';
+const GITHUB_RELEASE_TAG = 'v6';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -1142,6 +1144,30 @@ function codexBridgeUrl() {
   return String(state.codex.bridgeUrl || CODEX_DEFAULT_BRIDGE_URL).replace(/\/+$/, '');
 }
 
+function normalizeCodexBridgeInput(value) {
+  const clean = String(value || '').trim().replace(/\/+$/, '');
+  if (!clean) return CODEX_DEFAULT_BRIDGE_URL;
+  if (COMPUTER_ROUTE_ID_PATTERN.test(clean)) {
+    return `${COMPUTER_DEFAULT_RELAY_URL}/bridge/${encodeURIComponent(clean)}`;
+  }
+  if (/^bridge\/route_[A-Za-z0-9_-]{24,96}$/i.test(clean)) {
+    return `${COMPUTER_DEFAULT_RELAY_URL}/${clean}`;
+  }
+  return clean;
+}
+
+function needsHostedBridgeInput() {
+  return window.location.protocol === 'https:' && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(codexBridgeUrl());
+}
+
+function ensureCodexBridgeUrlForPairing() {
+  if (!needsHostedBridgeInput()) return true;
+  const value = window.prompt('Paste the Phone bridge URL or route ID printed by Agent Kernel Desktop.');
+  if (!value) return false;
+  setCodexBridgeUrl(value);
+  return true;
+}
+
 function codexWorkspace() {
   return String(localStorage.getItem(CODEX_WORKSPACE_STORAGE_KEY) || '').trim();
 }
@@ -1172,7 +1198,7 @@ function setComputerModel(value) {
 }
 
 function setCodexBridgeUrl(value) {
-  const clean = String(value || CODEX_DEFAULT_BRIDGE_URL).trim().replace(/\/+$/, '') || CODEX_DEFAULT_BRIDGE_URL;
+  const clean = normalizeCodexBridgeInput(value);
   state.codex.bridgeUrl = clean;
   localStorage.setItem(CODEX_BRIDGE_URL_STORAGE_KEY, clean);
 }
@@ -1280,6 +1306,7 @@ async function codexBridgeHealth() {
 }
 
 async function pairCodexBridge() {
+  if (!ensureCodexBridgeUrlForPairing()) throw new Error('Pairing cancelled.');
   if (!window.crypto?.subtle) throw new Error('Codex pairing requires WebCrypto support.');
   const keyPair = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
@@ -5339,13 +5366,15 @@ function setInstalledExtensionEnabled(extensionId, enabled) {
 function appendCodexSettings(settings, manifest) {
   const bridgeLabel = document.createElement('label');
   bridgeLabel.className = 'extension-detail';
-  bridgeLabel.textContent = 'Bridge URL';
+  bridgeLabel.textContent = 'Phone bridge URL or route ID';
   const bridgeInput = document.createElement('input');
-  bridgeInput.type = 'url';
+  bridgeInput.type = 'text';
   bridgeInput.value = codexBridgeUrl();
+  bridgeInput.placeholder = `${COMPUTER_DEFAULT_RELAY_URL}/bridge/route_...`;
   bridgeInput.autocomplete = 'off';
   bridgeInput.addEventListener('change', () => {
     setCodexBridgeUrl(bridgeInput.value);
+    bridgeInput.value = codexBridgeUrl();
     renderExtensionList();
   });
 
@@ -5364,6 +5393,7 @@ function appendCodexSettings(settings, manifest) {
   pair.addEventListener('click', async () => {
     try {
       setCodexBridgeUrl(bridgeInput.value);
+      bridgeInput.value = codexBridgeUrl();
       await pairCodexBridge();
     } catch (error) {
       appendMessage('assistant', `Codex pairing failed: ${error.message || String(error)}`);
@@ -5377,6 +5407,7 @@ function appendCodexSettings(settings, manifest) {
   health.addEventListener('click', async () => {
     try {
       setCodexBridgeUrl(bridgeInput.value);
+      bridgeInput.value = codexBridgeUrl();
       const result = await codexBridgeHealth();
       renderExtensionList();
       log(`Computer bridge ready: ${result.codex_available ? 'codex found' : 'codex missing'}`);

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Local encrypted computer-use bridge for Agent Kernel Lite.
 
-The bridge binds to 127.0.0.1 only. Pairing uses a short code printed in the
-terminal plus explicit local approval on the computer, then every post-pairing
-message is encrypted with P-256 ECDH, HKDF-SHA256, and AES-256-GCM.
+The bridge binds to 127.0.0.1 by default. Pairing uses a short code printed in
+the terminal plus explicit local approval on the computer, then every
+post-pairing message is encrypted with P-256 ECDH, HKDF-SHA256, and
+AES-256-GCM. Use --host 0.0.0.0 only when pairing from another device on a
+trusted LAN.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib import request as urlrequest
+from urllib.error import HTTPError
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -161,9 +165,30 @@ def read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
+def post_json(url: str, payload: dict[str, Any], timeout: int = 35) -> tuple[int, dict[str, Any]]:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    req = urlrequest.Request(
+        url,
+        data=raw,
+        method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return int(response.status), json.loads(body) if body else {}
+    except HTTPError as error:
+        body = error.read().decode("utf-8")
+        try:
+            payload = json.loads(body) if body else {}
+        except Exception:
+            payload = {"status": "error", "error": body or str(error)}
+        return int(error.code), payload
+
+
 class BridgeState:
     def __init__(self, args: argparse.Namespace) -> None:
-        self.host = "127.0.0.1"
+        self.host = str(args.host or "127.0.0.1")
         self.port = int(args.port)
         self.config_dir = Path(args.config_dir).expanduser()
         self.private_key = load_or_create_private_key(self.config_dir / "bridge-device-key.pem")
@@ -191,6 +216,141 @@ class BridgeState:
             raise ValueError(f"unsupported sandbox: {self.sandbox}")
         if self.approval_policy not in ALLOWED_APPROVAL_POLICIES:
             raise ValueError(f"unsupported approval policy: {self.approval_policy}")
+
+    def health_payload(self) -> dict[str, Any]:
+        providers = self.provider_catalog()
+        codex = next((provider for provider in providers if provider["id"] == "codex"), {})
+        return {
+            "status": "ok",
+            "protocol": PROTOCOL,
+            "legacy_protocol": LEGACY_PROTOCOL,
+            "paired": bool(self.grants),
+            "bridge_public_jwk": public_key_to_jwk(self.private_key.public_key()),
+            "providers": providers,
+            "codex_bin": codex.get("binary", ""),
+            "codex_available": bool(codex.get("available")),
+            "allowed_workspaces": [str(item) for item in self.allowed_workspaces],
+            "workspace_policy": "selected workspace must equal an allowed root or be inside it",
+            "sandbox": self.sandbox,
+            "approval_policy": self.approval_policy,
+        }
+
+    def start_pairing_request(self, origin: str, body: dict[str, Any]) -> dict[str, Any]:
+        origin = self.require_allowed_origin(origin)
+        self.cleanup_pairing_requests()
+        browser_public_jwk = body.get("browser_public_jwk")
+        public_key_from_jwk(browser_public_jwk)
+        pairing_id = f"pair_{secrets.token_urlsafe(12)}"
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        expires_at = time.time() + 300
+        self.pairing[pairing_id] = {
+            "pairing_id": pairing_id,
+            "code": code,
+            "origin": origin,
+            "browser_public_jwk": browser_public_jwk,
+            "expires_at": expires_at,
+            "attempts": 0,
+        }
+        print("", flush=True)
+        print("Agent Kernel Lite computer-use pairing request", flush=True)
+        print(f"Origin: {origin}", flush=True)
+        print(f"Pairing code: {code}", flush=True)
+        print(f"Browser key fingerprint: {self.pairing_fingerprint(self.pairing[pairing_id])}", flush=True)
+        print("Enter this code in the Agent Kernel Lite app within 5 minutes.", flush=True)
+        print("The computer must also approve the pairing after the code is entered.", flush=True)
+        print("", flush=True)
+        return {
+            "status": "pairing_code_required",
+            "pairing_id": pairing_id,
+            "protocol": PROTOCOL,
+            "bridge_public_jwk": public_key_to_jwk(self.private_key.public_key()),
+            "expires_at": expires_at,
+            "code_length": 6,
+        }
+
+    def confirm_pairing_request(self, origin: str, body: dict[str, Any]) -> dict[str, Any]:
+        origin = self.require_allowed_origin(origin)
+        pairing_id = str(body.get("pairing_id") or "")
+        code = str(body.get("code") or "").strip()
+        request = self.pairing.get(pairing_id)
+        if not request or float(request["expires_at"]) < time.time():
+            raise ValueError("pairing request expired or missing")
+        if origin != request.get("origin"):
+            raise ValueError("pairing origin does not match request origin")
+        request["attempts"] = int(request.get("attempts") or 0) + 1
+        if int(request["attempts"]) > 5:
+            self.pairing.pop(pairing_id, None)
+            raise ValueError("too many pairing attempts")
+        if not secrets.compare_digest(code, str(request["code"])):
+            raise ValueError("pairing code did not match")
+        self.approve_pairing_on_computer(request)
+        grant_id = f"grant_{secrets.token_urlsafe(18)}"
+        grant = {
+            "grant_id": grant_id,
+            "origin": request["origin"],
+            "browser_public_jwk": request["browser_public_jwk"],
+            "created_at": time.time(),
+            "expires_at": time.time() + 60 * 60 * 24 * 30,
+            "last_seq": 0,
+        }
+        self.grants[grant_id] = grant
+        self.pairing.pop(pairing_id, None)
+        self.save_grants()
+        return {"status": "paired", "grant_id": grant_id, "expires_at": grant["expires_at"]}
+
+    def encrypted_message_response(self, origin: str, envelope: dict[str, Any]) -> dict[str, Any]:
+        origin = self.require_allowed_origin(origin)
+        if envelope.get("protocol") not in {PROTOCOL, LEGACY_PROTOCOL}:
+            raise ValueError("unsupported protocol")
+        seq = int(envelope.get("seq") or 0)
+        payload, grant = self.decrypt_message(envelope)
+        if origin != grant.get("origin"):
+            raise ValueError("request origin does not match pairing grant")
+        message_type = str(payload.get("type") or "")
+        if message_type in {"computer.session.start", "codex.session.start"}:
+            result = self.start_codex_session(payload)
+        elif message_type in {"computer.session.send", "codex.session.send"}:
+            result = self.send_codex_followup(payload)
+        elif message_type in {"computer.session.status", "codex.session.status"}:
+            session_id = str(payload.get("session_id") or "")
+            result = self.session_snapshot(session_id, int(payload.get("since") or 0)) if session_id else {
+                "status": "ok",
+                "message": "bridge is ready",
+                "providers": self.provider_catalog(),
+                "active_sessions": [
+                    self.session_snapshot(session_id, 0)
+                    for session_id in list(self.sessions.keys())
+                    if self.sessions.get(session_id, {}).get("status") == "running"
+                ],
+            }
+        elif message_type in {"computer.session.cancel", "codex.session.cancel"}:
+            result = self.cancel_codex_session(payload)
+        elif message_type in {"computer.diff.read", "codex.diff.read"}:
+            result = self.read_diff(payload)
+        elif message_type in {"computer.grant.revoke", "codex.grant.revoke"}:
+            removed = self.grants.pop(str(grant["grant_id"]), None)
+            self.save_grants()
+            result = {"status": "revoked" if removed else "missing", "grant_id": grant["grant_id"]}
+        else:
+            raise ValueError(f"unsupported encrypted message type: {message_type}")
+        return self.encrypt_response(grant, seq, {"type": f"{message_type}.result", "result": result})
+
+    def handle_relay_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        path = str(request.get("path") or "")
+        origin = str(request.get("origin") or "").rstrip("/")
+        body = request.get("body") if isinstance(request.get("body"), dict) else {}
+        try:
+            if path == "/health":
+                return {"status_code": 200, "payload": self.health_payload()}
+            if path == "/pairing/start":
+                return {"status_code": 200, "payload": self.start_pairing_request(origin, body)}
+            if path == "/pairing/confirm":
+                return {"status_code": 200, "payload": self.confirm_pairing_request(origin, body)}
+            if path == "/v1/message":
+                return {"status_code": 200, "payload": self.encrypted_message_response(origin, body)}
+            raise ValueError("not found")
+        except Exception as exc:
+            return {"status_code": 400, "payload": {"status": "error", "error": str(exc)}}
 
     def normalize_provider(self, provider: str) -> str:
         normalized = PROVIDER_ALIASES.get(str(provider or "codex").strip().lower().replace("-", "_"), "")
@@ -641,37 +801,18 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] != "/health":
             json_response(self, 404, {"status": "error", "error": "not found"})
             return
-        providers = self.state.provider_catalog()
-        codex = next((provider for provider in providers if provider["id"] == "codex"), {})
-        json_response(
-            self,
-            200,
-            {
-                "status": "ok",
-                "protocol": PROTOCOL,
-                "legacy_protocol": LEGACY_PROTOCOL,
-                "paired": bool(self.state.grants),
-                "bridge_public_jwk": public_key_to_jwk(self.state.private_key.public_key()),
-                "providers": providers,
-                "codex_bin": codex.get("binary", ""),
-                "codex_available": bool(codex.get("available")),
-                "allowed_workspaces": [str(item) for item in self.state.allowed_workspaces],
-                "workspace_policy": "selected workspace must equal an allowed root or be inside it",
-                "sandbox": self.state.sandbox,
-                "approval_policy": self.state.approval_policy,
-            },
-        )
+        json_response(self, 200, self.state.health_payload())
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         try:
             origin = self.state.require_allowed_origin(request_origin(self))
             if path == "/pairing/start":
-                self.handle_pairing_start(origin)
+                json_response(self, 200, self.state.start_pairing_request(origin, read_json(self)))
             elif path == "/pairing/confirm":
-                self.handle_pairing_confirm(origin)
+                json_response(self, 200, self.state.confirm_pairing_request(origin, read_json(self)))
             elif path == "/v1/message":
-                self.handle_encrypted_message(origin)
+                json_response(self, 200, self.state.encrypted_message_response(origin, read_json(self)))
             elif path == "/v1/revoke":
                 self.handle_revoke(origin)
             else:
@@ -787,8 +928,76 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("plaintext revoke is disabled; use encrypted codex.grant.revoke")
 
 
+def run_relay_client(state: BridgeState, relay_url: str, public_base_url: str, ttl_seconds: int = 86400) -> None:
+    relay_url = relay_url.rstrip("/")
+    route_id = f"route_{secrets.token_urlsafe(32)}"
+    pairing_code = f"{secrets.randbelow(1_000_000):06d}"
+    device_id = f"desktop_{secrets.token_urlsafe(12)}"
+    token = secrets.token_urlsafe(32)
+    status, registered = post_json(
+        f"{relay_url}/desktop/register",
+        {
+            "route_id": route_id,
+            "pairing_code": pairing_code,
+            "device_id": device_id,
+            "token": token,
+            "ttl_seconds": ttl_seconds,
+            "label": "Agent Kernel Desktop",
+        },
+    )
+    if status != 200 or registered.get("status") != "registered":
+        raise RuntimeError(registered.get("error") or f"relay registration failed: {status}")
+    bridge_url = f"{public_base_url.rstrip('/')}/bridge/{route_id}"
+    print("", flush=True)
+    print("Agent Kernel Lite computer-use relay connected", flush=True)
+    print(f"Relay: {relay_url}", flush=True)
+    print(f"Phone bridge URL: {bridge_url}", flush=True)
+    print(f"Desktop pairing code: {pairing_code}", flush=True)
+    print("Enter the Phone bridge URL in the app, then pair with the code shown here.", flush=True)
+    print("Keep this terminal open while using the Computer Use extension.", flush=True)
+    print("", flush=True)
+    while True:
+        status, poll = post_json(
+            f"{relay_url}/desktop/poll",
+            {"device_id": device_id, "token": token, "timeout_seconds": 25},
+            timeout=35,
+        )
+        if status != 200:
+            print(f"[relay] poll failed: {status} {poll.get('error') or poll}", flush=True)
+            time.sleep(2)
+            continue
+        if poll.get("status") == "idle":
+            continue
+        request = poll.get("request")
+        if not isinstance(request, dict):
+            time.sleep(1)
+            continue
+        request_id = str(request.get("request_id") or "")
+        response = state.handle_relay_request(request)
+        post_status, posted = post_json(
+            f"{relay_url}/desktop/respond",
+            {
+                "device_id": device_id,
+                "token": token,
+                "request_id": request_id,
+                "status_code": int(response.get("status_code") or 200),
+                "payload": response.get("payload") if isinstance(response.get("payload"), dict) else {},
+            },
+        )
+        if post_status != 200:
+            print(f"[relay] response failed: {post_status} {posted.get('error') or posted}", flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Agent Kernel Lite computer-use bridge.")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Address to bind. Use 127.0.0.1 for same-computer browser use, or "
+            "0.0.0.0 / the computer LAN IP for phone pairing on trusted Wi-Fi."
+        ),
+    )
     parser.add_argument("--port", type=int, default=45731)
     parser.add_argument("--workspace", action="append", default=[], help="Allowed workspace root. Repeat for more roots.")
     parser.add_argument("--config-dir", default="~/.agent-kernel-lite/codex-bridge")
@@ -808,15 +1017,23 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--approval-policy", default="never", choices=sorted(ALLOWED_APPROVAL_POLICIES))
     parser.add_argument("--allow-origin", action="append", default=[], help="Allowed browser origin. Repeat for more origins.")
+    parser.add_argument("--relay-url", default="", help="Internal relay API base URL, for example https://peytontolbert.com/agent_kernel/api/relay")
+    parser.add_argument("--relay-public-url", default="", help="Public relay API base URL used by the phone. Defaults to --relay-url.")
+    parser.add_argument("--relay-ttl", type=int, default=86400, help="Relay route lifetime in seconds.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     state = BridgeState(args)
+    if str(args.relay_url or "").strip():
+        run_relay_client(state, str(args.relay_url).strip(), str(args.relay_public_url or args.relay_url).strip(), int(args.relay_ttl))
+        return
     Handler.state = state
     server = ThreadingHTTPServer((state.host, state.port), Handler)
     print(f"Agent Kernel Lite computer-use bridge listening on http://{state.host}:{state.port}", flush=True)
+    if state.host not in {"127.0.0.1", "localhost", "::1"}:
+        print("Warning: bridge is reachable beyond loopback. Use trusted Wi-Fi and approve pairings only from your own devices.", flush=True)
     print(f"Allowed workspace roots: {', '.join(str(item) for item in state.allowed_workspaces)}", flush=True)
     print("Keep this terminal open while using the Computer Use extension.", flush=True)
     server.serve_forever()
