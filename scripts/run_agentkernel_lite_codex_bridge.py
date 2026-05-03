@@ -123,17 +123,24 @@ def request_origin(handler: BaseHTTPRequestHandler) -> str:
     return str(handler.headers.get("Origin") or "")
 
 
+def add_bridge_cors_headers(handler: BaseHTTPRequestHandler) -> None:
+    origin = request_origin(handler)
+    if not handler.state.origin_allowed(origin):
+        return
+    handler.send_header("Access-Control-Allow-Origin", origin)
+    handler.send_header("Vary", "Origin")
+    handler.send_header("Access-Control-Allow-Headers", "content-type")
+    handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    if str(handler.headers.get("Access-Control-Request-Private-Network") or "").lower() == "true":
+        handler.send_header("Access-Control-Allow-Private-Network", "true")
+
+
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(raw)))
-    origin = request_origin(handler)
-    if handler.state.origin_allowed(origin):
-        handler.send_header("Access-Control-Allow-Origin", origin)
-        handler.send_header("Vary", "Origin")
-        handler.send_header("Access-Control-Allow-Headers", "content-type")
-        handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    add_bridge_cors_headers(handler)
     handler.end_headers()
     handler.wfile.write(raw)
 
@@ -144,12 +151,8 @@ def options_response(handler: BaseHTTPRequestHandler, status: int = 204, payload
     if status != 204:
         handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(raw)))
-    origin = request_origin(handler)
-    if handler.state.origin_allowed(origin):
-        handler.send_header("Access-Control-Allow-Origin", origin)
-        handler.send_header("Vary", "Origin")
-        handler.send_header("Access-Control-Allow-Headers", "content-type")
-        handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    add_bridge_cors_headers(handler)
+    if handler.state.origin_allowed(request_origin(handler)):
         handler.send_header("Access-Control-Max-Age", "600")
     handler.end_headers()
     if raw:
