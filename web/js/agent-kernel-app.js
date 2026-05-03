@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v9';
+const CACHE_NAME = 'agent-kernel-lite-v10';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -98,7 +98,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v9';
+const GITHUB_RELEASE_TAG = 'v10';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -1288,6 +1288,63 @@ async function decryptCodexEnvelope(envelope) {
     base64ToBytes(envelope.ciphertext),
   );
   return JSON.parse(utf8Text(new Uint8Array(plaintext)));
+}
+
+function bridgeHostIsPrivate(url) {
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.local')) return true;
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  const match = host.match(/^172\.(\d+)\./);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+}
+
+function bridgeFailureHint(url, error) {
+  if (window.location.protocol === 'https:' && url.protocol === 'http:' && bridgeHostIsPrivate(url)) {
+    return 'Likely browser policy: this HTTPS page is trying to fetch an HTTP private/LAN bridge. Allow mixed/private-network access for this site, or test from localhost on the same computer.';
+  }
+  if (url.protocol === 'https:') {
+    return 'Likely scheme mismatch: the desktop bridge is plain HTTP. Use http:// for localhost or LAN bridge URLs.';
+  }
+  if (/Failed to fetch|Load failed|NetworkError/i.test(error?.message || '')) {
+    return 'The browser did not expose an HTTP response. Check that the bridge is running, the URL/IP is correct, the firewall allows the port, and the browser is not blocking the request.';
+  }
+  return 'The browser exposed a response-level error. Check the status and response body above.';
+}
+
+async function diagnoseCodexBridge() {
+  const startedAt = new Date().toISOString();
+  const rawBridgeUrl = codexBridgeUrl();
+  const rows = [
+    `Bridge diagnostics (${startedAt})`,
+    `App origin: ${window.location.origin}`,
+    `Secure context: ${window.isSecureContext ? 'yes' : 'no'}`,
+    `WebCrypto: ${window.crypto?.subtle ? 'yes' : 'no'}`,
+    `Bridge URL: ${rawBridgeUrl}`,
+  ];
+  let url;
+  try {
+    url = new URL(rawBridgeUrl);
+    rows.push(`Bridge origin: ${url.origin}`);
+    rows.push(`Bridge protocol: ${url.protocol}`);
+    rows.push(`Bridge host: ${url.host}`);
+    rows.push(`Private/LAN host: ${bridgeHostIsPrivate(url) ? 'yes' : 'no'}`);
+  } catch (error) {
+    rows.push(`URL parse: failed (${error.message || String(error)})`);
+    return rows.join('\n');
+  }
+  const healthUrl = `${rawBridgeUrl}/health`;
+  rows.push(`GET ${healthUrl}`);
+  try {
+    const response = await fetch(healthUrl, { cache: 'no-store' });
+    rows.push(`Health status: ${response.status} ${response.statusText || ''}`.trim());
+    rows.push(`CORS visible: yes`);
+    const text = await response.text();
+    rows.push(`Health body: ${text.slice(0, 900) || '(empty)'}`);
+  } catch (error) {
+    rows.push(`Health fetch failed: ${error.name || 'Error'}: ${error.message || String(error)}`);
+    rows.push(`Likely cause: ${bridgeFailureHint(url, error)}`);
+  }
+  return rows.join('\n');
 }
 
 async function codexBridgeHealth() {
@@ -5389,7 +5446,8 @@ function appendCodexSettings(settings, manifest) {
       bridgeInput.value = codexBridgeUrl();
       await pairCodexBridge();
     } catch (error) {
-      appendMessage('assistant', `Codex pairing failed: ${error.message || String(error)}`);
+      const diagnostics = await diagnoseCodexBridge().catch((diagnosticError) => `Bridge diagnostics failed: ${diagnosticError.message || String(diagnosticError)}`);
+      appendMessage('assistant', `Codex pairing failed: ${error.message || String(error)}\n\n${diagnostics}`);
       log(`Codex pairing failed: ${error.message || String(error)}`);
     }
   });
@@ -5407,7 +5465,8 @@ function appendCodexSettings(settings, manifest) {
       const providerText = (result.providers || []).map((provider) => `${provider.name || provider.id}: ${provider.available ? 'available' : 'missing'}`).join(', ');
       appendMessage('assistant', `Computer bridge is reachable. Providers: ${providerText || 'none'}. Allowed roots: ${(result.allowed_workspaces || []).join(', ') || 'none'}. Policy: ${result.workspace_policy || 'selected workspace must be under an allowed root'}`);
     } catch (error) {
-      appendMessage('assistant', `Computer bridge check failed: ${error.message || String(error)}`);
+      const diagnostics = await diagnoseCodexBridge().catch((diagnosticError) => `Bridge diagnostics failed: ${diagnosticError.message || String(diagnosticError)}`);
+      appendMessage('assistant', `Computer bridge check failed: ${error.message || String(error)}\n\n${diagnostics}`);
       log(`Computer bridge check failed: ${error.message || String(error)}`);
     }
   });
