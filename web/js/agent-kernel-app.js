@@ -18,7 +18,7 @@ const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
-const CACHE_NAME = 'agent-kernel-lite-v10';
+const CACHE_NAME = 'agent-kernel-lite-v11';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -98,7 +98,7 @@ const CODEX_BRIDGE_URL_STORAGE_KEY = COMPUTER_BRIDGE_URL_STORAGE_KEY;
 const CODEX_DEFAULT_BRIDGE_URL = COMPUTER_DEFAULT_BRIDGE_URL;
 const CODEX_BRIDGE_PROTOCOL = COMPUTER_BRIDGE_PROTOCOL;
 const GITHUB_RELEASE_REPO = 'peytontolbert/agent_kernel_lite';
-const GITHUB_RELEASE_TAG = 'v10';
+const GITHUB_RELEASE_TAG = 'v11';
 const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/download`;
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
@@ -298,6 +298,16 @@ const state = {
     eventCount: 0,
     lastStatus: null,
     seq: 0,
+    broker: {
+      enabled: URL_PARAMS.get('computerBroker') === '1',
+      connected: false,
+      origin: '',
+      bridgeUrl: '',
+      target: null,
+      nextRequestId: 1,
+      pending: new Map(),
+      readyAt: 0,
+    },
   },
   processRunId: 0,
   generationRunId: 0,
@@ -1298,6 +1308,85 @@ function bridgeHostIsPrivate(url) {
   return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
 }
 
+function brokerOriginAllowed(origin) {
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && bridgeHostIsPrivate(url);
+  } catch (_) {
+    return false;
+  }
+}
+
+function setupComputerBrokerTransport() {
+  if (!state.codex.broker.enabled || !window.opener) return;
+  window.addEventListener('message', (event) => {
+    const message = event.data || {};
+    if (message.type === 'agent-kernel-computer-broker-ready') {
+      if (!brokerOriginAllowed(event.origin)) return;
+      state.codex.broker.connected = true;
+      state.codex.broker.origin = event.origin;
+      state.codex.broker.bridgeUrl = String(message.bridgeUrl || event.origin).replace(/\/+$/, '');
+      state.codex.broker.target = event.source;
+      state.codex.broker.readyAt = Date.now();
+      setCodexBridgeUrl(state.codex.broker.bridgeUrl);
+      log(`Computer broker connected: ${state.codex.broker.bridgeUrl}`);
+      renderExtensionList();
+      return;
+    }
+    if (message.type === 'agent-kernel-computer-broker-response') {
+      const requestId = String(message.requestId || '');
+      const pending = state.codex.broker.pending.get(requestId);
+      if (!pending || event.origin !== pending.origin) return;
+      clearTimeout(pending.timeout);
+      state.codex.broker.pending.delete(requestId);
+      if (message.error) {
+        pending.reject(new Error(message.error));
+      } else {
+        pending.resolve({
+          ok: Boolean(message.ok),
+          status: Number(message.status || 0),
+          payload: message.payload || {},
+        });
+      }
+    }
+  });
+  const sayHello = () => {
+    if (!window.opener || state.codex.broker.connected) return;
+    window.opener.postMessage({ type: 'agent-kernel-computer-broker-hello' }, '*');
+  };
+  sayHello();
+  window.setInterval(sayHello, 1000);
+}
+
+async function computerBridgeRequest(path, options = {}) {
+  const broker = state.codex.broker;
+  if (broker.enabled && broker.connected && broker.target) {
+    const requestId = String(broker.nextRequestId++);
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        broker.pending.delete(requestId);
+        reject(new Error('Computer broker request timed out.'));
+      }, Number(options.timeout || 120000));
+      broker.pending.set(requestId, { resolve, reject, timeout, origin: broker.origin });
+      broker.target.postMessage({
+        type: 'agent-kernel-computer-broker-request',
+        requestId,
+        path,
+        method: options.method || 'GET',
+        body: options.body || null,
+      }, broker.origin);
+    });
+  }
+  const response = await fetch(`${codexBridgeUrl()}${path}`, {
+    method: options.method || 'GET',
+    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store',
+  });
+  const payload = await response.json();
+  return { ok: response.ok, status: response.status, payload };
+}
+
 function bridgeFailureHint(url, error) {
   if (window.location.protocol === 'https:' && url.protocol === 'http:' && bridgeHostIsPrivate(url)) {
     return 'Likely browser policy: this HTTPS page is trying to fetch an HTTP private/LAN bridge. Allow mixed/private-network access for this site, or test from localhost on the same computer.';
@@ -1320,6 +1409,9 @@ async function diagnoseCodexBridge() {
     `Secure context: ${window.isSecureContext ? 'yes' : 'no'}`,
     `WebCrypto: ${window.crypto?.subtle ? 'yes' : 'no'}`,
     `Bridge URL: ${rawBridgeUrl}`,
+    `Broker enabled: ${state.codex.broker.enabled ? 'yes' : 'no'}`,
+    `Broker connected: ${state.codex.broker.connected ? 'yes' : 'no'}`,
+    `Broker origin: ${state.codex.broker.origin || '(none)'}`,
   ];
   let url;
   try {
@@ -1331,6 +1423,16 @@ async function diagnoseCodexBridge() {
   } catch (error) {
     rows.push(`URL parse: failed (${error.message || String(error)})`);
     return rows.join('\n');
+  }
+  if (state.codex.broker.connected) {
+    rows.push('Broker GET /health');
+    try {
+      const response = await computerBridgeRequest('/health', { timeout: 15000 });
+      rows.push(`Broker health status: ${response.status}`);
+      rows.push(`Broker health body: ${JSON.stringify(response.payload || {}).slice(0, 900)}`);
+    } catch (error) {
+      rows.push(`Broker health failed: ${error.name || 'Error'}: ${error.message || String(error)}`);
+    }
   }
   const healthUrl = `${rawBridgeUrl}/health`;
   rows.push(`GET ${healthUrl}`);
@@ -1348,9 +1450,9 @@ async function diagnoseCodexBridge() {
 }
 
 async function codexBridgeHealth() {
-  const response = await fetch(`${codexBridgeUrl()}/health`, { cache: 'no-store' });
+  const response = await computerBridgeRequest('/health');
   if (!response.ok) throw new Error(`Computer bridge health failed: ${response.status}`);
-  const result = await response.json();
+  const result = response.payload;
   state.codex.providers = Array.isArray(result.providers) ? result.providers : state.codex.providers;
   state.codex.bridgeHealth = result;
   return result;
@@ -1365,15 +1467,14 @@ async function pairCodexBridge() {
   );
   const browserPublicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
   const browserPrivateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-  const startResponse = await fetch(`${codexBridgeUrl()}/pairing/start`, {
+  const startResponse = await computerBridgeRequest('/pairing/start', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body: {
       origin: window.location.origin,
       browser_public_jwk: browserPublicJwk,
-    }),
+    },
   });
-  const start = await startResponse.json();
+  const start = startResponse.payload;
   if (!startResponse.ok || start.status !== 'pairing_code_required') {
     throw new Error(start.error || start.status || 'pairing did not start');
   }
@@ -1381,12 +1482,11 @@ async function pairCodexBridge() {
   if (!code) throw new Error('Pairing cancelled.');
   appendMessage('assistant', 'Pairing request sent. Approve it on the working computer to complete setup.');
   log('Computer bridge pairing waiting for computer approval');
-  const confirmResponse = await fetch(`${codexBridgeUrl()}/pairing/confirm`, {
+  const confirmResponse = await computerBridgeRequest('/pairing/confirm', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pairing_id: start.pairing_id, code: String(code).trim() }),
+    body: { pairing_id: start.pairing_id, code: String(code).trim() },
   });
-  const confirm = await confirmResponse.json();
+  const confirm = confirmResponse.payload;
   if (!confirmResponse.ok || confirm.status !== 'paired') {
     throw new Error(confirm.error || confirm.status || 'pairing failed');
   }
@@ -1394,7 +1494,7 @@ async function pairCodexBridge() {
     protocol: CODEX_BRIDGE_PROTOCOL,
     bridge_url: codexBridgeUrl(),
     grant_id: confirm.grant_id,
-    origin: window.location.origin,
+    origin: start.origin || window.location.origin,
     browser_private_jwk: browserPrivateJwk,
     browser_public_jwk: browserPublicJwk,
     bridge_public_jwk: start.bridge_public_jwk,
@@ -1409,12 +1509,11 @@ async function pairCodexBridge() {
 
 async function sendCodexBridgeMessage(type, payload = {}) {
   const envelope = await encryptCodexPayload({ type, ...payload });
-  const response = await fetch(`${codexBridgeUrl()}/v1/message`, {
+  const response = await computerBridgeRequest('/v1/message', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(envelope),
+    body: envelope,
   });
-  const raw = await response.json();
+  const raw = response.payload;
   if (!response.ok) throw new Error(raw.error || `Computer bridge message failed: ${response.status}`);
   return decryptCodexEnvelope(raw);
 }
@@ -5881,6 +5980,7 @@ function registerBuiltinExtensions() {
 
 async function init() {
   setTheme(state.theme, false);
+  setupComputerBrokerTransport();
   renderProcessTrace();
   await loadAgentCore();
   await restoreInstalledExtensionsFromCache();

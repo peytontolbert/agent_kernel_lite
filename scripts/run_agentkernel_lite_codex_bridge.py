@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlencode, urlparse
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -266,6 +268,7 @@ class BridgeState:
             "status": "pairing_code_required",
             "pairing_id": pairing_id,
             "protocol": PROTOCOL,
+            "origin": origin,
             "bridge_public_jwk": public_key_to_jwk(self.private_key.public_key()),
             "expires_at": expires_at,
             "code_length": 6,
@@ -402,6 +405,15 @@ class BridgeState:
         if origin in self.allowed_origins:
             return True
         return origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")
+
+    def origin_allowed_for_host(self, origin: str, host_header: str) -> bool:
+        if self.origin_allowed(origin):
+            return True
+        host = str(host_header or "").strip()
+        if not origin or not host:
+            return False
+        origin = origin.rstrip("/")
+        return origin in {f"http://{host}", f"https://{host}"}
 
     def require_allowed_origin(self, origin: str) -> str:
         origin = origin.rstrip("/")
@@ -793,15 +805,26 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[bridge] {self.address_string()} {fmt % args}")
 
+    def require_request_origin(self) -> str:
+        origin = request_origin(self).rstrip("/")
+        if self.state.origin_allowed_for_host(origin, self.headers.get("Host", "")):
+            self.state.allowed_origins.add(origin)
+            return origin
+        return self.state.require_allowed_origin(origin)
+
     def do_OPTIONS(self) -> None:
         try:
-            self.state.require_allowed_origin(request_origin(self))
+            self.require_request_origin()
             options_response(self, 204)
         except Exception as exc:
             options_response(self, 403, {"status": "error", "error": str(exc)})
 
     def do_GET(self) -> None:
-        if self.path.split("?", 1)[0] != "/health":
+        path = self.path.split("?", 1)[0]
+        if path == "/pair":
+            self.handle_pair_page()
+            return
+        if path != "/health":
             json_response(self, 404, {"status": "error", "error": "not found"})
             return
         json_response(self, 200, self.state.health_payload())
@@ -809,7 +832,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         try:
-            origin = self.state.require_allowed_origin(request_origin(self))
+            origin = self.require_request_origin()
             if path == "/pairing/start":
                 json_response(self, 200, self.state.start_pairing_request(origin, read_json(self)))
             elif path == "/pairing/confirm":
@@ -822,6 +845,118 @@ class Handler(BaseHTTPRequestHandler):
                 json_response(self, 404, {"status": "error", "error": "not found"})
         except Exception as exc:
             json_response(self, 400, {"status": "error", "error": str(exc)})
+
+    def handle_pair_page(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        requested_app = str((query.get("app") or [""])[0]).strip()
+        app_url = requested_app or "https://peytontolbert.com/agent_kernel/"
+        try:
+            parsed = urlparse(app_url)
+            if parsed.scheme != "https":
+                raise ValueError("app URL must be https")
+            query_items = parse_qs(parsed.query)
+            query_items["computerBroker"] = ["1"]
+            app_url = parsed._replace(query=urlencode(query_items, doseq=True)).geturl()
+        except Exception:
+            app_url = "https://peytontolbert.com/agent_kernel/?computerBroker=1"
+        escaped_app_url = html.escape(app_url, quote=True)
+        app_origin = f"{urlparse(app_url).scheme}://{urlparse(app_url).netloc}"
+        escaped_app_origin = html.escape(app_origin, quote=True)
+        page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Kernel Computer Pairing</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; line-height: 1.45; background: #101418; color: #f4f7f8; }}
+    main {{ max-width: 620px; margin: 0 auto; }}
+    button {{ font: inherit; padding: 12px 16px; border-radius: 8px; border: 0; background: #72d6a0; color: #07120b; font-weight: 700; }}
+    code, pre {{ background: #1f2930; border-radius: 6px; padding: 2px 5px; }}
+    pre {{ padding: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }}
+    .muted {{ color: #b8c2c8; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Pair Agent Kernel</h1>
+    <p class="muted">This local page lets the HTTPS Agent Kernel app talk to the desktop bridge without a hosted relay.</p>
+    <p><button id="openApp" type="button">Open Agent Kernel</button></p>
+    <p>Status: <span id="status">waiting</span></p>
+    <pre id="log"></pre>
+  </main>
+  <script>
+    const appUrl = "{escaped_app_url}";
+    const appOrigin = "{escaped_app_origin}";
+    let appWindow = null;
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    function log(line) {{
+      logEl.textContent = `${{new Date().toLocaleTimeString()}} ${{line}}\\n${{logEl.textContent}}`;
+    }}
+    function sendReady() {{
+      if (!appWindow || appWindow.closed) return;
+      appWindow.postMessage({{
+        type: 'agent-kernel-computer-broker-ready',
+        bridgeUrl: window.location.origin,
+      }}, appOrigin);
+    }}
+    document.getElementById('openApp').addEventListener('click', () => {{
+      appWindow = window.open(appUrl, 'agent-kernel-lite');
+      statusEl.textContent = appWindow ? 'app opened' : 'popup blocked';
+      log(appWindow ? 'Opened Agent Kernel app.' : 'Popup blocked. Allow popups for this local pairing page.');
+      sendReady();
+    }});
+    window.addEventListener('message', async (event) => {{
+      if (event.origin !== appOrigin) return;
+      const message = event.data || {{}};
+      if (message.type === 'agent-kernel-computer-broker-hello') {{
+        appWindow = event.source;
+        statusEl.textContent = 'connected';
+        log('Agent Kernel app connected to local broker.');
+        sendReady();
+        return;
+      }}
+      if (message.type !== 'agent-kernel-computer-broker-request') return;
+      const requestId = message.requestId;
+      try {{
+        const response = await fetch(message.path, {{
+          method: message.method || 'GET',
+          headers: message.body ? {{ 'Content-Type': 'application/json' }} : undefined,
+          body: message.body ? JSON.stringify(message.body) : undefined,
+          cache: 'no-store',
+        }});
+        let payload = null;
+        try {{ payload = await response.json(); }} catch (_) {{ payload = {{ status: response.statusText || 'empty' }}; }}
+        event.source.postMessage({{
+          type: 'agent-kernel-computer-broker-response',
+          requestId,
+          ok: response.ok,
+          status: response.status,
+          payload,
+        }}, event.origin);
+      }} catch (error) {{
+        event.source.postMessage({{
+          type: 'agent-kernel-computer-broker-response',
+          requestId,
+          ok: false,
+          status: 0,
+          error: error.message || String(error),
+        }}, event.origin);
+      }}
+    }});
+    window.setInterval(sendReady, 1000);
+  </script>
+</body>
+</html>
+"""
+        raw = page.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(raw)
 
     def handle_pairing_start(self, origin: str) -> None:
         self.state.cleanup_pairing_requests()
@@ -1038,6 +1173,10 @@ def main() -> None:
     if state.host not in {"127.0.0.1", "localhost", "::1"}:
         print("Warning: bridge is reachable beyond loopback. Use trusted Wi-Fi and approve pairings only from your own devices.", flush=True)
     print(f"Allowed workspace roots: {', '.join(str(item) for item in state.allowed_workspaces)}", flush=True)
+    if state.host == "0.0.0.0":
+        print("Phone pairing page: http://<computer-lan-ip>:45731/pair", flush=True)
+    else:
+        print(f"Pairing page: http://{state.host}:{state.port}/pair", flush=True)
     print("Keep this terminal open while using the Computer Use extension.", flush=True)
     server.serve_forever()
 
