@@ -45,6 +45,7 @@ except ImportError:
 PROTOCOL = "agent-kernel-computer-bridge/v1"
 LEGACY_PROTOCOL = "agent-kernel-codex-bridge/v1"
 MAX_JSON_BODY_BYTES = 128 * 1024
+MOBILE_PAGE_FILE = Path(__file__).resolve().parents[1] / "web" / "computer-use-mobile.html"
 DEFAULT_ALLOWED_ORIGINS = {
     "https://peytontolbert.com",
     "http://localhost:8797",
@@ -230,6 +231,7 @@ class BridgeState:
         self.config_dir = Path(args.config_dir).expanduser()
         self.private_key = load_or_create_private_key(self.config_dir / "bridge-device-key.pem")
         self.grants_path = self.config_dir / "pairing-grants.json"
+        self.session_index_path = self.config_dir / "computer-use-sessions.json"
         self.allowed_workspaces = [Path(item).expanduser().resolve() for item in args.workspace]
         if not self.allowed_workspaces:
             self.allowed_workspaces = [Path.cwd().resolve()]
@@ -255,6 +257,7 @@ class BridgeState:
             raise ValueError(f"unsupported sandbox: {self.sandbox}")
         if self.approval_policy not in ALLOWED_APPROVAL_POLICIES:
             raise ValueError(f"unsupported approval policy: {self.approval_policy}")
+        self.restore_session_index()
 
     def health_payload(self) -> dict[str, Any]:
         providers = self.provider_catalog()
@@ -365,6 +368,8 @@ class BridgeState:
             }
         elif message_type in {"computer.session.cancel", "codex.session.cancel"}:
             result = self.cancel_codex_session(payload)
+        elif message_type in {"computer.session.close", "codex.session.close"}:
+            result = self.close_codex_session(payload)
         elif message_type in {"computer.diff.read", "codex.diff.read"}:
             result = self.read_diff(payload)
         elif message_type in {"computer.grant.revoke", "codex.grant.revoke"}:
@@ -412,7 +417,7 @@ class BridgeState:
                 "name": "Codex",
                 "available": bool(shutil.which(str(self.provider_bins["codex"])) or Path(str(self.provider_bins["codex"])).exists()),
                 "binary": str(self.provider_bins["codex"]),
-                "capabilities": ["session.start", "session.send", "session.status", "session.cancel", "diff.read"],
+                "capabilities": ["session.start", "session.send", "session.status", "session.cancel", "session.close", "diff.read"],
             },
             {
                 "id": "claude_code",
@@ -534,6 +539,106 @@ class BridgeState:
             session_ids = list(self.sessions.keys())
         return [self.session_snapshot(session_id, 0) for session_id in session_ids]
 
+    def restore_session_index(self) -> None:
+        if not self.session_index_path.exists():
+            return
+        try:
+            payload = json.loads(self.session_index_path.read_text())
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        raw_sessions = payload.get("sessions")
+        if not isinstance(raw_sessions, list):
+            return
+        restored: dict[str, dict[str, Any]] = {}
+        for item in raw_sessions[-100:]:
+            if not isinstance(item, dict):
+                continue
+            session_id = str(item.get("session_id") or "")
+            workspace_raw = str(item.get("workspace") or "")
+            codex_session_id = str(item.get("codex_session_id") or "")
+            if not session_id or not workspace_raw:
+                continue
+            try:
+                workspace = self.workspace_allowed(workspace_raw)
+            except Exception:
+                continue
+            events = item.get("events") if isinstance(item.get("events"), list) else []
+            if not codex_session_id:
+                for event in events:
+                    if isinstance(event, dict) and isinstance(event.get("parsed"), dict):
+                        codex_session_id = self.extract_codex_thread_id(event["parsed"])
+                        if codex_session_id:
+                            break
+            status = str(item.get("status") or "completed")
+            if status == "running":
+                status = "completed"
+            restored[session_id] = {
+                "session_id": session_id,
+                "action_id": str(item.get("action_id") or ""),
+                "provider": "codex",
+                "model": str(item.get("model") or ""),
+                "workspace": workspace,
+                "status": status,
+                "started_at": float(item.get("started_at") or time.time()),
+                "completed_at": item.get("completed_at"),
+                "exit_code": item.get("exit_code"),
+                "process": None,
+                "events": events,
+                "summary": str(item.get("summary") or ""),
+                "error": str(item.get("error") or ""),
+                "codex_session_id": codex_session_id,
+                "command": ["codex", "exec", "..."],
+                "restored": True,
+            }
+        with self.sessions_lock:
+            self.sessions.update(restored)
+
+    def persist_session_index(self) -> None:
+        with self.sessions_lock:
+            sessions = [self.serializable_session(session) for session in self.sessions.values()]
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.session_index_path.write_text(json.dumps({
+            "version": 1,
+            "updated_at": time.time(),
+            "sessions": sessions[-100:],
+        }, indent=2, sort_keys=True))
+        try:
+            self.session_index_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+
+    @staticmethod
+    def serializable_session(session: dict[str, Any]) -> dict[str, Any]:
+        events = []
+        for event in list(session.get("events") or [])[-80:]:
+            if not isinstance(event, dict):
+                continue
+            events.append({
+                "index": event.get("index"),
+                "stream": event.get("stream"),
+                "time": event.get("time"),
+                "text": str(event.get("text") or "")[-8000:],
+                "parsed": event.get("parsed") if isinstance(event.get("parsed"), dict) else None,
+            })
+        return {
+            "session_id": str(session.get("session_id") or ""),
+            "action_id": str(session.get("action_id") or ""),
+            "provider": "codex",
+            "model": str(session.get("model") or ""),
+            "workspace": str(session.get("workspace") or ""),
+            "status": "completed" if session.get("status") == "running" else str(session.get("status") or "completed"),
+            "started_at": float(session.get("started_at") or time.time()),
+            "completed_at": session.get("completed_at"),
+            "exit_code": session.get("exit_code"),
+            "event_count": len(session.get("events") or []),
+            "events": events,
+            "summary": str(session.get("summary") or "")[-4000:],
+            "error": str(session.get("error") or "")[-4000:],
+            "codex_session_id": str(session.get("codex_session_id") or ""),
+        }
+
     def derive_key(self, grant: dict[str, Any]) -> bytes:
         browser_public = public_key_from_jwk(grant["browser_public_jwk"])
         shared = self.private_key.exchange(ec.ECDH(), browser_public)
@@ -603,12 +708,14 @@ class BridgeState:
         return command
 
     def append_session_event(self, session_id: str, event: dict[str, Any]) -> None:
+        should_persist = False
         with self.sessions_lock:
             session = self.sessions.get(session_id)
             if not session:
                 return
             session["events"].append(event)
             session["events"] = session["events"][-500:]
+            should_persist = True
             parsed = event.get("parsed")
             if isinstance(parsed, dict):
                 thread_id = self.extract_codex_thread_id(parsed)
@@ -617,6 +724,8 @@ class BridgeState:
                 text = self.extract_codex_event_text(parsed)
                 if text:
                     session["summary"] = text[-4000:]
+        if should_persist:
+            self.persist_session_index()
 
     def session_snapshot(self, session_id: str, since: int = 0) -> dict[str, Any]:
         with self.sessions_lock:
@@ -681,6 +790,7 @@ class BridgeState:
             else:
                 session["status"] = "failed"
                 session["error"] = self.summarize_events(session, prefer_stderr=True)
+        self.persist_session_index()
 
     def summarize_events(self, session: dict[str, Any], prefer_stderr: bool = False) -> str:
         events = session.get("events", [])
@@ -771,19 +881,25 @@ class BridgeState:
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
         )
+        previous: dict[str, Any] = {}
         with self.sessions_lock:
+            previous = dict(self.sessions.get(session_id) or {})
             self.sessions[session_id] = {
                 "session_id": session_id,
-                "action_id": action_id,
+                "action_id": action_id or str(previous.get("action_id") or ""),
                 "provider": "codex",
-                "model": model,
+                "model": model or str(previous.get("model") or ""),
                 "workspace": workspace,
                 "status": "running",
                 "started_at": time.time(),
                 "process": process,
                 "events": list(initial_events or []),
                 "command": ["codex", *command[1:-1], "..."],
+                "codex_session_id": str(previous.get("codex_session_id") or ""),
+                "summary": str(previous.get("summary") or ""),
+                "error": "",
             }
+        self.persist_session_index()
         for stream_name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
             if pipe is not None:
                 threading.Thread(target=self.read_stream, args=(session_id, stream_name, pipe), daemon=True).start()
@@ -811,6 +927,7 @@ class BridgeState:
                 }],
                 "command": ["codex", "exec", "..."],
             }
+        self.persist_session_index()
         return self.session_snapshot(session_id)
 
     def start_codex_session(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -900,7 +1017,29 @@ class BridgeState:
             if session.get("status") == "running" and process and process.poll() is None:
                 session["status"] = "cancelled"
                 process.terminate()
+        self.persist_session_index()
         return self.session_snapshot(session_id)
+
+    def close_codex_session(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(payload.get("session_id") or "")
+        with self.sessions_lock:
+            session = self.sessions.pop(session_id, None)
+            if not session:
+                return {"status": "missing", "session_id": session_id}
+            process = session.get("process")
+            was_running = session.get("status") == "running" and process and process.poll() is None
+            if was_running:
+                process.terminate()
+        self.persist_session_index()
+        return {
+            "status": "cancelled" if was_running else "closed",
+            "session_id": session_id,
+            "codex_session_id": session.get("codex_session_id") or "",
+            "workspace": str(session.get("workspace") or ""),
+            "model": session.get("model") or "",
+            "event_count": len(session.get("events") or []),
+            "summary": "Codex session terminated." if was_running else session.get("summary") or "",
+        }
 
     def read_diff(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = str(payload.get("session_id") or "")
@@ -957,7 +1096,11 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     textarea { min-height: 88px; resize: vertical; background: #182128; color: #eef4f2; }
     input, select { background: #182128; color: #eef4f2; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .session { border: 1px solid #2c3a43; border-radius: 8px; padding: 10px; margin: 10px 0; background: #151d23; }
+    .session { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; border: 1px solid #2c3a43; border-radius: 8px; padding: 10px; margin: 10px 0; background: #151d23; }
+    .session > button { margin-top: 0; }
+    .session > button.danger { width: auto; min-width: 72px; }
+    .sessionOpen { margin-top: 0; text-align: left; background: transparent; color: #eef4f2; border: 0; padding: 0; }
+    .danger { background: #5f262b !important; color: #ffe5e8 !important; }
     .session strong { display: block; margin-bottom: 4px; }
     .hidden { display: none !important; }
     .messages { display: flex; flex-direction: column; gap: 10px; padding-bottom: 150px; }
@@ -1000,7 +1143,10 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       <button id="startTerminalButton" type="button">Start Terminal</button>
     </section>
     <section id="chatView" class="hidden">
-      <button id="backButton" class="secondary" type="button">Back</button>
+      <div class="row">
+        <button id="backButton" class="secondary" type="button">Back</button>
+        <button id="closeSessionButton" class="danger" type="button">Close</button>
+      </div>
       <h2 id="chatTitle">Session</h2>
       <div class="messages" id="messages"></div>
     </section>
@@ -1198,7 +1344,8 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       if (!session) return;
       const wasNearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 80;
       statusEl.textContent = `Approved. ${session.status || 'session'}`;
-      chatTitle.textContent = `${session.workspace || 'Workspace'} - ${session.status || ''}`;
+      const codexId = session.codex_session_id ? ` - ${session.codex_session_id.slice(0, 8)}` : '';
+      chatTitle.textContent = `${session.workspace || 'Workspace'} - ${session.status || ''}${codexId}`;
       sendButton.disabled = session.status === 'running';
       messages.innerHTML = '';
       for (const event of session.events || []) {
@@ -1220,6 +1367,22 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
         statusEl.textContent = error.message || 'Session is no longer available.';
         setMode('list');
         refresh();
+      }
+    }
+    async function closeSession(sessionId = activeSessionId) {
+      if (!sessionId) return;
+      statusEl.textContent = 'Closing session...';
+      try {
+        await api('/mobile/api/close', { session_id: sessionId });
+        if (activeSessionId === sessionId) {
+          activeSessionId = '';
+          localStorage.removeItem('agent-kernel-mobile-session');
+          messages.innerHTML = '';
+          setMode('list');
+        }
+        await refresh();
+      } catch (error) {
+        statusEl.textContent = error.message || 'Could not close session.';
       }
     }
     async function refresh() {
@@ -1244,15 +1407,24 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
         sessionList.appendChild(empty);
       }
       for (const session of sessions) {
-        const card = document.createElement('button');
-        card.type = 'button';
+        const card = document.createElement('div');
         card.className = 'session';
+        const openButton = document.createElement('button');
+        openButton.type = 'button';
+        openButton.className = 'sessionOpen';
         const title = document.createElement('strong');
         title.textContent = session.workspace || 'Workspace';
         const detail = document.createElement('span');
-        detail.textContent = `${session.status || 'session'} - ${session.model || 'default model'}`;
-        card.append(title, detail);
-        card.addEventListener('click', () => openSession(session.session_id));
+        const codexId = session.codex_session_id ? ` - ${session.codex_session_id.slice(0, 8)}` : '';
+        detail.textContent = `${session.status || 'session'} - ${session.model || 'default model'}${codexId}`;
+        openButton.append(title, detail);
+        openButton.addEventListener('click', () => openSession(session.session_id));
+        const closeButton = document.createElement('button');
+        closeButton.type = 'button';
+        closeButton.className = 'danger';
+        closeButton.textContent = 'Close';
+        closeButton.addEventListener('click', () => closeSession(session.session_id));
+        card.append(openButton, closeButton);
         sessionList.appendChild(card);
       }
       statusEl.textContent = `Approved. ${sessions.length} session${sessions.length === 1 ? '' : 's'}.`;
@@ -1302,6 +1474,7 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       setMode('list');
       refresh();
     });
+    document.getElementById('closeSessionButton').addEventListener('click', () => closeSession(activeSessionId));
     document.getElementById('messageForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const prompt = promptInput.value.trim();
@@ -1414,12 +1587,23 @@ class Handler(BaseHTTPRequestHandler):
             }))
         elif path == "/mobile/api/status":
             json_response(self, 200, self.state.session_snapshot(str(body.get("session_id") or ""), int(body.get("since") or 0)))
+        elif path == "/mobile/api/close":
+            json_response(self, 200, self.state.close_codex_session({
+                "session_id": body.get("session_id") or "",
+                "provider": body.get("provider") or "codex",
+            }))
         else:
             json_response(self, 404, {"status": "error", "error": "not found"})
 
     def handle_mobile_page(self) -> None:
         workspaces = [str(item) for item in self.state.allowed_workspaces]
-        page = MOBILE_PAGE_HTML.replace("__TOKEN__", json.dumps("")).replace("__WORKSPACES__", json.dumps(workspaces))
+        page_template = MOBILE_PAGE_HTML
+        try:
+            if MOBILE_PAGE_FILE.exists():
+                page_template = MOBILE_PAGE_FILE.read_text(encoding="utf-8")
+        except Exception:
+            page_template = MOBILE_PAGE_HTML
+        page = page_template.replace("__TOKEN__", json.dumps("")).replace("__WORKSPACES__", json.dumps(workspaces))
         html_response(self, 200, page)
 
     def handle_pair_page(self) -> None:
@@ -1657,6 +1841,8 @@ class Handler(BaseHTTPRequestHandler):
             }
         elif message_type in {"computer.session.cancel", "codex.session.cancel"}:
             result = self.state.cancel_codex_session(payload)
+        elif message_type in {"computer.session.close", "codex.session.close"}:
+            result = self.state.close_codex_session(payload)
         elif message_type in {"computer.diff.read", "codex.diff.read"}:
             result = self.state.read_diff(payload)
         elif message_type in {"computer.grant.revoke", "codex.grant.revoke"}:
