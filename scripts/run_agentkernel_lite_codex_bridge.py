@@ -899,7 +899,8 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     <button id="approveButton" type="button">Approve This Phone</button>
   </header>
   <main>
-    <label>Workspace <select id="workspaceSelect"></select></label>
+    <label>Workspace root <select id="workspaceRootSelect"></select></label>
+    <label>Repo or workspace path <input id="workspaceInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <label>Session <select id="sessionSelect"></select></label>
     <div class="row">
       <button id="refreshButton" class="secondary" type="button">Refresh</button>
@@ -918,7 +919,8 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     let grantId = localStorage.getItem('agent-kernel-mobile-grant') || '';
     let activeSessionId = localStorage.getItem('agent-kernel-mobile-session') || '';
     const statusEl = document.getElementById('status');
-    const workspaceSelect = document.getElementById('workspaceSelect');
+    const workspaceRootSelect = document.getElementById('workspaceRootSelect');
+    const workspaceInput = document.getElementById('workspaceInput');
     const sessionSelect = document.getElementById('sessionSelect');
     const sessionList = document.getElementById('sessionList');
     const messages = document.getElementById('messages');
@@ -927,8 +929,17 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       const option = document.createElement('option');
       option.value = workspace;
       option.textContent = workspace;
-      workspaceSelect.appendChild(option);
+      workspaceRootSelect.appendChild(option);
     }
+    workspaceInput.value = localStorage.getItem('agent-kernel-mobile-workspace') || WORKSPACES[0] || '';
+    workspaceRootSelect.value = WORKSPACES.find((root) => workspaceInput.value === root || workspaceInput.value.startsWith(`${root}/`)) || WORKSPACES[0] || '';
+    workspaceRootSelect.addEventListener('change', () => {
+      workspaceInput.value = workspaceRootSelect.value;
+      localStorage.setItem('agent-kernel-mobile-workspace', workspaceInput.value);
+    });
+    workspaceInput.addEventListener('change', () => {
+      localStorage.setItem('agent-kernel-mobile-workspace', workspaceInput.value.trim());
+    });
     async function api(path, body = {}) {
       const response = await fetch(path, {
         method: 'POST',
@@ -1016,7 +1027,9 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       const prompt = promptInput.value.trim();
       if (!prompt) return;
       promptInput.value = '';
-      const body = { workspace: workspaceSelect.value, provider: 'codex', prompt };
+      const workspace = workspaceInput.value.trim() || workspaceRootSelect.value;
+      localStorage.setItem('agent-kernel-mobile-workspace', workspace);
+      const body = { workspace, provider: 'codex', prompt };
       const result = activeSessionId
         ? await api('/mobile/api/send', { ...body, session_id: activeSessionId })
         : await api('/mobile/api/start', body);
