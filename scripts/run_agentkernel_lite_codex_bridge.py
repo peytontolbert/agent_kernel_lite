@@ -952,6 +952,7 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     .muted { color: #aebbc2; font-size: 13px; }
     button, input, select, textarea { width: 100%; font: inherit; border-radius: 8px; border: 1px solid #33434c; padding: 10px; margin-top: 8px; }
     button { background: #76d69d; color: #08120c; font-weight: 700; border: 0; }
+    button:disabled { opacity: 0.55; }
     button.secondary { background: #24313a; color: #eef4f2; }
     textarea { min-height: 88px; resize: vertical; background: #182128; color: #eef4f2; }
     input, select { background: #182128; color: #eef4f2; }
@@ -959,8 +960,20 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     .session { border: 1px solid #2c3a43; border-radius: 8px; padding: 10px; margin: 10px 0; background: #151d23; }
     .session strong { display: block; margin-bottom: 4px; }
     .hidden { display: none !important; }
-    .messages { padding-bottom: 130px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b1014; border: 1px solid #26323a; padding: 10px; border-radius: 8px; }
+    .messages { display: flex; flex-direction: column; gap: 10px; padding-bottom: 150px; }
+    .message { border: 1px solid #2c3a43; border-radius: 10px; padding: 10px; background: #151d23; }
+    .message.user { margin-left: 24px; background: #173422; border-color: #28593a; }
+    .message.agent { margin-right: 24px; background: #111c24; border-color: #28485b; }
+    .message.action { background: #11171c; border-style: dashed; }
+    .message.error { background: #2a1719; border-color: #7a363c; }
+    .message.system { background: #151a20; }
+    .meta { color: #aebbc2; font-size: 12px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+    .content p { margin: 0 0 8px; }
+    .content p:last-child { margin-bottom: 0; }
+    pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b1014; border: 1px solid #26323a; padding: 10px; border-radius: 8px; margin: 8px 0 0; }
+    .statusPill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #22313a; color: #c7d6dd; font-size: 12px; margin-left: 6px; }
     form { position: fixed; left: 0; right: 0; bottom: 0; background: #101418; border-top: 1px solid #26323a; }
   </style>
 </head>
@@ -1014,6 +1027,7 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     const sessionList = document.getElementById('sessionList');
     const messages = document.getElementById('messages');
     const promptInput = document.getElementById('promptInput');
+    const sendButton = document.getElementById('sendButton');
     const chatTitle = document.getElementById('chatTitle');
     for (const workspace of WORKSPACES) {
       const option = document.createElement('option');
@@ -1064,37 +1078,149 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: TOKEN, grant_id: grantId, ...body }),
       });
-      const payload = await response.json();
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (_error) {
+        payload = { error: `Bridge returned HTTP ${response.status}` };
+      }
       if (!response.ok) throw new Error(payload.error || payload.status || response.status);
       return payload;
     }
-    function eventText(event) {
-      if (event.text) return event.text;
-      if (event.parsed?.msg?.text) return event.parsed.msg.text;
-      if (event.parsed?.msg?.message) return event.parsed.msg.message;
-      if (event.parsed?.item?.text) return event.parsed.item.text;
-      if (event.parsed?.item?.message) return event.parsed.item.message;
-      return '';
+    function itemFromEvent(event) {
+      return event?.parsed?.item || event?.parsed?.msg?.item || null;
+    }
+    function statusText(value) {
+      return String(value || '').replace(/_/g, ' ');
+    }
+    function compactJson(value) {
+      if (value == null || value === '') return '';
+      if (typeof value === 'string') return value;
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch (_error) {
+        return String(value);
+      }
+    }
+    function messageModel(event) {
+      const parsed = event?.parsed || {};
+      const item = itemFromEvent(event);
+      const stream = event?.stream || '';
+      if (stream === 'user') return { role: 'user', label: 'You', text: event.text || '' };
+      if (stream === 'system') return { role: 'system', label: 'System', text: event.text || '' };
+      if (stream === 'stderr') return { role: 'error', label: 'Codex error', text: event.text || '' };
+      if (item) {
+        const type = item.type || '';
+        if (type === 'agent_message') return { role: 'agent', label: 'Codex', text: item.text || item.message || '' };
+        if (type === 'reasoning') return { role: 'action', label: 'Reasoning', text: item.text || '' };
+        if (type === 'command_execution') {
+          const status = statusText(item.status);
+          const output = item.aggregated_output ? `\n\n${item.aggregated_output}` : '';
+          return { role: 'action', label: 'Command', pill: status, text: `${item.command || 'command'}${output}` };
+        }
+        if (type === 'file_change') {
+          const changes = (item.changes || []).map((change) => `${statusText(change.kind)} ${change.path}`).join('\n');
+          return { role: 'action', label: 'File changes', pill: statusText(item.status), text: changes || statusText(item.status) };
+        }
+        if (type === 'mcp_tool_call') {
+          const detail = item.error?.message || compactJson(item.result?.structured_content || item.result?.content || item.arguments);
+          return { role: item.error ? 'error' : 'action', label: `${item.server || 'tool'} / ${item.tool || 'call'}`, pill: statusText(item.status), text: detail };
+        }
+        if (type === 'collab_tool_call') return { role: 'action', label: 'Agent action', pill: statusText(item.status), text: compactJson(item) };
+        if (type === 'web_search') return { role: 'action', label: 'Web search', text: item.query || compactJson(item.action) };
+        if (type === 'todo_list') {
+          const todos = (item.items || []).map((todo) => `${todo.completed ? '[x]' : '[ ]'} ${todo.text}`).join('\n');
+          return { role: 'action', label: 'Plan', text: todos };
+        }
+        if (type === 'error') return { role: 'error', label: 'Codex error', text: item.message || compactJson(item) };
+      }
+      const type = parsed.type || parsed.msg?.type || '';
+      if (type === 'turn.started') return { role: 'action', label: 'Codex', pill: 'running', text: 'Started working.' };
+      if (type === 'turn.completed') {
+        const usage = parsed.usage || parsed.msg?.usage || {};
+        const parts = [];
+        if (usage.input_tokens != null) parts.push(`${usage.input_tokens} input`);
+        if (usage.output_tokens != null) parts.push(`${usage.output_tokens} output`);
+        if (usage.cached_input_tokens) parts.push(`${usage.cached_input_tokens} cached`);
+        return { role: 'action', label: 'Turn completed', text: parts.length ? parts.join(' tokens, ') + ' tokens' : 'Completed.' };
+      }
+      if (type === 'turn.failed' || type === 'error') {
+        const error = parsed.error || parsed.msg?.error || {};
+        return { role: 'error', label: 'Codex error', text: error.message || parsed.message || parsed.msg?.message || event.text || '' };
+      }
+      if (parsed.last_agent_message) return { role: 'agent', label: 'Codex', text: parsed.last_agent_message };
+      if (parsed.msg?.last_agent_message) return { role: 'agent', label: 'Codex', text: parsed.msg.last_agent_message };
+      if (event.text && !String(event.text).startsWith('{')) return { role: 'system', label: stream || 'Bridge', text: event.text };
+      return null;
+    }
+    function appendFormattedText(parent, text) {
+      const raw = String(text || '');
+      const parts = raw.split(/```/);
+      for (let index = 0; index < parts.length; index += 1) {
+        const value = parts[index];
+        if (!value) continue;
+        if (index % 2 === 1) {
+          const pre = document.createElement('pre');
+          pre.textContent = value.replace(/^[a-zA-Z0-9_-]+\n/, '');
+          parent.appendChild(pre);
+          continue;
+        }
+        const paragraphs = value.split(/\n{2,}/);
+        for (const paragraph of paragraphs) {
+          if (!paragraph.trim()) continue;
+          const p = document.createElement('p');
+          p.textContent = paragraph.trim();
+          parent.appendChild(p);
+        }
+      }
+    }
+    function renderEvent(event) {
+      const model = messageModel(event);
+      if (!model || !model.text) return null;
+      const wrapper = document.createElement('article');
+      wrapper.className = `message ${model.role}`;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = model.label;
+      if (model.pill) {
+        const pill = document.createElement('span');
+        pill.className = 'statusPill';
+        pill.textContent = model.pill;
+        meta.appendChild(pill);
+      }
+      const content = document.createElement('div');
+      content.className = 'content';
+      appendFormattedText(content, model.text);
+      wrapper.append(meta, content);
+      return wrapper;
     }
     function renderSession(session) {
       if (!session) return;
+      const wasNearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 80;
       statusEl.textContent = `Approved. ${session.status || 'session'}`;
       chatTitle.textContent = `${session.workspace || 'Workspace'} - ${session.status || ''}`;
+      sendButton.disabled = session.status === 'running';
       messages.innerHTML = '';
       for (const event of session.events || []) {
-        const text = eventText(event);
-        if (!text) continue;
-        const pre = document.createElement('pre');
-        pre.textContent = text;
-        messages.appendChild(pre);
+        const rendered = renderEvent(event);
+        if (rendered) messages.appendChild(rendered);
       }
       setMode('chat');
+      if (wasNearBottom) window.setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 0);
     }
     async function openSession(sessionId) {
       activeSessionId = sessionId;
       localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
-      const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
-      renderSession(detail);
+      try {
+        const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
+        renderSession(detail);
+      } catch (error) {
+        activeSessionId = '';
+        localStorage.removeItem('agent-kernel-mobile-session');
+        statusEl.textContent = error.message || 'Session is no longer available.';
+        setMode('list');
+        refresh();
+      }
     }
     async function refresh() {
       approveButton.classList.toggle('hidden', Boolean(grantId));
@@ -1131,8 +1257,15 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       }
       statusEl.textContent = `Approved. ${sessions.length} session${sessions.length === 1 ? '' : 's'}.`;
       if (mode === 'chat' && activeSessionId) {
-        const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
-        renderSession(detail);
+        try {
+          const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
+          renderSession(detail);
+        } catch (error) {
+          activeSessionId = '';
+          localStorage.removeItem('agent-kernel-mobile-session');
+          statusEl.textContent = error.message || 'Session is no longer available.';
+          setMode('list');
+        }
       }
     }
     approveButton.addEventListener('click', async () => {
@@ -1152,11 +1285,16 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     document.getElementById('startTerminalButton').addEventListener('click', async () => {
       const workspace = workspaceInput.value.trim() || workspaceRootSelect.value;
       localStorage.setItem('agent-kernel-mobile-workspace', workspace);
-      const result = await api('/mobile/api/start', { workspace, provider: providerSelect.value || 'codex' });
-      activeSessionId = result.session_id;
-      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
-      renderSession(result);
-      window.setTimeout(refresh, 500);
+      statusEl.textContent = 'Starting terminal...';
+      try {
+        const result = await api('/mobile/api/start', { workspace, provider: providerSelect.value || 'codex' });
+        activeSessionId = result.session_id;
+        localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+        renderSession(result);
+        window.setTimeout(refresh, 500);
+      } catch (error) {
+        statusEl.textContent = error.message || 'Could not start terminal.';
+      }
     });
     document.getElementById('backButton').addEventListener('click', () => {
       activeSessionId = '';
@@ -1167,18 +1305,28 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     document.getElementById('messageForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const prompt = promptInput.value.trim();
-      if (!prompt) return;
+      if (!prompt || sendButton.disabled) return;
       promptInput.value = '';
+      sendButton.disabled = true;
+      let resultStatus = '';
       const workspace = workspaceInput.value.trim() || workspaceRootSelect.value;
       localStorage.setItem('agent-kernel-mobile-workspace', workspace);
       const body = { workspace, provider: providerSelect.value || 'codex', prompt };
-      const result = activeSessionId
-        ? await api('/mobile/api/send', { ...body, session_id: activeSessionId })
-        : await api('/mobile/api/start', body);
-      activeSessionId = result.session_id;
-      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
-      renderSession(result);
-      window.setTimeout(refresh, 1200);
+      try {
+        const result = activeSessionId
+          ? await api('/mobile/api/send', { ...body, session_id: activeSessionId })
+          : await api('/mobile/api/start', body);
+        resultStatus = result.status || '';
+        activeSessionId = result.session_id;
+        localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+        renderSession(result);
+        window.setTimeout(refresh, 1200);
+      } catch (error) {
+        promptInput.value = prompt;
+        statusEl.textContent = error.message || 'Message failed.';
+      } finally {
+        sendButton.disabled = resultStatus === 'running';
+      }
     });
     window.setInterval(() => { if (grantId) refresh().catch(() => {}); }, 3000);
     setMode('list');
