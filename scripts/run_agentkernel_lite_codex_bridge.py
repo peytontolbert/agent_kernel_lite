@@ -753,8 +753,16 @@ class BridgeState:
             return str(parsed.get("message") or "").strip()
         return ""
 
-    def start_codex_process(self, workspace: Path, command: list[str], action_id: str = "", model: str = "") -> dict[str, Any]:
-        session_id = f"computer_{secrets.token_urlsafe(12)}"
+    def start_codex_process(
+        self,
+        workspace: Path,
+        command: list[str],
+        action_id: str = "",
+        model: str = "",
+        session_id: str = "",
+        initial_events: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        session_id = session_id or f"computer_{secrets.token_urlsafe(12)}"
         process = subprocess.Popen(
             command,
             cwd=str(workspace),
@@ -773,13 +781,36 @@ class BridgeState:
                 "status": "running",
                 "started_at": time.time(),
                 "process": process,
-                "events": [],
+                "events": list(initial_events or []),
                 "command": ["codex", *command[1:-1], "..."],
             }
         for stream_name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
             if pipe is not None:
                 threading.Thread(target=self.read_stream, args=(session_id, stream_name, pipe), daemon=True).start()
         threading.Thread(target=self.wait_for_process, args=(session_id, process), daemon=True).start()
+        return self.session_snapshot(session_id)
+
+    def create_ready_codex_session(self, workspace: Path, action_id: str = "", model: str = "") -> dict[str, Any]:
+        session_id = f"computer_{secrets.token_urlsafe(12)}"
+        with self.sessions_lock:
+            self.sessions[session_id] = {
+                "session_id": session_id,
+                "action_id": action_id,
+                "provider": "codex",
+                "model": model,
+                "workspace": workspace,
+                "status": "ready",
+                "started_at": time.time(),
+                "process": None,
+                "events": [{
+                    "index": 0,
+                    "stream": "system",
+                    "time": time.time(),
+                    "text": f"Codex terminal ready in {workspace}.",
+                    "parsed": None,
+                }],
+                "command": ["codex", "exec", "..."],
+            }
         return self.session_snapshot(session_id)
 
     def start_codex_session(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -790,9 +821,21 @@ class BridgeState:
         prompt = str(payload.get("prompt") or "").strip()
         model = str(payload.get("model") or "").strip()
         if not prompt:
-            raise ValueError("prompt is required")
+            return self.create_ready_codex_session(workspace, str(payload.get("action_id") or ""), model)
         command = [*self.codex_base_command(workspace, model), prompt]
-        return self.start_codex_process(workspace, command, str(payload.get("action_id") or ""), model)
+        return self.start_codex_process(
+            workspace,
+            command,
+            str(payload.get("action_id") or ""),
+            model,
+            initial_events=[{
+                "index": 0,
+                "stream": "user",
+                "time": time.time(),
+                "text": prompt,
+                "parsed": None,
+            }],
+        )
 
     def send_codex_followup(self, payload: dict[str, Any]) -> dict[str, Any]:
         provider = self.normalize_provider(str(payload.get("provider") or "codex"))
@@ -813,13 +856,39 @@ class BridgeState:
             workspace = Path(parent["workspace"])
             model = str(payload.get("model") or parent.get("model") or "").strip()
             codex_session_id = str(parent.get("codex_session_id") or "")
+            is_ready = parent.get("status") == "ready"
+            existing_events = list(parent.get("events") or [])
+        user_event = {
+            "index": len(existing_events),
+            "stream": "user",
+            "time": time.time(),
+            "text": prompt,
+            "parsed": None,
+        }
+        if is_ready:
+            command = [*self.codex_base_command(workspace, model), prompt]
+            return self.start_codex_process(
+                workspace,
+                command,
+                str(payload.get("action_id") or ""),
+                model,
+                session_id=parent_id,
+                initial_events=[*existing_events, user_event],
+            )
         command = [*self.codex_base_command(workspace, model), "resume"]
         if codex_session_id:
             command.append(codex_session_id)
         else:
             command.append("--last")
         command.append(prompt)
-        return self.start_codex_process(workspace, command, str(payload.get("action_id") or ""), model)
+        return self.start_codex_process(
+            workspace,
+            command,
+            str(payload.get("action_id") or ""),
+            model,
+            session_id=parent_id,
+            initial_events=[*existing_events, user_event],
+        )
 
     def cancel_codex_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = str(payload.get("session_id") or "")
@@ -877,8 +946,9 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101418; color: #eef4f2; }
     header, main, form { padding: 14px; }
-    header { border-bottom: 1px solid #26323a; }
+    header { border-bottom: 1px solid #26323a; position: sticky; top: 0; background: #101418; z-index: 2; }
     h1 { font-size: 18px; margin: 0 0 4px; }
+    h2 { font-size: 15px; margin: 18px 0 8px; }
     .muted { color: #aebbc2; font-size: 13px; }
     button, input, select, textarea { width: 100%; font: inherit; border-radius: 8px; border: 1px solid #33434c; padding: 10px; margin-top: 8px; }
     button { background: #76d69d; color: #08120c; font-weight: 700; border: 0; }
@@ -887,7 +957,9 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     input, select { background: #182128; color: #eef4f2; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .session { border: 1px solid #2c3a43; border-radius: 8px; padding: 10px; margin: 10px 0; background: #151d23; }
-    .messages { padding: 14px; padding-bottom: 130px; }
+    .session strong { display: block; margin-bottom: 4px; }
+    .hidden { display: none !important; }
+    .messages { padding-bottom: 130px; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b1014; border: 1px solid #26323a; padding: 10px; border-radius: 8px; }
     form { position: fixed; left: 0; right: 0; bottom: 0; background: #101418; border-top: 1px solid #26323a; }
   </style>
@@ -899,32 +971,50 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     <button id="approveButton" type="button">Approve This Phone</button>
   </header>
   <main>
-    <label>Workspace root <select id="workspaceRootSelect"></select></label>
-    <label>Repo or workspace path <input id="workspaceInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-    <label>Session <select id="sessionSelect"></select></label>
-    <div class="row">
-      <button id="refreshButton" class="secondary" type="button">Refresh</button>
-      <button id="newSessionButton" class="secondary" type="button">New Session</button>
-    </div>
-    <div id="sessionList"></div>
-    <div class="messages" id="messages"></div>
+    <section id="listView">
+      <button id="newSessionButton" type="button">New Terminal</button>
+      <h2>Active Sessions</h2>
+      <div id="sessionList"></div>
+    </section>
+    <section id="newView" class="hidden">
+      <button id="cancelNewButton" class="secondary" type="button">Back</button>
+      <h2>New Terminal</h2>
+      <label>Provider
+        <select id="providerSelect"><option value="codex">Codex</option></select>
+      </label>
+      <label>Workspace root <select id="workspaceRootSelect"></select></label>
+      <label>Repo or workspace path <input id="workspaceInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <button id="startTerminalButton" type="button">Start Terminal</button>
+    </section>
+    <section id="chatView" class="hidden">
+      <button id="backButton" class="secondary" type="button">Back</button>
+      <h2 id="chatTitle">Session</h2>
+      <div class="messages" id="messages"></div>
+    </section>
   </main>
-  <form id="messageForm">
+  <form id="messageForm" class="hidden">
     <textarea id="promptInput" placeholder="Message Codex..."></textarea>
-    <button type="submit">Send</button>
+    <button id="sendButton" type="submit">Send</button>
   </form>
   <script>
     const TOKEN = __TOKEN__;
     const WORKSPACES = __WORKSPACES__;
     let grantId = localStorage.getItem('agent-kernel-mobile-grant') || '';
     let activeSessionId = localStorage.getItem('agent-kernel-mobile-session') || '';
+    let mode = 'list';
     const statusEl = document.getElementById('status');
+    const approveButton = document.getElementById('approveButton');
+    const listView = document.getElementById('listView');
+    const newView = document.getElementById('newView');
+    const chatView = document.getElementById('chatView');
+    const messageForm = document.getElementById('messageForm');
+    const providerSelect = document.getElementById('providerSelect');
     const workspaceRootSelect = document.getElementById('workspaceRootSelect');
     const workspaceInput = document.getElementById('workspaceInput');
-    const sessionSelect = document.getElementById('sessionSelect');
     const sessionList = document.getElementById('sessionList');
     const messages = document.getElementById('messages');
     const promptInput = document.getElementById('promptInput');
+    const chatTitle = document.getElementById('chatTitle');
     for (const workspace of WORKSPACES) {
       const option = document.createElement('option');
       option.value = workspace;
@@ -940,6 +1030,20 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     workspaceInput.addEventListener('change', () => {
       localStorage.setItem('agent-kernel-mobile-workspace', workspaceInput.value.trim());
     });
+    function setMode(next) {
+      mode = next;
+      listView.classList.toggle('hidden', next !== 'list');
+      newView.classList.toggle('hidden', next !== 'new');
+      chatView.classList.toggle('hidden', next !== 'chat');
+      messageForm.classList.toggle('hidden', next !== 'chat');
+      promptInput.placeholder = 'Message Codex...';
+      if (next === 'new') {
+        activeSessionId = '';
+        localStorage.removeItem('agent-kernel-mobile-session');
+        messages.innerHTML = '';
+        promptInput.focus();
+      }
+    }
     async function api(path, body = {}) {
       const response = await fetch(path, {
         method: 'POST',
@@ -960,7 +1064,8 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     }
     function renderSession(session) {
       if (!session) return;
-      statusEl.textContent = `Approved. Session ${session.status || ''}`;
+      statusEl.textContent = `Approved. ${session.status || 'session'}`;
+      chatTitle.textContent = `${session.workspace || 'Workspace'} - ${session.status || ''}`;
       messages.innerHTML = '';
       for (const event of session.events || []) {
         const text = eventText(event);
@@ -969,40 +1074,48 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
         pre.textContent = text;
         messages.appendChild(pre);
       }
+      setMode('chat');
+    }
+    async function openSession(sessionId) {
+      activeSessionId = sessionId;
+      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+      const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
+      renderSession(detail);
     }
     async function refresh() {
+      approveButton.classList.toggle('hidden', Boolean(grantId));
       if (!grantId) {
         statusEl.textContent = 'Not approved.';
         return;
       }
       const payload = await api('/mobile/api/sessions');
       const sessions = payload.sessions || [];
-      sessionSelect.innerHTML = '';
       sessionList.innerHTML = '';
+      if (!sessions.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'No sessions yet.';
+        sessionList.appendChild(empty);
+      }
       for (const session of sessions) {
-        const option = document.createElement('option');
-        option.value = session.session_id;
-        option.textContent = `${session.workspace} - ${session.status}`;
-        sessionSelect.appendChild(option);
-        const card = document.createElement('div');
+        const card = document.createElement('button');
+        card.type = 'button';
         card.className = 'session';
-        card.textContent = `${session.workspace} - ${session.status}`;
-        card.addEventListener('click', () => {
-          activeSessionId = session.session_id;
-          localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
-          sessionSelect.value = activeSessionId;
-          renderSession(session);
-        });
+        const title = document.createElement('strong');
+        title.textContent = session.workspace || 'Workspace';
+        const detail = document.createElement('span');
+        detail.textContent = `${session.status || 'session'} - ${session.model || 'default model'}`;
+        card.append(title, detail);
+        card.addEventListener('click', () => openSession(session.session_id));
         sessionList.appendChild(card);
       }
-      if (!activeSessionId && sessions[0]) activeSessionId = sessions[0].session_id;
-      if (activeSessionId) {
-        sessionSelect.value = activeSessionId;
+      statusEl.textContent = `Approved. ${sessions.length} session${sessions.length === 1 ? '' : 's'}.`;
+      if (mode === 'chat' && activeSessionId) {
         const detail = await api('/mobile/api/status', { session_id: activeSessionId, since: 0 });
         renderSession(detail);
       }
     }
-    document.getElementById('approveButton').addEventListener('click', async () => {
+    approveButton.addEventListener('click', async () => {
       statusEl.textContent = 'Waiting for desktop approval...';
       const payload = await api('/mobile/api/approve');
       grantId = payload.grant_id;
@@ -1010,16 +1123,21 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       statusEl.textContent = `Approved. Code ${payload.code}`;
       refresh();
     });
-    document.getElementById('refreshButton').addEventListener('click', refresh);
-    document.getElementById('newSessionButton').addEventListener('click', () => {
+    document.getElementById('newSessionButton').addEventListener('click', () => setMode('new'));
+    document.getElementById('cancelNewButton').addEventListener('click', () => setMode('list'));
+    document.getElementById('startTerminalButton').addEventListener('click', async () => {
+      const workspace = workspaceInput.value.trim() || workspaceRootSelect.value;
+      localStorage.setItem('agent-kernel-mobile-workspace', workspace);
+      const result = await api('/mobile/api/start', { workspace, provider: providerSelect.value || 'codex' });
+      activeSessionId = result.session_id;
+      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+      renderSession(result);
+      window.setTimeout(refresh, 500);
+    });
+    document.getElementById('backButton').addEventListener('click', () => {
       activeSessionId = '';
       localStorage.removeItem('agent-kernel-mobile-session');
-      messages.innerHTML = '';
-      promptInput.focus();
-    });
-    sessionSelect.addEventListener('change', () => {
-      activeSessionId = sessionSelect.value;
-      localStorage.setItem('agent-kernel-mobile-session', activeSessionId);
+      setMode('list');
       refresh();
     });
     document.getElementById('messageForm').addEventListener('submit', async (event) => {
@@ -1029,7 +1147,7 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       promptInput.value = '';
       const workspace = workspaceInput.value.trim() || workspaceRootSelect.value;
       localStorage.setItem('agent-kernel-mobile-workspace', workspace);
-      const body = { workspace, provider: 'codex', prompt };
+      const body = { workspace, provider: providerSelect.value || 'codex', prompt };
       const result = activeSessionId
         ? await api('/mobile/api/send', { ...body, session_id: activeSessionId })
         : await api('/mobile/api/start', body);
@@ -1038,7 +1156,8 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
       renderSession(result);
       window.setTimeout(refresh, 1200);
     });
-    window.setInterval(refresh, 3000);
+    window.setInterval(() => { if (grantId) refresh().catch(() => {}); }, 3000);
+    setMode('list');
     refresh().catch((error) => { statusEl.textContent = error.message || String(error); });
   </script>
 </body>
