@@ -1044,6 +1044,20 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
         promptInput.focus();
       }
     }
+    function clearMobileGrant(message = 'Not approved.') {
+      grantId = '';
+      activeSessionId = '';
+      localStorage.removeItem('agent-kernel-mobile-grant');
+      localStorage.removeItem('agent-kernel-mobile-session');
+      approveButton.classList.remove('hidden');
+      statusEl.textContent = message;
+      sessionList.innerHTML = '';
+      const note = document.createElement('p');
+      note.className = 'muted';
+      note.textContent = 'Approve this phone from the computer bridge to start using Computer Use.';
+      sessionList.appendChild(note);
+      setMode('list');
+    }
     async function api(path, body = {}) {
       const response = await fetch(path, {
         method: 'POST',
@@ -1085,10 +1099,16 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     async function refresh() {
       approveButton.classList.toggle('hidden', Boolean(grantId));
       if (!grantId) {
-        statusEl.textContent = 'Not approved.';
+        clearMobileGrant();
         return;
       }
-      const payload = await api('/mobile/api/sessions');
+      let payload;
+      try {
+        payload = await api('/mobile/api/sessions');
+      } catch (error) {
+        clearMobileGrant(error.message || 'Approval expired. Approve this phone again.');
+        return;
+      }
       const sessions = payload.sessions || [];
       sessionList.innerHTML = '';
       if (!sessions.length) {
@@ -1117,11 +1137,15 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     }
     approveButton.addEventListener('click', async () => {
       statusEl.textContent = 'Waiting for desktop approval...';
-      const payload = await api('/mobile/api/approve');
-      grantId = payload.grant_id;
-      localStorage.setItem('agent-kernel-mobile-grant', grantId);
-      statusEl.textContent = `Approved. Code ${payload.code}`;
-      refresh();
+      try {
+        const payload = await api('/mobile/api/approve');
+        grantId = payload.grant_id;
+        localStorage.setItem('agent-kernel-mobile-grant', grantId);
+        statusEl.textContent = `Approved. Code ${payload.code}`;
+        refresh();
+      } catch (error) {
+        clearMobileGrant(error.message || 'Approval failed. Try again.');
+      }
     });
     document.getElementById('newSessionButton').addEventListener('click', () => setMode('new'));
     document.getElementById('cancelNewButton').addEventListener('click', () => setMode('list'));
@@ -1158,7 +1182,7 @@ MOBILE_PAGE_HTML = r'''<!doctype html>
     });
     window.setInterval(() => { if (grantId) refresh().catch(() => {}); }, 3000);
     setMode('list');
-    refresh().catch((error) => { statusEl.textContent = error.message || String(error); });
+    refresh().catch((error) => { clearMobileGrant(error.message || String(error)); });
   </script>
 </body>
 </html>'''
