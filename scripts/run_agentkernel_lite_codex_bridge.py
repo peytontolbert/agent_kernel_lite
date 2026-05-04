@@ -18,6 +18,7 @@ import os
 import queue
 import secrets
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -198,6 +199,28 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 35) -> tuple[int
         except Exception:
             payload = {"status": "error", "error": body or str(error)}
         return int(error.code), payload
+
+
+def local_ipv4_addresses() -> list[str]:
+    addresses: set[str] = set()
+    try:
+        hostname = socket.gethostname()
+        for item in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            address = item[4][0]
+            if not address.startswith("127."):
+                addresses.add(address)
+    except OSError:
+        pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("8.8.8.8", 80))
+        address = probe.getsockname()[0]
+        probe.close()
+        if address and not address.startswith("127."):
+            addresses.add(address)
+    except OSError:
+        pass
+    return sorted(addresses)
 
 
 class BridgeState:
@@ -478,8 +501,6 @@ class BridgeState:
             raise ValueError("pairing was rejected on the computer")
 
     def approve_mobile_console(self, token: str) -> dict[str, Any]:
-        if not secrets.compare_digest(str(token or ""), self.mobile_token):
-            raise ValueError("mobile console token is invalid")
         if not sys.stdin.isatty():
             raise ValueError("local computer approval is required, but this bridge has no interactive terminal")
         grant_id = f"mobile_{secrets.token_urlsafe(18)}"
@@ -1093,13 +1114,8 @@ class Handler(BaseHTTPRequestHandler):
             json_response(self, 404, {"status": "error", "error": "not found"})
 
     def handle_mobile_page(self) -> None:
-        query = parse_qs(urlparse(self.path).query)
-        token = str((query.get("t") or [""])[0])
-        if not secrets.compare_digest(token, self.state.mobile_token):
-            html_response(self, 403, "<!doctype html><title>Agent Kernel</title><p>Invalid or missing mobile console token.</p>")
-            return
         workspaces = [str(item) for item in self.state.allowed_workspaces]
-        page = MOBILE_PAGE_HTML.replace("__TOKEN__", json.dumps(token)).replace("__WORKSPACES__", json.dumps(workspaces))
+        page = MOBILE_PAGE_HTML.replace("__TOKEN__", json.dumps("")).replace("__WORKSPACES__", json.dumps(workspaces))
         html_response(self, 200, page)
 
     def handle_pair_page(self) -> None:
@@ -1459,11 +1475,15 @@ def main() -> None:
         print("Warning: bridge is reachable beyond loopback. Use trusted Wi-Fi and approve pairings only from your own devices.", flush=True)
     print(f"Allowed workspace roots: {', '.join(str(item) for item in state.allowed_workspaces)}", flush=True)
     if state.host == "0.0.0.0":
-        print("Phone pairing page: http://<computer-lan-ip>:45731/pair", flush=True)
-        print(f"Mobile Computer Use: http://<computer-lan-ip>:{state.port}/mobile?t={state.mobile_token}", flush=True)
+        addresses = local_ipv4_addresses()
+        if addresses:
+            print("Mobile Computer Use:", flush=True)
+            for address in addresses:
+                print(f"  http://{address}:{state.port}/", flush=True)
+        else:
+            print(f"Mobile Computer Use: http://<computer-lan-ip>:{state.port}/", flush=True)
     else:
-        print(f"Pairing page: http://{state.host}:{state.port}/pair", flush=True)
-        print(f"Mobile Computer Use: http://{state.host}:{state.port}/mobile?t={state.mobile_token}", flush=True)
+        print(f"Mobile Computer Use: http://{state.host}:{state.port}/", flush=True)
     print("Keep this terminal open while using the Computer Use extension.", flush=True)
     server.serve_forever()
 
