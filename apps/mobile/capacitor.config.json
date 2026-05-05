@@ -1,7 +1,7 @@
 {
   "appId": "com.peytontolbert.agentkernellite",
   "appName": "Agent Kernel Lite",
-  "webDir": "www",
+  "webDir": "www/app",
   "server": {
     "androidScheme": "https",
     "iosScheme": "https",

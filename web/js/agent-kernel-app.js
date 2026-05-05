@@ -9,7 +9,11 @@ const HF = {
 
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const HASH_PARAMS = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+const CAPACITOR_NATIVE = Boolean(window.Capacitor?.isNativePlatform?.())
+  || (Boolean(window.Capacitor?.getPlatform) && window.Capacitor.getPlatform() !== 'web')
+  || (window.location.protocol === 'https:' && window.location.hostname === 'localhost');
 const NATIVE_APP = URL_PARAMS.get('native') === '1'
+  || CAPACITOR_NATIVE
   || window.location.protocol === 'capacitor:'
   || window.location.protocol === 'ionic:';
 const DEV_BACKEND = String(URL_PARAMS.get('backend') || '').trim().toLowerCase();
@@ -4557,9 +4561,12 @@ async function init() {
     }).catch((error) => log(`storage persistence request failed: ${error.message || String(error)}`));
   }
   if (NATIVE_APP || URL_PARAMS.get('autopack') === '1') {
-    loadResearchPack().catch((error) => log(error.message || String(error)));
+    window.setTimeout(() => {
+      loadResearchPack().catch((error) => log(error.message || String(error)));
+    }, 250);
   }
-  if (URL_PARAMS.get('autoload') !== '0') {
+  const shouldAutoloadModel = URL_PARAMS.get('autoload') === '1' || (!NATIVE_APP && URL_PARAMS.get('autoload') !== '0');
+  if (shouldAutoloadModel) {
     state.modelAutoLoadStarted = true;
     loadModel({ auto: true }).catch((error) => {
       log(error.message || String(error));
