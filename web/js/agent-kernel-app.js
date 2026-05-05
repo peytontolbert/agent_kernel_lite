@@ -16,6 +16,7 @@ const NATIVE_APP = URL_PARAMS.get('native') === '1'
   || CAPACITOR_NATIVE
   || window.location.protocol === 'capacitor:'
   || window.location.protocol === 'ionic:';
+if (NATIVE_APP) document.documentElement.classList.add('native-app');
 const DEV_BACKEND = String(URL_PARAMS.get('backend') || '').trim().toLowerCase();
 const DEVICE_PARAM = String(URL_PARAMS.get('device') || '').trim().toLowerCase();
 const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
@@ -4565,14 +4566,19 @@ async function init() {
       loadResearchPack().catch((error) => log(error.message || String(error)));
     }, 250);
   }
-  const shouldAutoloadModel = URL_PARAMS.get('autoload') === '1' || (!NATIVE_APP && URL_PARAMS.get('autoload') !== '0');
+  const shouldAutoloadModel = URL_PARAMS.get('autoload') !== '0';
   if (shouldAutoloadModel) {
     state.modelAutoLoadStarted = true;
-    loadModel({ auto: true }).catch((error) => {
+    const startModelLoad = () => loadModel({ auto: true }).catch((error) => {
       log(error.message || String(error));
       updateRuntimeDetail(`Runtime did not load automatically: ${error.message || String(error)}`);
       syncModelControls();
     });
+    if (NATIVE_APP) {
+      window.setTimeout(startModelLoad, 1200);
+    } else {
+      startModelLoad();
+    }
   } else {
     updateRuntimeDetail('Runtime autoload is off. Load Runtime to start the model.');
   }

@@ -1313,6 +1313,10 @@
         padding: 10px 106px 10px 12px;
       }
 
+      html.native-app header {
+        padding-top: max(12px, calc(env(safe-area-inset-top) + 10px));
+      }
+
       header p {
         display: none;
       }
