@@ -9,6 +9,9 @@ const HF = {
 
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const HASH_PARAMS = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+const NATIVE_APP = URL_PARAMS.get('native') === '1'
+  || window.location.protocol === 'capacitor:'
+  || window.location.protocol === 'ionic:';
 const DEV_BACKEND = String(URL_PARAMS.get('backend') || '').trim().toLowerCase();
 const DEVICE_PARAM = String(URL_PARAMS.get('device') || '').trim().toLowerCase();
 const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
@@ -4523,6 +4526,15 @@ async function init() {
   await refreshStorage();
   syncModelControls();
   log('agent kernel lite ready');
+  if (NATIVE_APP && navigator.storage?.persist) {
+    navigator.storage.persist().then((persisted) => {
+      setPill(els.storagePill, persisted ? 'persistent' : 'best effort', persisted ? 'ready' : '');
+      log(persisted ? 'native app storage persistence granted' : 'native app storage persistence not granted');
+    }).catch((error) => log(`storage persistence request failed: ${error.message || String(error)}`));
+  }
+  if (NATIVE_APP || URL_PARAMS.get('autopack') === '1') {
+    loadResearchPack().catch((error) => log(error.message || String(error)));
+  }
   if (URL_PARAMS.get('autoload') !== '0') {
     state.modelAutoLoadStarted = true;
     loadModel({ auto: true }).catch((error) => {
