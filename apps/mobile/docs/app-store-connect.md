@@ -12,6 +12,7 @@ TestFlight.
 - Primary category: Productivity
 - Secondary category: Education
 - Age rating: No objectionable content; no unrestricted web browsing.
+- Export compliance: No non-exempt encryption.
 
 ## Build Upload
 
@@ -50,6 +51,11 @@ GitHub Actions path:
 
 Apple build processing is not instant. After upload, wait for App Store Connect
 to process the build before it appears in TestFlight.
+
+If App Store Connect asks about encryption, use the no/non-exempt answer for
+this build. Agent Kernel Lite uses platform HTTPS/TLS for GitHub/Hugging Face
+downloads and SHA-256 hashes for asset verification; it does not implement
+custom encryption.
 
 ## Required Local Tools
 
