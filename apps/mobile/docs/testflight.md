@@ -8,12 +8,11 @@
 4. Add the build to Internal Testing.
 5. Add internal testers.
 6. Install from TestFlight and verify:
-   - boot shell loads;
-   - bundled app opens;
+   - app opens directly into Agent Kernel Lite;
    - Search mode works;
-   - release manifest validation works;
-   - app survives airplane mode after first launch;
-   - large asset download prompts are understandable.
+   - bundled 50k paper pack loads without a network request;
+   - bundled BitNet runtime starts;
+   - app survives airplane mode after first launch.
 
 ## External Testing
 
@@ -23,7 +22,7 @@ Before external beta review:
 - add beta app description;
 - add review notes from `app-review-notes.md`;
 - confirm privacy answers from `privacy.md`;
-- confirm the release manifest URL is immutable and reachable.
+- confirm optional remote model/data downloads are described accurately.
 
 ## Versioning
 
@@ -32,4 +31,4 @@ For each TestFlight upload:
 - increment iOS `CURRENT_PROJECT_VERSION`;
 - keep `MARKETING_VERSION` aligned with the public app version;
 - increment Android `versionCode` when preparing a Play build;
-- run `npm run sync:web` before archiving.
+- run `npm run prepare:assets` and `npm run sync:web` before archiving.

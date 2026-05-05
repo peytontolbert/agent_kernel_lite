@@ -6,26 +6,27 @@ Suggested review note:
 No account is required.
 
 Agent Kernel Lite is a local research assistant for paper search and local
-browser-side model execution. The app opens with a bundled offline shell, can
-open the bundled Agent Kernel Lite app, and can cache signed/versioned release
-assets from GitHub Releases plus model/data packs from Hugging Face.
+browser-side model execution. The app opens directly into the bundled Agent
+Kernel Lite interface and includes the default BitNet model plus a 50k paper
+metadata pack in the app bundle.
 
 Review steps:
 1. Open the app.
-2. Tap Open Bundled App.
-3. Use Search mode to run a paper query.
-4. Return to the shell and tap Check Release to inspect the pinned GitHub
-   release manifest.
+2. Use Search mode to run a paper query.
+3. Load the runtime and submit a short local prompt.
+4. Turn on airplane mode and confirm Search mode still returns bundled papers.
 
 The app does not require user accounts, does not track users, and does not
-provide unrestricted web browsing. GitHub and Hugging Face are used for
-versioned application/model/data assets.
+provide unrestricted web browsing. GitHub Actions, TestFlight, and App Store
+Connect deliver app updates. Hugging Face is used as the upstream source for
+optional refreshed or larger model/data assets.
 ```
 
 If review asks why this is not a website wrapper, emphasize:
 
-- the app bundles a usable offline shell;
+- the app bundles the usable Agent Kernel Lite interface;
 - the app has local storage and cache management;
-- the app verifies immutable release manifests;
-- Hugging Face assets are model/data packs, not remote executable JavaScript;
+- the default model and 50k paper pack are packaged with the app;
+- optional Hugging Face assets are model/data packs, not remote executable
+  JavaScript;
 - Search mode works as the first native mobile workflow.

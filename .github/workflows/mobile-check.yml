@@ -18,6 +18,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
       - run: npm ci
+      - run: npm run prepare:assets
       - run: npm run sync:web
       - run: npm run check
       - run: npx cap sync android
@@ -39,6 +40,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm ci
+      - run: npm run prepare:assets
       - run: npm run sync:web
       - run: npx cap sync android
       - run: cd android && ./gradlew assembleDebug

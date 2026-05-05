@@ -27,8 +27,11 @@ jobs:
 
       - name: Prepare Capacitor iOS project
         working-directory: apps/mobile
+        env:
+          AGENT_KERNEL_LITE_PAPERS_50K_URL: https://huggingface.co/datasets/PeytonT/paper_universe_interactive/resolve/main/interactive/papers_50000.json
         run: |
           npm ci
+          npm run prepare:assets
           npm run sync:web
           npm run check
           npx cap sync ios

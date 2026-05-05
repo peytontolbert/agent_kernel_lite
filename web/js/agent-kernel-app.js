@@ -19,6 +19,8 @@ const VLLM_MODEL = String(URL_PARAMS.get('vllmModel') || 'Qwen/Qwen3.5-9B').trim
 const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json';
+const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
@@ -1198,6 +1200,23 @@ async function loadResearchPack() {
   els.loadPack.disabled = true;
   setProcessStep('pack', 'active', `Loading ${formatCount(targetRows)} paper metadata rows`);
   try {
+    if ((NATIVE_APP || URL_PARAMS.get('packagedPapers') === '1') && targetRows === 50000) {
+      setProcessStep('pack', 'active', 'Loading bundled 50k paper pack');
+      const rows = await cachedJson(NATIVE_PAPERS_50K, 'bundled 50k paper pack');
+      state.packRows = Array.isArray(rows) ? rows : rows.rows || [];
+      state.packLevel = {
+        rows: state.packRows.length,
+        label: `${formatCount(state.packRows.length)} bundled papers`,
+        path: NATIVE_PAPERS_50K,
+      };
+      state.paperSemanticIndex = null;
+      els.packMetric.textContent = state.packLevel.label;
+      els.rowsMetric.textContent = formatCount(state.packRows.length);
+      setPill(els.packPill, 'library ready', 'ready');
+      setProcessStep('pack', 'done', `${formatCount(state.packRows.length)} bundled paper rows ready`);
+      log(`loaded ${formatCount(state.packRows.length)} bundled paper rows`);
+      return;
+    }
     const manifest = await cachedJson(`${HF.paperInteractiveRoot}/manifest.json`, 'paper pack manifest');
     const level = chooseLevel(manifest, targetRows);
     const path = levelJsonPath(level);
@@ -4472,8 +4491,13 @@ async function init() {
   if (rawManifestUrl) {
     addModelStackOption(new URL(rawManifestUrl, window.location.href).href);
   } else if (DEV_BACKEND !== 'vllm') {
-    addModelStackOption(HF_MODELSTACK_MANIFEST, 'AgentKernel Lite 100M BitNet');
-    log('AgentKernel Lite BitNet bundle attached from Hugging Face');
+    if (NATIVE_APP) {
+      addModelStackOption(NATIVE_MODELSTACK_MANIFEST, 'Bundled AgentKernel Lite 100M BitNet');
+      log('AgentKernel Lite BitNet bundle attached from packaged app assets');
+    } else {
+      addModelStackOption(HF_MODELSTACK_MANIFEST, 'AgentKernel Lite 100M BitNet');
+      log('AgentKernel Lite BitNet bundle attached from Hugging Face');
+    }
   }
   els.form.addEventListener('submit', submitPrompt);
   els.chatMode?.addEventListener('click', () => setMode('chat'));

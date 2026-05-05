@@ -1,10 +1,13 @@
 {
   "schema": "agent_kernel_lite_mobile_app_source",
-  "generated_at": "2026-05-05T21:22:42.775Z",
+  "generated_at": "2026-05-05T22:41:15.490Z",
   "source": "../../web",
   "bundled_app": "./app/",
   "excluded": [
-    "web/models/"
+    "web/models/* except web/models/agentkernel_lite_100m_bitnet_12000/",
+    "web/app-release-manifest.example.json"
   ],
-  "model_and_paper_assets": "downloaded from Hugging Face by the app runtime"
+  "bundled_model": "./app/models/agentkernel_lite_100m_bitnet_12000/manifest.json",
+  "bundled_paper_pack": "./app/packed-data/papers_50000.json",
+  "remote_asset_policy": "Native builds bundle the default model and 50k paper pack. Hugging Face remains the upstream source for refreshed or larger packs."
 }

@@ -53,9 +53,8 @@ Apple build processing is not instant. After upload, wait for App Store Connect
 to process the build before it appears in TestFlight.
 
 If App Store Connect asks about encryption, use the no/non-exempt answer for
-this build. Agent Kernel Lite uses platform HTTPS/TLS for GitHub/Hugging Face
-downloads and SHA-256 hashes for asset verification; it does not implement
-custom encryption.
+this build. Agent Kernel Lite uses platform HTTPS/TLS for optional remote
+model/data downloads and does not implement custom encryption.
 
 ## Required Local Tools
 
@@ -68,13 +67,15 @@ custom encryption.
 ## App Review Positioning
 
 Agent Kernel Lite is not a generic web browser. The app provides a local
-research assistant shell, local paper search, local session storage, model/data
-pack caching, and verified release loading from GitHub/Hugging Face.
+research assistant, local paper search, local session storage, and bundled
+model/data assets.
 
 Do not submit it as a website wrapper. Screenshots and review notes should show:
 
 - Search mode returning papers.
-- Bundled app opening offline.
-- Release manifest check/caching screen.
-- Hugging Face model/data pack download disclosure.
+- App opening directly into Agent Kernel Lite.
+- Bundled 50k paper pack working offline.
+- Bundled BitNet runtime loading from app assets.
+- Optional Hugging Face model/data pack download disclosure when that flow is
+  enabled.
 - No login requirement for the initial workflow.
