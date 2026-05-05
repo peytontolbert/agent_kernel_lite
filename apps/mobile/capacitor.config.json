@@ -1,0 +1,16 @@
+{
+  "appId": "com.peytontolbert.agentkernellite",
+  "appName": "Agent Kernel Lite",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "allowNavigation": [
+      "github.com",
+      "objects.githubusercontent.com",
+      "release-assets.githubusercontent.com",
+      "huggingface.co",
+      "*.huggingface.co"
+    ]
+  }
+}

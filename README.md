@@ -1,10 +1,10 @@
 # Agent Kernel Lite
 
-Agent Kernel Lite is a browser-first local research assistant and extension
-shell. It pairs a small Rust/WASM agent core with browser-side model execution,
-local research retrieval, release-pinned extension installs, portable session
-backup, and an external verifier extension for checking the app assets users are
-running.
+Agent Kernel Lite is a browser-first local research assistant focused on the
+BitNet/model-stack runtime, paper retrieval, and a small Rust/WASM agent core.
+It pairs browser-side model execution with local research retrieval, portable
+session backup, and an external verifier extension for checking the app assets
+users are running.
 
 This repository was split out of
 `https://github.com/peytontolbert/agent_kernel` so the lite browser app,
@@ -39,6 +39,7 @@ The v6 shell includes:
   extension manifests, extension action proposals, receipts, and snapshots
 - browser-side BitNet/model-stack runtime integration
 - local paper retrieval over downloaded paper metadata/vector packs
+- decoder-free quick paper search over the loaded research pack
 - selected-paper context persistence inside the session
 - extension menu with **Installed** and **Available** sections
 - release-only custom extension manifest install
@@ -48,23 +49,19 @@ The v6 shell includes:
 - separate browser extension verifier package
 
 No extensions are default-installed in v6. The app shows available official
-extension manifests from `web/extensions/catalog.json`, currently:
-
-- `computer_use`
+extension manifests from `web/extensions/catalog.json`; the catalog is empty
+until an Agent Kernel Lite extension is release-ready.
 
 Users must click **Install**, then explicitly enable an installed extension
 before it can act. Image Generation is kept out of the official v6 catalog
 until it is release-ready.
 
-Computer Use supports two bridge paths:
+Mobile Computer Use is now a separate application. Use the standalone project
+for mobile terminal and Codex control:
 
-- same-computer local bridge at `http://127.0.0.1:45731`
-- hosted HTTPS relay at `/agent_kernel/api/relay/` for phone-to-computer use
-
-The relay uses unguessable per-desktop `route_...` URLs and a per-desktop relay
-token. The relay only forwards pairing and encrypted bridge envelopes; the
-desktop still requires the short pairing code plus local approval before a
-browser grant is stored.
+```text
+https://github.com/peytontolbert/mobile-computer-use
+```
 
 ## Verification
 
@@ -155,7 +152,6 @@ agent_kernel_lite_core.js
 agent_kernel_lite_core_bg.wasm
 app-release-manifest.json
 catalog.json
-computer_use.json
 agent-kernel-lite-v6-shell.tar.gz
 SHA256SUMS
 agent-kernel-lite-verifier-v6.tar.gz
@@ -192,10 +188,48 @@ Related training/rebuild assets referenced by docs/scripts:
 Large research datasets and model checkpoints are intentionally not vendored
 directly into this repository.
 
+## iPhone / Android App
+
+The native app scaffold lives in:
+
+```text
+apps/mobile/
+```
+
+The mobile app is a small Capacitor shell, not a desktop bridge controller. It
+boots a bundled copy of the Agent Kernel Lite web app from `apps/mobile/www/app/`
+and can cache versioned content from GitHub Releases and Hugging Face:
+
+- GitHub Releases provide executable app assets, WASM bindings, manifests, and
+  hashes.
+- Hugging Face provides model tensors, tokenizers, paper packs, embeddings, and
+  full-text paper data.
+
+Refresh the bundled app after editing `web/`:
+
+```bash
+cd agent_kernel_lite/apps/mobile
+npm run sync:web
+```
+
+Then generate/sync native projects with Capacitor:
+
+```bash
+npm install
+npm run add:ios
+npm run add:android
+npm run sync
+```
+
+See `apps/mobile/README.md` and
+`docs/agentkernel_lite_mobile_app.md` for the trust model and release-loading
+rules.
+
 ## Layout
 
+- `apps/mobile/`: Capacitor iOS/Android shell for the web app
 - `web/`: runnable browser app export
-- `web/extensions/`: available in-app extension catalog and manifests
+- `web/extensions/`: available in-app extension catalog
 - `web/wasm/agent_kernel_lite_core/pkg/`: browser-loaded Rust/WASM core package
 - `wasm/agent_kernel_lite_core/`: Rust source for the agent core
 - `web/vendor/model-stack-bitnet/`: app-hosted model-stack runtime

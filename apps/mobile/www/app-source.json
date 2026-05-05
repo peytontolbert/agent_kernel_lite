@@ -1,0 +1,10 @@
+{
+  "schema": "agent_kernel_lite_mobile_app_source",
+  "generated_at": "2026-05-05T21:22:42.775Z",
+  "source": "../../web",
+  "bundled_app": "./app/",
+  "excluded": [
+    "web/models/"
+  ],
+  "model_and_paper_assets": "downloaded from Hugging Face by the app runtime"
+}

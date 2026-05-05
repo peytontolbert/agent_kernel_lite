@@ -1,0 +1,25 @@
+{
+  "name": "@agent-kernel-lite/mobile-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "iOS and Android shell for Agent Kernel Lite.",
+  "type": "module",
+  "scripts": {
+    "check": "node --check www/shell/app.js && node --check scripts/sync-web.mjs",
+    "sync:web": "node scripts/sync-web.mjs",
+    "sync": "npm run sync:web && cap sync",
+    "add:android": "npm run sync:web && cap add android",
+    "add:ios": "npm run sync:web && cap add ios",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios",
+    "build:android:debug": "npm run sync:web && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.6.2",
+    "@capacitor/cli": "^7.6.2",
+    "@capacitor/ios": "^7.6.2"
+  }
+}
