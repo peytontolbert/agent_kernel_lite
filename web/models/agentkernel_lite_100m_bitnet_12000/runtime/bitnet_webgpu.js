@@ -203,6 +203,7 @@ export class BitNetLinearWebGPU {
       size: PARAM_BUFFER_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    this.runCache = new Map();
   }
 
   static async fromManifestLayer(device, manifest, layer, manifestUrl, options = {}) {
@@ -264,9 +265,34 @@ export class BitNetLinearWebGPU {
     }
 
     const outputLength = rows * this.layout.logicalOut;
-    const inputBuffer = createStorageBuffer(this.device, x);
-    const outputBuffer = createOutputBuffer(this.device, outputLength * Float32Array.BYTES_PER_ELEMENT);
-    const readbackBuffer = createReadbackBuffer(this.device, outputLength * Float32Array.BYTES_PER_ELEMENT);
+    const inputBytes = x.byteLength;
+    const outputBytes = outputLength * Float32Array.BYTES_PER_ELEMENT;
+    const cacheKey = `${rows}:${this.layout.logicalIn}:${this.layout.logicalOut}`;
+    let cache = this.runCache.get(cacheKey);
+    if (!cache) {
+      const inputBuffer = this.device.createBuffer({
+        size: align4(inputBytes),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      const outputBuffer = createOutputBuffer(this.device, outputBytes);
+      const readbackBuffer = createReadbackBuffer(this.device, outputBytes);
+      const bindGroup = this.device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: inputBuffer } },
+          { binding: 1, resource: { buffer: this.packedWeightBuffer } },
+          { binding: 2, resource: { buffer: this.scaleBuffer } },
+          { binding: 3, resource: { buffer: this.segmentOffsetBuffer } },
+          { binding: 4, resource: { buffer: this.biasBuffer } },
+          { binding: 5, resource: { buffer: this.inputScaleBuffer } },
+          { binding: 6, resource: { buffer: outputBuffer } },
+          { binding: 7, resource: { buffer: this.paramsBuffer } },
+        ],
+      });
+      cache = { inputBuffer, outputBuffer, readbackBuffer, bindGroup };
+      this.runCache.set(cacheKey, cache);
+    }
+    this.device.queue.writeBuffer(cache.inputBuffer, 0, x.buffer, x.byteOffset, x.byteLength);
 
     const params = new Uint32Array([
       rows,
@@ -284,33 +310,19 @@ export class BitNetLinearWebGPU {
     ]);
     this.device.queue.writeBuffer(this.paramsBuffer, 0, params);
 
-    const bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: inputBuffer } },
-        { binding: 1, resource: { buffer: this.packedWeightBuffer } },
-        { binding: 2, resource: { buffer: this.scaleBuffer } },
-        { binding: 3, resource: { buffer: this.segmentOffsetBuffer } },
-        { binding: 4, resource: { buffer: this.biasBuffer } },
-        { binding: 5, resource: { buffer: this.inputScaleBuffer } },
-        { binding: 6, resource: { buffer: outputBuffer } },
-        { binding: 7, resource: { buffer: this.paramsBuffer } },
-      ],
-    });
-
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, cache.bindGroup);
     pass.dispatchWorkgroups(Math.ceil(this.layout.logicalOut / 8), Math.ceil(rows / 8), 1);
     pass.end();
-    encoder.copyBufferToBuffer(outputBuffer, 0, readbackBuffer, 0, outputLength * Float32Array.BYTES_PER_ELEMENT);
+    encoder.copyBufferToBuffer(cache.outputBuffer, 0, cache.readbackBuffer, 0, outputBytes);
     this.device.queue.submit([encoder.finish()]);
 
-    await readbackBuffer.mapAsync(GPUMapMode.READ);
-    const mapped = readbackBuffer.getMappedRange();
+    await cache.readbackBuffer.mapAsync(GPUMapMode.READ);
+    const mapped = cache.readbackBuffer.getMappedRange();
     const result = new Float32Array(mapped.slice(0));
-    readbackBuffer.unmap();
+    cache.readbackBuffer.unmap();
     return result;
   }
 }

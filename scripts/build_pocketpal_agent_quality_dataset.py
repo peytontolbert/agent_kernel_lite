@@ -48,6 +48,23 @@ AGENT_CASES: list[dict[str, Any]] = [
         "retrieval_policy": "auto",
     },
     {
+        "agent_name": "Friendly Helper",
+        "agent_instruction": "Be a concise friendly assistant. Answer casual messages normally and do not use stale paper context unless the user asks about papers.",
+        "user_request": "How's it going?",
+        "content": "It's going well. What would you like help with?",
+        "retrieval_policy": "auto",
+        "paper_context": "Selected paper [P1]: synthetic retrieval notes about unrelated optimization experiments.",
+    },
+    {
+        "agent_name": "User Configured Text Agent",
+        "agent_instruction": "Improve or reword text when the user provides text. If the user has not provided text to edit, ask for it.",
+        "user_request": "How's it going?",
+        "action": "ask_user",
+        "content": "I'm ready. Send me the text you want improved or reworded.",
+        "retrieval_policy": "auto",
+        "paper_context": "Selected paper [P1]: stale research context that is unrelated to the user's current request.",
+    },
+    {
         "agent_name": "Calendar Assistant",
         "agent_instruction": "Prepare calendar actions, but request approval before using an extension.",
         "user_request": "Put launch review on my calendar tomorrow at 3.",
@@ -72,6 +89,80 @@ AGENT_CASES: list[dict[str, Any]] = [
         "retrieval_policy": "always",
     },
 ]
+
+
+AGENT_INSTRUCTION_FAMILIES: list[dict[str, Any]] = [
+    {
+        "name": "Reworder",
+        "instruction": "Reword the provided text. Preserve meaning and facts. If no editable text is provided, ask for the text.",
+        "requests": [
+            ("This wording sounds kinda rough and too long for testers.", "This wording is too long and unclear for testers.", "respond"),
+            ("How's it going?", "Send me the text you want reworded.", "ask_user"),
+            ("Make this better.", "What text should I improve?", "ask_user"),
+        ],
+    },
+    {
+        "name": "Friendly Assistant",
+        "instruction": "Answer casual messages naturally. Keep replies short. Do not mention papers unless the user asks about research.",
+        "requests": [
+            ("How's it going?", "It's going well. What would you like help with?", "respond"),
+            ("Thanks", "You're welcome.", "respond"),
+            ("Can you help me?", "Yes. What do you want to work on?", "respond"),
+        ],
+    },
+    {
+        "name": "Checklist Agent",
+        "instruction": "Turn the user's goal into a short checklist with concrete next actions.",
+        "requests": [
+            ("Prepare TestFlight for the next build.", "- Bump the iOS build number.\n- Sync the web assets into the mobile app.\n- Run the mobile checks.\n- Upload the archive to App Store Connect.", "respond"),
+            ("Plan my morning app work.", "- Pick the highest-priority bug.\n- Reproduce it once.\n- Patch the smallest failing path.\n- Run the focused test.", "respond"),
+        ],
+    },
+    {
+        "name": "Clarifying Agent",
+        "instruction": "Ask one concise clarifying question when the request is missing required input.",
+        "requests": [
+            ("Fix it.", "What specifically is broken?", "ask_user"),
+            ("Rewrite this.", "What text should I rewrite?", "ask_user"),
+            ("Make the agent better.", "What behavior should the agent improve first?", "ask_user"),
+        ],
+    },
+    {
+        "name": "Saved Data Agent",
+        "instruction": "Use saved user data first. If saved data does not answer the question, say what is missing.",
+        "requests": [
+            ("What budget did I set for launch ads?", "Your saved launch notes say the launch ads budget is $1,200.", "respond"),
+            ("Which channel did I pick?", "Your saved launch notes say the main channel is short video ads.", "respond"),
+        ],
+        "user_data": "Launch notes: launch ads budget $1,200. Main channel: short video ads. Release target: Friday.",
+    },
+]
+
+
+def _generated_agent_cases() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    stale_contexts = [
+        "",
+        "Selected paper [P1]: unrelated optimization notes from a previous research turn.",
+        "Retrieved evidence [1]: unrelated web-search result about insurance markets.",
+        "Selected paper [P1]: stale source about neural retrieval that the current user did not ask about.",
+    ]
+    for family_index, family in enumerate(AGENT_INSTRUCTION_FAMILIES):
+        for request_index, (request, content, action) in enumerate(family["requests"]):
+            for stale_index, stale_context in enumerate(stale_contexts):
+                case: dict[str, Any] = {
+                    "agent_name": f"{family['name']} {family_index + 1}",
+                    "agent_instruction": family["instruction"],
+                    "user_request": request,
+                    "action": action,
+                    "content": content,
+                    "retrieval_policy": "local_first" if family.get("user_data") else "auto",
+                    "paper_context": stale_context,
+                    "user_data": family.get("user_data", ""),
+                    "retrieval_influenced": bool(family.get("user_data") and action == "respond"),
+                }
+                cases.append(case)
+    return cases
 
 
 def _repo_root() -> Path:
@@ -111,6 +202,7 @@ def _encoder(row: dict[str, Any]) -> str:
     tool_policy = str(row.get("tool_policy") or "ask_before_extensions")
     action_policy = str(row.get("action_policy") or "respond_or_ask")
     user_data = _compact(row.get("user_data", ""), limit=1000)
+    paper_context = _compact(row.get("paper_context", ""), limit=1000)
     return "\n".join(
         part
         for part in [
@@ -124,6 +216,8 @@ def _encoder(row: dict[str, Any]) -> str:
             "The active agent instruction is the primary task contract for this turn.",
             "</AK_AGENT_ACTIVE>",
             f"<AK_CONTEXT> Saved user data: {user_data}" if user_data else "<AK_CONTEXT> Saved user data: none",
+            f"<AK_CONTEXT> Stale selected paper context: {paper_context}" if paper_context else "<AK_CONTEXT> Stale selected paper context: none",
+            "Use stale paper context only when the current user request asks about that paper or research evidence.",
             f"<AK_USER> {_compact(row.get('user_request'), limit=1600)}",
             "Return compact JSON with the correct action and content for the active agent.",
         ]
@@ -133,7 +227,8 @@ def _encoder(row: dict[str, Any]) -> str:
 
 def build_dataset(output_dir: Path, *, eval_fraction: float = 0.2) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    for index, case in enumerate(AGENT_CASES):
+    all_cases = AGENT_CASES + _generated_agent_cases()
+    for index, case in enumerate(all_cases):
         source_id = f"pocketpal_agent_quality_{index:04d}_{case['agent_name'].lower().replace(' ', '_')}"
         action = str(case.get("action") or "respond")
         rows.append(
@@ -144,7 +239,7 @@ def build_dataset(output_dir: Path, *, eval_fraction: float = 0.2) -> dict[str, 
                 "action": action,
                 "encoder_text": _encoder(case),
                 "decoder_text": _decision(case),
-                "weight": 1.2 if action == "respond" else 1.0,
+                "weight": 5.0 if str(case.get("source_type") or "pocketpal_agent_quality") == "pocketpal_agent_quality" else 4.0,
                 "metadata": {
                     "agent_name": case["agent_name"],
                     "retrieval_policy": str(case.get("retrieval_policy") or "auto"),

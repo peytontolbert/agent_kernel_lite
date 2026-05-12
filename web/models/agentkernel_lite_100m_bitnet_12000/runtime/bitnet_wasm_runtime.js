@@ -102,6 +102,8 @@ export class BitNetLinearWASM {
     this.inputQuantMode = bundle.inputQuantMode ?? 0;
     this.inputQuantBits = bundle.inputQuantBits ?? 8;
     this.inputScaleRows = bundle.inputScaleRows ?? 1;
+    this.wasm = bundle.wasm || null;
+    this.handle = bundle.handle || null;
   }
 
   static async fromManifestLayer(manifest, layer, manifestUrl, options = {}) {
@@ -114,7 +116,8 @@ export class BitNetLinearWASM {
     const tensors = layer.tensors;
     const layersBaseUrl = resolveUrl("layers/", baseUrl);
     progress({ phase: "layer_tensors", index, total, name, message: `Loading BitNet WASM tensors ${label}` });
-    const [packedWeight, scaleValues, segmentOffsets, bias, inputScales] = await Promise.all([
+    const [wasm, packedWeight, scaleValues, segmentOffsets, bias, inputScales] = await Promise.all([
+      ensureBitNetWasm(),
       fetchTensor(tensors.packed_weight, layersBaseUrl, Uint8Array),
       fetchTensor(tensors.scale_values, layersBaseUrl, Float32Array),
       fetchTensor(tensors.segment_offsets, layersBaseUrl, Int32Array),
@@ -122,25 +125,50 @@ export class BitNetLinearWASM {
       fetchTensor(tensors.act_scale, layersBaseUrl, tensorType(tensors.act_scale)),
     ]);
     progress({ phase: "layer_ready", index, total, name, message: `BitNet WASM layer ${label} ready` });
+    const layoutHeader = layer.layout_header;
+    const inputQuantMode = layer.act_quant_mode === "none" ? 0 : 1;
+    const inputQuantBits = layer.act_quant_bits;
+    const inputScaleRows = layer.act_quant_mode === "static_int8" ? 1 : 1;
+    const handle = wasm.BitnetLinearHandle
+      ? new wasm.BitnetLinearHandle(
+          packedWeight,
+          scaleValues,
+          segmentOffsets,
+          bias || new Float32Array(0),
+          Int32Array.from(Array.from(layoutHeader, Number)),
+          inputScales,
+          inputQuantMode,
+          inputQuantBits,
+          inputScaleRows,
+        )
+      : null;
     return new BitNetLinearWASM({
-      layoutHeader: layer.layout_header,
+      layoutHeader,
       packedWeight,
       scaleValues,
       segmentOffsets,
       bias,
       inputScales,
-      inputQuantMode: layer.act_quant_mode === "none" ? 0 : 1,
-      inputQuantBits: layer.act_quant_bits,
-      inputScaleRows: layer.act_quant_mode === "static_int8" ? 1 : 1,
+      inputQuantMode,
+      inputQuantBits,
+      inputScaleRows,
+      wasm,
+      handle,
     });
   }
 
-  async run(input, rows = 1) {
+  run(input, rows = 1) {
     const x = input instanceof Float32Array ? input : new Float32Array(input);
     if (x.length !== rows * this.layout.logicalIn) {
       throw new Error(`BitNet input length mismatch: got ${x.length}, expected ${rows * this.layout.logicalIn}`);
     }
-    const wasm = await ensureBitNetWasm();
+    const wasm = this.wasm;
+    if (!wasm) {
+      throw new Error("BitNet WASM module is not loaded");
+    }
+    if (this.handle?.run) {
+      return this.handle.run(x, rows);
+    }
     return wasm.bitnet_linear_f32(
       x,
       this.packedWeight,

@@ -34,6 +34,8 @@ def test_agent_quality_dataset_preserves_user_agent_instructions(tmp_path: Path)
     assert "Agent instruction:" in joined_inputs
     assert "The active agent instruction is the primary task contract" in joined_inputs
     assert "Saved user data:" in joined_inputs
+    assert "Stale selected paper context:" in joined_inputs
+    assert "Use stale paper context only when the current user request asks" in joined_inputs
 
 
 def test_agent_quality_dataset_emits_structured_actions(tmp_path: Path) -> None:

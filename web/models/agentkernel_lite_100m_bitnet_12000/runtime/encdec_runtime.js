@@ -77,11 +77,40 @@ function zeros(length) {
   return new Float32Array(length);
 }
 
+function toUint32IdArray(ids) {
+  if (ids instanceof Uint32Array) return ids;
+  return Uint32Array.from(Array.from(ids || [], Number).filter((id) => Number.isFinite(id)));
+}
+
 function addInPlace(dst, src) {
   for (let i = 0; i < dst.length; i += 1) {
     dst[i] += src[i];
   }
   return dst;
+}
+
+function l2Normalize(values) {
+  let norm = 0;
+  for (let i = 0; i < values.length; i += 1) norm += values[i] * values[i];
+  norm = Math.sqrt(Math.max(norm, 1e-12));
+  const out = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i += 1) out[i] = values[i] / norm;
+  return out;
+}
+
+function meanPoolRows(x, rows, cols, attentionMask = null) {
+  const out = new Float32Array(cols);
+  let denom = 0;
+  for (let r = 0; r < rows; r += 1) {
+    const weight = attentionMask ? Number(attentionMask[r] || 0) : 1;
+    if (weight <= 0) continue;
+    denom += weight;
+    const rowOffset = r * cols;
+    for (let c = 0; c < cols; c += 1) out[c] += x[rowOffset + c] * weight;
+  }
+  denom = Math.max(denom, 1);
+  for (let c = 0; c < cols; c += 1) out[c] /= denom;
+  return out;
 }
 
 function appendRows(existing, next) {
@@ -90,6 +119,27 @@ function appendRows(existing, next) {
   out.set(existing, 0);
   out.set(next, existing.length);
   return out;
+}
+
+function appendCachedRows(cache, field, next) {
+  const source = next instanceof Float32Array ? next : new Float32Array(next);
+  const lengthField = `${field}Length`;
+  const capacityField = `${field}Capacity`;
+  const currentLength = Number(cache[lengthField] || 0);
+  const required = currentLength + source.length;
+  let storage = cache[field];
+  if (!storage || storage.length < required) {
+    let capacity = Math.max(required, Number(cache[capacityField] || 0), source.length * 8);
+    while (capacity < required) capacity *= 2;
+    const grown = new Float32Array(capacity);
+    if (storage && currentLength > 0) grown.set(storage.subarray(0, currentLength), 0);
+    storage = grown;
+    cache[field] = storage;
+    cache[capacityField] = capacity;
+  }
+  storage.set(source, currentLength);
+  cache[lengthField] = required;
+  return storage.subarray(0, required);
 }
 
 function layerNorm(x, rows, cols, weight, bias, eps = 1e-5) {
@@ -275,7 +325,7 @@ function mergeHeads(heads, seqLen, nHeads, headDim) {
   return out;
 }
 
-function attention(q, k, v, qLen, kvLen, nHeads, headDim, causal) {
+function attention(q, k, v, qLen, kvLen, nHeads, headDim, causal, pastLen = 0) {
   const qh = splitHeads(q, qLen, nHeads, headDim);
   const kh = splitHeads(k, kvLen, nHeads, headDim);
   const vh = splitHeads(v, kvLen, nHeads, headDim);
@@ -287,7 +337,7 @@ function attention(q, k, v, qLen, kvLen, nHeads, headDim, causal) {
       const scores = new Float32Array(kvLen);
       let maxScore = -Infinity;
       for (let j = 0; j < kvLen; j += 1) {
-        let score = causal && j > i ? -1e30 : 0;
+        let score = causal && j > pastLen + i ? -1e30 : 0;
         if (score > -1e20) {
           for (let d = 0; d < headDim; d += 1) {
             score += qh[h][i * headDim + d] * kh[h][j * headDim + d] * scale;
@@ -367,6 +417,7 @@ export class BitNetEncoderDecoderWebGPU {
     this.linears = linears;
     this.denseLinears = {};
     this.graph = manifest.graph;
+    this.wasmOps = null;
     this.decoderRotary = decoderUsesRotary(manifest, this.graph);
     this.decoderRotaryBase = rotaryBase(manifest, this.graph);
   }
@@ -450,6 +501,70 @@ export class BitNetEncoderDecoderWebGPU {
     return denseLayer;
   }
 
+  linear3(firstName, secondName, thirdName, input, rows) {
+    const first = this.linear(firstName);
+    const second = this.linear(secondName);
+    const third = this.linear(thirdName);
+    if (this.wasmOps?.bitnet_linear3_f32 && first.handle && second.handle && third.handle) {
+      const merged = this.wasmOps.bitnet_linear3_f32(first.handle, second.handle, third.handle, input, rows);
+      const firstLen = rows * first.layout.logicalOut;
+      const secondLen = rows * second.layout.logicalOut;
+      return [
+        merged.slice(0, firstLen),
+        merged.slice(firstLen, firstLen + secondLen),
+        merged.slice(firstLen + secondLen),
+      ];
+    }
+    return [first.run(input, rows), second.run(input, rows), third.run(input, rows)];
+  }
+
+  linear2(firstName, secondName, input, rows) {
+    const first = this.linear(firstName);
+    const second = this.linear(secondName);
+    if (this.wasmOps?.bitnet_linear2_f32 && first.handle && second.handle) {
+      const merged = this.wasmOps.bitnet_linear2_f32(first.handle, second.handle, input, rows);
+      const firstLen = rows * first.layout.logicalOut;
+      return [merged.slice(0, firstLen), merged.slice(firstLen)];
+    }
+    return [first.run(input, rows), second.run(input, rows)];
+  }
+
+  decoderLayerHandle(index) {
+    if (!this.wasmOps?.DecoderLayerHandle) return null;
+    const names = [
+      `decoder.${index}.self_attn_block.attn.w_q`,
+      `decoder.${index}.self_attn_block.attn.w_k`,
+      `decoder.${index}.self_attn_block.attn.w_v`,
+      `decoder.${index}.self_attn_block.attn.w_o`,
+      `decoder.${index}.self_attn_block.mlp.w_in`,
+      `decoder.${index}.self_attn_block.mlp.w_out`,
+      `decoder.${index}.cross_block.cross.w_q`,
+      `decoder.${index}.cross_block.cross.w_k`,
+      `decoder.${index}.cross_block.cross.w_v`,
+      `decoder.${index}.cross_block.cross.w_o`,
+      `decoder.${index}.cross_block.mlp.w_in`,
+      `decoder.${index}.cross_block.mlp.w_out`,
+    ];
+    const layers = names.map((name) => this.linear(name));
+    if (!layers.every((layer) => layer?.handle)) return null;
+    return new this.wasmOps.DecoderLayerHandle(
+      ...layers.map((layer) => layer.handle),
+      this.tensor(`decoder.${index}.self_attn_block.n1.weight`),
+      this.dense[`decoder.${index}.self_attn_block.n1.bias`]?.data || new Float32Array(0),
+      this.tensor(`decoder.${index}.self_attn_block.n2.weight`),
+      this.dense[`decoder.${index}.self_attn_block.n2.bias`]?.data || new Float32Array(0),
+      this.tensor(`decoder.${index}.cross_block.n1.weight`),
+      this.dense[`decoder.${index}.cross_block.n1.bias`]?.data || new Float32Array(0),
+      this.tensor(`decoder.${index}.cross_block.n2.weight`),
+      this.dense[`decoder.${index}.cross_block.n2.bias`]?.data || new Float32Array(0),
+      String(this.graph.activation || "silu"),
+      this.graph.d_model,
+      this.graph.n_heads,
+      this.graph.head_dim,
+      this.decoderRotary ? this.decoderRotaryBase : 0,
+    );
+  }
+
   tensor(name) {
     const tensor = this.dense[name];
     if (!tensor) throw new Error(`missing dense tensor: ${name}`);
@@ -459,6 +574,9 @@ export class BitNetEncoderDecoderWebGPU {
   norm(prefix, x, rows) {
     const weight = this.tensor(`${prefix}.weight`);
     const bias = this.dense[`${prefix}.bias`]?.data || null;
+    if (this.wasmOps?.layer_norm_f32 && bias) {
+      return this.wasmOps.layer_norm_f32(x, weight, bias, rows, this.graph.d_model, 1e-5);
+    }
     if (bias) {
       return layerNorm(x, rows, this.graph.d_model, weight, bias);
     }
@@ -471,62 +589,145 @@ export class BitNetEncoderDecoderWebGPU {
     );
   }
 
+  attention(q, k, v, qLen, kvLen, causal, pastLen = 0) {
+    if (this.wasmOps?.attention_f32) {
+      return this.wasmOps.attention_f32(
+        q,
+        k,
+        v,
+        qLen,
+        kvLen,
+        this.graph.n_heads,
+        this.graph.head_dim,
+        Boolean(causal),
+        Number(pastLen || 0),
+      );
+    }
+    return attention(q, k, v, qLen, kvLen, this.graph.n_heads, this.graph.head_dim, causal, pastLen);
+  }
+
   async attentionBlock(prefix, x, seqLen, kv, kvLen, causal) {
     const dModel = this.graph.d_model;
     const nHeads = this.graph.n_heads;
     const headDim = this.graph.head_dim;
-    const q = await this.linear(`${prefix}.w_q`).run(x, seqLen);
+    let q;
+    let k;
+    let v;
     const kInput = kv || x;
     const kRows = kvLen || seqLen;
-    const k = await this.linear(`${prefix}.w_k`).run(kInput, kRows);
-    const v = await this.linear(`${prefix}.w_v`).run(kInput, kRows);
+    if (!kv) {
+      [q, k, v] = this.linear3(`${prefix}.w_q`, `${prefix}.w_k`, `${prefix}.w_v`, x, seqLen);
+    } else {
+      q = await this.linear(`${prefix}.w_q`).run(x, seqLen);
+      [k, v] = this.linear2(`${prefix}.w_k`, `${prefix}.w_v`, kInput, kRows);
+    }
     if (causal && this.decoderRotary) {
       applyRotaryMergedInPlace(q, k, seqLen, nHeads, headDim, this.decoderRotaryBase, 0);
     }
-    const merged = attention(q, k, v, seqLen, kRows, nHeads, headDim, causal);
+    const merged = this.attention(q, k, v, seqLen, kRows, causal);
     return this.linear(`${prefix}.w_o`).run(merged, seqLen);
   }
 
   async selfAttentionIncremental(prefix, x, layerCache) {
     const nHeads = this.graph.n_heads;
     const headDim = this.graph.head_dim;
-    const q = await this.linear(`${prefix}.w_q`).run(x, 1);
-    const kNew = await this.linear(`${prefix}.w_k`).run(x, 1);
-    const vNew = await this.linear(`${prefix}.w_v`).run(x, 1);
+    const [q, kNew, vNew] = this.linear3(`${prefix}.w_q`, `${prefix}.w_k`, `${prefix}.w_v`, x, 1);
     const position = Number(layerCache.selfLen || 0);
     if (this.decoderRotary) {
       applyRotaryMergedInPlace(q, kNew, 1, nHeads, headDim, this.decoderRotaryBase, position);
     }
-    layerCache.selfK = appendRows(layerCache.selfK, kNew);
-    layerCache.selfV = appendRows(layerCache.selfV, vNew);
+    if (this.wasmOps?.AttentionKvCache) {
+      layerCache.selfAttention ??= new this.wasmOps.AttentionKvCache(nHeads, headDim);
+      const merged = layerCache.selfAttention.append_self_attention(q, kNew, vNew, 1, false);
+      layerCache.selfLen = layerCache.selfAttention.len();
+      return this.linear(`${prefix}.w_o`).run(merged, 1);
+    }
+    layerCache.selfK = appendCachedRows(layerCache, "selfK", kNew);
+    layerCache.selfV = appendCachedRows(layerCache, "selfV", vNew);
     layerCache.selfLen = Number(layerCache.selfLen || 0) + 1;
-    const merged = attention(q, layerCache.selfK, layerCache.selfV, 1, layerCache.selfLen, nHeads, headDim, false);
+    const merged = this.attention(q, layerCache.selfK, layerCache.selfV, 1, layerCache.selfLen, false);
     return this.linear(`${prefix}.w_o`).run(merged, 1);
+  }
+
+  async selfAttentionIncrementalSpan(prefix, x, seqLen, layerCache) {
+    const nHeads = this.graph.n_heads;
+    const headDim = this.graph.head_dim;
+    const [q, kNew, vNew] = this.linear3(`${prefix}.w_q`, `${prefix}.w_k`, `${prefix}.w_v`, x, seqLen);
+    const position = Number(layerCache.selfLen || 0);
+    if (this.decoderRotary) {
+      applyRotaryMergedInPlace(q, kNew, seqLen, nHeads, headDim, this.decoderRotaryBase, position);
+    }
+    if (this.wasmOps?.AttentionKvCache) {
+      layerCache.selfAttention ??= new this.wasmOps.AttentionKvCache(nHeads, headDim);
+      const merged = layerCache.selfAttention.append_self_attention(q, kNew, vNew, seqLen, true);
+      layerCache.selfLen = layerCache.selfAttention.len();
+      return this.linear(`${prefix}.w_o`).run(merged, seqLen);
+    }
+    layerCache.selfK = appendCachedRows(layerCache, "selfK", kNew);
+    layerCache.selfV = appendCachedRows(layerCache, "selfV", vNew);
+    layerCache.selfLen = Number(layerCache.selfLen || 0) + seqLen;
+    const merged = this.attention(q, layerCache.selfK, layerCache.selfV, seqLen, layerCache.selfLen, true, position);
+    return this.linear(`${prefix}.w_o`).run(merged, seqLen);
   }
 
   async crossAttentionCached(prefix, x, memory, memoryLen, layerCache) {
     const nHeads = this.graph.n_heads;
     const headDim = this.graph.head_dim;
     const q = await this.linear(`${prefix}.w_q`).run(x, 1);
-    if (!layerCache.crossK || !layerCache.crossV) {
-      layerCache.crossK = await this.linear(`${prefix}.w_k`).run(memory, memoryLen);
-      layerCache.crossV = await this.linear(`${prefix}.w_v`).run(memory, memoryLen);
+    if (this.wasmOps?.AttentionKvCache) {
+      layerCache.crossAttention ??= new this.wasmOps.AttentionKvCache(nHeads, headDim);
+      if (!layerCache.crossReady) {
+        const [crossK, crossV] = this.linear2(`${prefix}.w_k`, `${prefix}.w_v`, memory, memoryLen);
+        layerCache.crossAttention.set_cross(crossK, crossV, memoryLen);
+        layerCache.crossReady = true;
+      }
+      const merged = layerCache.crossAttention.attention(q, 1, false, 0);
+      return this.linear(`${prefix}.w_o`).run(merged, 1);
     }
-    const merged = attention(q, layerCache.crossK, layerCache.crossV, 1, memoryLen, nHeads, headDim, false);
+    if (!layerCache.crossK || !layerCache.crossV) {
+      [layerCache.crossK, layerCache.crossV] = this.linear2(`${prefix}.w_k`, `${prefix}.w_v`, memory, memoryLen);
+    }
+    const merged = this.attention(q, layerCache.crossK, layerCache.crossV, 1, memoryLen, false);
     return this.linear(`${prefix}.w_o`).run(merged, 1);
+  }
+
+  async crossAttentionCachedSpan(prefix, x, seqLen, memory, memoryLen, layerCache) {
+    const nHeads = this.graph.n_heads;
+    const headDim = this.graph.head_dim;
+    const q = await this.linear(`${prefix}.w_q`).run(x, seqLen);
+    if (this.wasmOps?.AttentionKvCache) {
+      layerCache.crossAttention ??= new this.wasmOps.AttentionKvCache(nHeads, headDim);
+      if (!layerCache.crossReady) {
+        const [crossK, crossV] = this.linear2(`${prefix}.w_k`, `${prefix}.w_v`, memory, memoryLen);
+        layerCache.crossAttention.set_cross(crossK, crossV, memoryLen);
+        layerCache.crossReady = true;
+      }
+      const merged = layerCache.crossAttention.attention(q, seqLen, false, 0);
+      return this.linear(`${prefix}.w_o`).run(merged, seqLen);
+    }
+    if (!layerCache.crossK || !layerCache.crossV) {
+      [layerCache.crossK, layerCache.crossV] = this.linear2(`${prefix}.w_k`, `${prefix}.w_v`, memory, memoryLen);
+    }
+    const merged = this.attention(q, layerCache.crossK, layerCache.crossV, seqLen, memoryLen, false);
+    return this.linear(`${prefix}.w_o`).run(merged, seqLen);
   }
 
   async mlp(prefix, x, seqLen) {
     const wIn = this.linear(`${prefix}.w_in`);
     const wOut = this.linear(`${prefix}.w_out`);
+    if (this.wasmOps?.bitnet_mlp_f32 && wIn.handle && wOut.handle) {
+      return this.wasmOps.bitnet_mlp_f32(wIn.handle, wOut.handle, x, seqLen, String(this.graph.activation || "silu"));
+    }
     const hidden = await wIn.run(x, seqLen);
     const activation = String(this.graph.activation || "silu").toLowerCase();
     const isGated =
       wIn.layout.logicalOut === wOut.layout.logicalIn * 2 ||
       hidden.length === seqLen * wOut.layout.logicalIn * 2;
     const activated = isGated || ["swiglu", "gated-silu", "geglu", "reglu"].includes(activation)
-      ? gatedActivation(hidden, seqLen, wOut.layout.logicalIn, activation)
-      : activate(hidden, activation);
+      ? (this.wasmOps?.gated_activation_f32
+          ? this.wasmOps.gated_activation_f32(hidden, seqLen, wOut.layout.logicalIn, activation)
+          : gatedActivation(hidden, seqLen, wOut.layout.logicalIn, activation))
+      : (this.wasmOps?.activate_f32 ? this.wasmOps.activate_f32(hidden, activation) : activate(hidden, activation));
     return wOut.run(activated, seqLen);
   }
 
@@ -550,6 +751,14 @@ export class BitNetEncoderDecoderWebGPU {
   }
 
   async decoderLayerIncremental(index, x, memory, memoryLen, layerCache) {
+    if (this.wasmOps?.DecoderLayerHandle) {
+      layerCache.decoderLayer ??= this.decoderLayerHandle(index);
+      if (layerCache.decoderLayer?.next) {
+        const out = layerCache.decoderLayer.next(x, memory, memoryLen);
+        layerCache.selfLen = layerCache.decoderLayer.self_len();
+        return out;
+      }
+    }
     let n = this.norm(`decoder.${index}.self_attn_block.n1`, x, 1);
     x = addInPlace(
       x.slice(),
@@ -564,6 +773,23 @@ export class BitNetEncoderDecoderWebGPU {
     );
     n = this.norm(`decoder.${index}.cross_block.n2`, x, 1);
     return addInPlace(x, await this.mlp(`decoder.${index}.cross_block.mlp`, n, 1));
+  }
+
+  async decoderLayerIncrementalSpan(index, x, seqLen, memory, memoryLen, layerCache) {
+    let n = this.norm(`decoder.${index}.self_attn_block.n1`, x, seqLen);
+    x = addInPlace(
+      x.slice(),
+      await this.selfAttentionIncrementalSpan(`decoder.${index}.self_attn_block.attn`, n, seqLen, layerCache),
+    );
+    n = this.norm(`decoder.${index}.self_attn_block.n2`, x, seqLen);
+    x = addInPlace(x, await this.mlp(`decoder.${index}.self_attn_block.mlp`, n, seqLen));
+    n = this.norm(`decoder.${index}.cross_block.n1`, x, seqLen);
+    x = addInPlace(
+      x.slice(),
+      await this.crossAttentionCachedSpan(`decoder.${index}.cross_block.cross`, n, seqLen, memory, memoryLen, layerCache),
+    );
+    n = this.norm(`decoder.${index}.cross_block.n2`, x, seqLen);
+    return addInPlace(x, await this.mlp(`decoder.${index}.cross_block.mlp`, n, seqLen));
   }
 
   async encode(encInputIds) {
@@ -581,6 +807,32 @@ export class BitNetEncoderDecoderWebGPU {
       this.tensor("enc_norm.weight"),
       this.dense["enc_norm.bias"]?.data,
     );
+  }
+
+  async retrievalEmbedding(encInputIds, options = {}) {
+    const retrieval = this.graph.retrieval || {};
+    const headName = options.kind === "doc" ? retrieval.doc_head : retrieval.query_head;
+    if (!headName) {
+      throw new Error("model manifest does not expose retrieval heads");
+    }
+    const inputIds = Array.from(encInputIds || [], Number);
+    const memory = await this.encode(inputIds);
+    const pooled = meanPoolRows(
+      memory,
+      inputIds.length,
+      this.graph.d_model,
+      options.attentionMask || inputIds.map((id) => (id === 0 ? 0 : 1)),
+    );
+    const projected = await this.linear(headName).run(pooled, 1);
+    return l2Normalize(projected);
+  }
+
+  async retrievalQueryEmbedding(encInputIds, options = {}) {
+    return this.retrievalEmbedding(encInputIds, { ...options, kind: "query" });
+  }
+
+  async retrievalDocEmbedding(encInputIds, options = {}) {
+    return this.retrievalEmbedding(encInputIds, { ...options, kind: "doc" });
   }
 
   async decode(decInputIds, memory, memoryLen) {
@@ -674,25 +926,95 @@ export class BitNetEncoderDecoderGenerationSession {
   }
 
   async next(tokenId) {
+    const hidden = await this.nextHidden(tokenId);
+    return this.runtime.linear("lm_head").run(hidden, 1);
+  }
+
+  async nextHidden(tokenId) {
     await this.prepare();
     let x = embed([Number(tokenId)], this.runtime.tensor("dec_embed.weight"), this.runtime.graph.d_model);
     for (let i = 0; i < this.runtime.graph.n_layers; i += 1) {
       x = await this.runtime.decoderLayerIncremental(i, x, this.memory, this.memoryLen, this.layerCaches[i]);
     }
+    return this.runtime.norm("dec_norm", x, 1);
+  }
+
+  async sampleNext(tokenId, generatedIds, options = {}) {
+    if (!this.runtime.wasmOps?.bitnet_sample_token_f32) return null;
+    const lmHead = this.runtime.linear("lm_head");
+    if (!lmHead.handle) return null;
+    const hidden = await this.nextHidden(tokenId);
+    const sample = this.runtime.wasmOps.bitnet_sample_token_f32(
+      lmHead.handle,
+      hidden,
+      toUint32IdArray(generatedIds),
+      toUint32IdArray(options.blockedIds),
+      Number(options.temperature ?? 0.35),
+      Number(options.topP ?? 0.9),
+      Number(options.repetitionPenalty ?? 1.16),
+      Number(options.randomValue ?? Math.random()),
+    );
+    return {
+      tokenId: Number(sample.token_id),
+      probability: Number(sample.probability),
+      topProbability: Number(sample.top_probability),
+      rank: Number(sample.rank),
+    };
+  }
+
+  cloneState() {
+    return this.layerCaches.map((cache) => {
+      const cloned = { ...cache };
+      if (cache.selfAttention?.clone_cache) {
+        cloned.selfAttention = cache.selfAttention.clone_cache();
+      }
+      if (cache.crossAttention?.clone_cache) {
+        cloned.crossAttention = cache.crossAttention.clone_cache();
+      }
+      if (cache.decoderLayer?.clone_cache) {
+        cloned.decoderLayer = cache.decoderLayer.clone_cache();
+      }
+      if (cache.selfK) {
+        cloned.selfK = cache.selfK.slice();
+        cloned.selfKLength = cloned.selfK.length;
+        cloned.selfKCapacity = cloned.selfK.length;
+      }
+      if (cache.selfV) {
+        cloned.selfV = cache.selfV.slice();
+        cloned.selfVLength = cloned.selfV.length;
+        cloned.selfVCapacity = cloned.selfV.length;
+      }
+      return cloned;
+    });
+  }
+
+  restoreState(layerCaches) {
+    this.layerCaches = layerCaches;
+  }
+
+  async nextMany(tokenIds) {
+    const ids = Array.from(tokenIds || [], Number).filter((id) => Number.isFinite(id));
+    if (!ids.length) return new Float32Array(0);
+    await this.prepare();
+    let x = embed(ids, this.runtime.tensor("dec_embed.weight"), this.runtime.graph.d_model);
+    for (let i = 0; i < this.runtime.graph.n_layers; i += 1) {
+      x = await this.runtime.decoderLayerIncrementalSpan(i, x, ids.length, this.memory, this.memoryLen, this.layerCaches[i]);
+    }
     const hidden = layerNorm(
       x,
-      1,
+      ids.length,
       this.runtime.graph.d_model,
       this.runtime.tensor("dec_norm.weight"),
       this.runtime.dense["dec_norm.bias"]?.data,
     );
-    return this.runtime.linear("lm_head").run(hidden, 1);
+    return this.runtime.linear("lm_head").run(hidden, ids.length);
   }
 }
 
 export class BitNetEncoderDecoderWASM extends BitNetEncoderDecoderWebGPU {
   constructor(manifest, manifestUrl, denseTensors, linears) {
     super(null, manifest, manifestUrl, denseTensors, linears);
+    this.wasmOps = Object.values(linears || {}).find((layer) => layer?.wasm)?.wasm || null;
   }
 
   static async fromManifestUrl(manifestUrl, options = {}) {
