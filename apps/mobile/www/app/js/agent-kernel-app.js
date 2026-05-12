@@ -4252,6 +4252,20 @@ function linkArxivIds(html) {
   );
 }
 
+function linkBareUrls(html) {
+  return String(html || '')
+    .split(/(<a\b[^>]*>[\s\S]*?<\/a>|<code>[\s\S]*?<\/code>)/gi)
+    .map((segment) => {
+      if (/^<(a\b|code>)/i.test(segment)) return segment;
+      return segment.replace(/https?:\/\/[^\s<]+/gi, (raw) => {
+        const trimmed = raw.replace(/[),.;!?]+$/g, '');
+        const suffix = raw.slice(trimmed.length);
+        return `<a class="inline-web-link" href="${trimmed}" target="_blank" rel="noopener noreferrer">${trimmed}</a>${suffix}`;
+      });
+    })
+    .join('');
+}
+
 function linkEvidenceCitations(html) {
   if (!state.retrievalRows.length) return html;
   return html.replace(/(^|[^\w])\[(P?)(\d{1,2})\]/gi, (match, prefix, marker, number) => {
@@ -4300,6 +4314,7 @@ function bindEvidenceAttribution(text, rows = state.retrievalRows) {
 function renderInline(value, options = {}) {
   let html = escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>');
   html = linkArxivIds(html);
+  html = linkBareUrls(html);
   if (options.linkEvidence) html = linkEvidenceCitations(html);
   return html;
 }
