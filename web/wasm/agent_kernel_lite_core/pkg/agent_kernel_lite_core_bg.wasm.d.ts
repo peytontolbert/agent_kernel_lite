@@ -1,0 +1,36 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const image_ternary_linear_f32: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number, number];
+export const image_ternary_packed_2bit_linear_f32: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number, number];
+export const __wbg_agentlitecore_free: (a: number, b: number) => void;
+export const agentlitecore_new: (a: number, b: number, c: number, d: number, e: number) => number;
+export const agentlitecore_set_mode: (a: number, b: number, c: number) => void;
+export const agentlitecore_reset: (a: number) => void;
+export const agentlitecore_step_count: (a: number) => number;
+export const agentlitecore_can_continue: (a: number) => number;
+export const agentlitecore_start_turn: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+export const agentlitecore_finish_turn: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_finish_model_reply: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_parse_model_decision: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+export const agentlitecore_plan_lite_turn: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+export const agentlitecore_rank_evidence: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+export const agentlitecore_compile_context_packet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+export const agentlitecore_start_turn_with_context: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+export const agentlitecore_register_extension_manifest: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_install_extension_manifest: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_uninstall_extension: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_set_extension_enabled: (a: number, b: number, c: number, d: number) => [number, number];
+export const agentlitecore_list_extension_manifests: (a: number) => [number, number];
+export const agentlitecore_propose_extension_action: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+export const agentlitecore_propose_last_decision_extension_action: (a: number, b: number, c: number) => [number, number];
+export const agentlitecore_record_extension_result: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+export const agentlitecore_export_episode_json: (a: number) => [number, number];
+export const agentlitecore_runtime_attestation: (a: number) => [number, number];
+export const agentlitecore_snapshot_json: (a: number) => [number, number];
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

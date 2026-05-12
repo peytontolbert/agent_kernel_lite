@@ -10,7 +10,13 @@
       "objects.githubusercontent.com",
       "release-assets.githubusercontent.com",
       "huggingface.co",
-      "*.huggingface.co"
+      "*.huggingface.co",
+      "duckduckgo.com",
+      "*.duckduckgo.com",
+      "google.com",
+      "*.google.com",
+      "bing.com",
+      "*.bing.com"
     ]
   }
 }

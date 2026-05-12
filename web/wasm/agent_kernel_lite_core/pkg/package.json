@@ -1,0 +1,15 @@
+{
+  "name": "agent_kernel_lite_core",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "agent_kernel_lite_core_bg.wasm",
+    "agent_kernel_lite_core.js",
+    "agent_kernel_lite_core.d.ts"
+  ],
+  "main": "agent_kernel_lite_core.js",
+  "types": "agent_kernel_lite_core.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

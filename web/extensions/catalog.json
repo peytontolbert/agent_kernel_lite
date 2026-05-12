@@ -1,5 +1,18 @@
 {
   "schema": "agent_kernel_lite_available_extensions",
   "version": "0.1.0",
-  "extensions": []
+  "extensions": [
+    {
+      "id": "image_generation",
+      "name": "Image Generation",
+      "source": "local",
+      "manifest": "./image_generation.dev.json"
+    },
+    {
+      "id": "web_search",
+      "name": "Web Search",
+      "source": "local",
+      "manifest": "./web_search.json"
+    }
+  ]
 }

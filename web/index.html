@@ -220,9 +220,78 @@
       margin-top: 10px;
     }
 
+    .module-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 14px;
+    }
+
+    .module-tab {
+      min-width: 0;
+      border-color: var(--line);
+      background: var(--panel-2);
+      color: var(--soft);
+      padding-inline: 8px;
+    }
+
+    .module-tab.active {
+      border-color: rgba(45, 212, 191, 0.54);
+      background: rgba(45, 212, 191, 0.12);
+      color: var(--text);
+    }
+
+    .module-panel {
+      margin-top: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .module-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .agent-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .agent-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      padding: 8px;
+    }
+
+    .agent-row strong,
+    .agent-row span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .agent-row span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .agent-actions {
+      display: grid;
+      gap: 6px;
+      min-width: 82px;
+    }
+
     .mode-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 8px;
       margin-top: 8px;
     }
@@ -1586,32 +1655,101 @@
       </div>
     </div>
 
-    <h2>Mode</h2>
-    <div class="mode-grid" role="group" aria-label="Response mode">
-      <button id="chatModeButton" class="mode-button active" type="button" data-mode="chat" aria-pressed="true">Chat</button>
-      <button id="quickSearchModeButton" class="mode-button" type="button" data-mode="quick_search" aria-pressed="false">Search</button>
-      <button id="thinkModeButton" class="mode-button" type="button" data-mode="think" aria-pressed="false">Think</button>
-      <button id="deepResearchModeButton" class="mode-button" type="button" data-mode="deep_research" aria-pressed="false">Deep</button>
-    </div>
-    <div class="image-toggle-row">
-      <p id="imageModeDetail">Chat runtime</p>
-      <button id="imageModeButton" class="image-toggle-button" type="button" aria-pressed="false">Image Off</button>
+    <div class="module-tabs" role="tablist" aria-label="PocketPal modules">
+      <button id="assistantModuleTab" class="module-tab active" type="button" data-module="assistant" role="tab" aria-selected="true">Assistant</button>
+      <button id="retrievalModuleTab" class="module-tab" type="button" data-module="retrieval" role="tab" aria-selected="false">Retrieval</button>
+      <button id="agentsModuleTab" class="module-tab" type="button" data-module="agents" role="tab" aria-selected="false">Agents</button>
     </div>
 
-    <details class="extensions-panel" id="extensionsPanel">
-      <summary>Extensions</summary>
-      <div class="extensions-body">
-        <h3>Installed</h3>
-        <div id="extensionList"></div>
-        <h3>Available</h3>
-        <div id="availableExtensionList"></div>
-        <div class="extension-install">
-          <label for="extensionManifestUrl">Install GitHub release manifest</label>
-          <input id="extensionManifestUrl" type="url" placeholder="https://github.com/owner/repo/releases/download/v5/extension.json" autocomplete="off">
-          <button id="installExtensionButton" type="button" class="secondary">Install Extension</button>
-        </div>
+    <section id="assistantModulePanel" class="module-panel" data-module-panel="assistant" role="tabpanel" aria-labelledby="assistantModuleTab">
+      <h2>Mode</h2>
+      <div class="mode-grid" role="group" aria-label="Response mode">
+        <button id="chatModeButton" class="mode-button active" type="button" data-mode="chat" aria-pressed="true">Chat</button>
+        <button id="quickSearchModeButton" class="mode-button" type="button" data-mode="quick_search" aria-pressed="false">Search</button>
+        <button id="webSearchModeButton" class="mode-button" type="button" data-mode="web_search" aria-pressed="false">Web</button>
+        <button id="thinkModeButton" class="mode-button" type="button" data-mode="think" aria-pressed="false">Think</button>
+        <button id="deepResearchModeButton" class="mode-button" type="button" data-mode="deep_research" aria-pressed="false">Deep</button>
       </div>
-    </details>
+      <div class="image-toggle-row">
+        <p id="imageModeDetail">Chat runtime</p>
+        <button id="imageModeButton" class="image-toggle-button" type="button" aria-pressed="false">Image Off</button>
+      </div>
+
+      <details class="extensions-panel" id="extensionsPanel">
+        <summary>Extensions</summary>
+        <div class="extensions-body">
+          <h3>Installed</h3>
+          <div id="extensionList"></div>
+          <h3>Available</h3>
+          <div id="availableExtensionList"></div>
+          <div class="extension-install">
+            <label for="extensionManifestUrl">Install GitHub release manifest</label>
+            <input id="extensionManifestUrl" type="url" placeholder="https://github.com/owner/repo/releases/download/v5/extension.json" autocomplete="off">
+            <button id="installExtensionButton" type="button" class="secondary">Install Extension</button>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section id="retrievalModulePanel" class="module-panel" data-module-panel="retrieval" role="tabpanel" aria-labelledby="retrievalModuleTab" hidden>
+      <h2>Retrieval</h2>
+      <p class="module-note">Store or point to the data PocketPal should use. Assistant modes and custom agents can use these sources when compiling context.</p>
+      <label for="packSelect">Paper pack</label>
+      <select id="packSelect">
+        <option value="50000">50k papers</option>
+        <option value="200000">200k papers</option>
+        <option value="1000000">1M metadata</option>
+      </select>
+      <div class="button-row">
+        <button id="loadPackButton" type="button">Load Research</button>
+        <button id="persistButton" type="button" class="secondary">Keep Offline</button>
+      </div>
+      <label for="userDataSourceInput">User data pointers</label>
+      <textarea id="userDataSourceInput" placeholder="Paste notes, file paths, folder hints, dataset URLs, or short descriptions of data PocketPal should use."></textarea>
+      <div class="button-row">
+        <button id="saveUserDataSourceButton" type="button" class="secondary">Save Source</button>
+        <button id="clearUserDataSourceButton" type="button" class="secondary">Clear</button>
+      </div>
+      <label for="userDataFileInput">Local files</label>
+      <input id="userDataFileInput" type="file" multiple accept=".txt,.md,.markdown,.json,.jsonl,.csv,.tsv,.log,.yaml,.yml">
+      <label for="webSearchMaxSourcesInput">Web search sources</label>
+      <input id="webSearchMaxSourcesInput" type="number" min="1" max="5" step="1" value="5">
+      <div id="userDataSourceList" class="agent-list"></div>
+    </section>
+
+    <section id="agentsModulePanel" class="module-panel" data-module-panel="agents" role="tabpanel" aria-labelledby="agentsModuleTab" hidden>
+      <h2>Agents</h2>
+      <p class="module-note">Create a local agent profile that controls prompt style, retrieval behavior, tool routing, and action policy for the same on-device model.</p>
+      <label for="agentNameInput">Agent name</label>
+      <input id="agentNameInput" type="text" placeholder="Launch planner" autocomplete="off">
+      <label for="agentInstructionInput">Agent instruction</label>
+      <textarea id="agentInstructionInput" placeholder="Handle product planning. Use saved memory and ask before extensions. Prefer short action lists."></textarea>
+      <label for="agentRetrievalPolicySelect">Retrieval policy</label>
+      <select id="agentRetrievalPolicySelect">
+        <option value="auto">Auto</option>
+        <option value="always">Always retrieve</option>
+        <option value="local_first">Local/user data first</option>
+        <option value="none">No retrieval</option>
+      </select>
+      <label for="agentToolPolicySelect">Tool policy</label>
+      <select id="agentToolPolicySelect">
+        <option value="ask_before_extensions">Ask before extensions</option>
+        <option value="suggest_only">Suggest only</option>
+        <option value="installed_only">Installed extensions only</option>
+      </select>
+      <label for="agentActionPolicySelect">Action policy</label>
+      <select id="agentActionPolicySelect">
+        <option value="respond_or_ask">Respond or ask</option>
+        <option value="allow_memory">Allow memory saves</option>
+        <option value="allow_extension_requests">Allow extension requests</option>
+        <option value="full_local_agent">Full local agent</option>
+      </select>
+      <div class="button-row">
+        <button id="createAgentButton" type="button">Create Agent</button>
+        <button id="clearActiveAgentButton" type="button" class="secondary">Use Assistant</button>
+      </div>
+      <div id="agentList" class="agent-list"></div>
+    </section>
 
     <details class="status-details">
       <summary>Status</summary>
@@ -1641,19 +1779,6 @@
         <option value="256">Medium</option>
         <option value="384">Long</option>
       </select>
-
-      <h2>Research</h2>
-      <label for="packSelect">Paper pack</label>
-      <select id="packSelect">
-        <option value="50000">50k papers</option>
-        <option value="200000">200k papers</option>
-        <option value="1000000">1M metadata</option>
-      </select>
-      <div class="button-row">
-        <button id="loadPackButton" type="button">Load Research</button>
-        <button id="persistButton" type="button" class="secondary">Keep Offline</button>
-      </div>
-
       <div class="button-row compact">
         <button id="resetChatButton" type="button" class="secondary">New Chat</button>
       </div>

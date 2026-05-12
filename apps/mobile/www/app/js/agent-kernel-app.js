@@ -29,6 +29,11 @@ const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
 const THEME_STORAGE_KEY = 'agent-kernel-lite-theme';
+const POCKETPAL_MEMORY_STORAGE_KEY = 'agent-kernel-lite-pocketpal-memory-v1';
+const POCKETPAL_SLOTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-slots-v1';
+const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sources-v1';
+const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
+const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v15';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
@@ -40,6 +45,14 @@ const GITHUB_RELEASE_ROOT = `https://github.com/${GITHUB_RELEASE_REPO}/releases/
 const PINNED_GITHUB_RELEASE_ROOT = `${GITHUB_RELEASE_ROOT}/${GITHUB_RELEASE_TAG}`;
 const AVAILABLE_EXTENSIONS_CATALOG_URL = './extensions/catalog.json';
 const LOCAL_AVAILABLE_EXTENSIONS = [
+  {
+    id: 'web_search',
+    name: 'Web Search',
+    source: 'local',
+    manifest: './extensions/web_search.json',
+    description: 'Open user-visible web searches from PocketPal.',
+    setup: 'Uses the current browser surface; on iPhone this runs through the app web view or system browser depending on the native shell.',
+  },
   ...(isLocalDevelopmentUrl(new URL(window.location.href)) ? [{
     id: 'image_generation',
     name: 'Image Generation',
@@ -86,6 +99,19 @@ const MODE_CONFIG = {
     temperature: 0,
     minTokens: 0,
     placeholder: 'Search papers...',
+  },
+  web_search: {
+    label: 'Web',
+    pill: 'web search',
+    contextItems: 0,
+    semanticTopK: 0,
+    hfSearchRows: 0,
+    candidateFloor: 0,
+    excerptChars: 0,
+    selectedExcerptChars: 0,
+    temperature: 0,
+    minTokens: 0,
+    placeholder: 'Search the web...',
   },
   think: {
     label: 'Think',
@@ -202,6 +228,11 @@ const state = {
   retrievalRows: [],
   pendingContextRows: [],
   lastDecisionPacket: null,
+  pocketPalMemory: [],
+  pocketPalSlots: {},
+  pocketPalDataSources: [],
+  pocketPalAgents: [],
+  activeAgentId: '',
   messages: [],
   mode: 'chat',
   image: {
@@ -214,7 +245,7 @@ const state = {
     activeActionId: null,
     extensionId: 'image_generation',
     capabilityId: 'image.generate',
-    modelId: URL_PARAMS.get('imageModel') || (isLocalDevelopmentUrl(new URL(window.location.href)) ? 'agentkernel_lite_image_flux_student_dense_dev_v0' : 'agentkernel_lite_image_bitdit_hf_cifar_distilled_v1'),
+    modelId: URL_PARAMS.get('imageModel') || (isLocalDevelopmentUrl(new URL(window.location.href)) ? 'agentkernel_lite_image_sana_300m_bitnet_block12_13ff_browser_v0' : 'agentkernel_lite_image_bitdit_hf_cifar_distilled_v1'),
   },
   translation: {
     enabled: false,
@@ -225,6 +256,12 @@ const state = {
     textCapabilityId: 'translation.text',
     audioCapabilityId: 'translation.audio',
     activeActionId: null,
+  },
+  webSearch: {
+    extensionId: 'web_search',
+    searchCapabilityId: 'web.search',
+    openCapabilityId: 'web.open_url',
+    maxSources: 5,
   },
   processRunId: 0,
   generationRunId: 0,
@@ -244,11 +281,28 @@ const els = {
   tokens: document.getElementById('tokenSelect'),
   chatMode: document.getElementById('chatModeButton'),
   quickSearchMode: document.getElementById('quickSearchModeButton'),
+  webSearchMode: document.getElementById('webSearchModeButton'),
   thinkMode: document.getElementById('thinkModeButton'),
   deepResearchMode: document.getElementById('deepResearchModeButton'),
   modeButtons: [...document.querySelectorAll('.mode-button')],
+  moduleTabs: [...document.querySelectorAll('.module-tab')],
+  modulePanels: [...document.querySelectorAll('[data-module-panel]')],
   imageMode: document.getElementById('imageModeButton'),
   imageModeDetail: document.getElementById('imageModeDetail'),
+  userDataSource: document.getElementById('userDataSourceInput'),
+  saveUserDataSource: document.getElementById('saveUserDataSourceButton'),
+  clearUserDataSource: document.getElementById('clearUserDataSourceButton'),
+  userDataFileInput: document.getElementById('userDataFileInput'),
+  webSearchMaxSources: document.getElementById('webSearchMaxSourcesInput'),
+  userDataSourceList: document.getElementById('userDataSourceList'),
+  agentName: document.getElementById('agentNameInput'),
+  agentInstruction: document.getElementById('agentInstructionInput'),
+  agentRetrievalPolicy: document.getElementById('agentRetrievalPolicySelect'),
+  agentToolPolicy: document.getElementById('agentToolPolicySelect'),
+  agentActionPolicy: document.getElementById('agentActionPolicySelect'),
+  createAgent: document.getElementById('createAgentButton'),
+  clearActiveAgent: document.getElementById('clearActiveAgentButton'),
+  agentList: document.getElementById('agentList'),
   extensionList: document.getElementById('extensionList'),
   availableExtensionList: document.getElementById('availableExtensionList'),
   extensionManifestUrl: document.getElementById('extensionManifestUrl'),
@@ -445,6 +499,7 @@ function syncModelControls() {
   const imageMode = Boolean(state.image.enabled);
   const imageBusy = Boolean(state.image.busy);
   const translationBusy = Boolean(state.translation.busy || state.translation.listening);
+  const browserOnlyMode = state.mode === 'web_search';
   if (els.loadModel) {
     els.loadModel.disabled = imageMode || loading || state.processActive;
     els.loadModel.textContent = loaded ? 'Reload Runtime' : loading ? 'Loading...' : 'Load Runtime';
@@ -453,7 +508,7 @@ function syncModelControls() {
     els.unloadModel.disabled = imageMode || loading || state.processActive || !state.worker;
   }
   if (els.send) {
-    els.send.disabled = state.processActive || imageBusy || translationBusy || (imageMode ? false : loading || !loaded);
+    els.send.disabled = state.processActive || imageBusy || translationBusy || (imageMode || browserOnlyMode ? false : loading || !loaded);
     els.send.textContent = imageMode
       ? imageBusy ? 'Generating...' : 'Generate'
       : state.translation.enabled
@@ -697,6 +752,469 @@ function setTranslationMode(enabled) {
   log(`translator extension ${requested ? 'enabled' : 'disabled'}`);
   syncTranslationControls();
   syncModelControls();
+}
+
+function isUserVisibleWebSearchRequest(text) {
+  const normalized = String(text || '').toLowerCase();
+  return [
+    'search the web',
+    'web search',
+    'look online',
+    'search online',
+    'internet search',
+    'google ',
+    'open a search',
+    'search safari',
+    'search in safari',
+  ].some((phrase) => normalized.includes(phrase));
+}
+
+function cleanWebSearchQuery(text) {
+  let query = String(text || '').trim();
+  query = query
+    .replace(/^(please\s+)?(can you\s+)?(do a\s+)?(web|internet|online)\s+search\s+(for|about)\s+/i, '')
+    .replace(/^(please\s+)?(can you\s+)?search\s+(the\s+)?(web|internet|online)\s+(for|about)\s+/i, '')
+    .replace(/^(please\s+)?(can you\s+)?look\s+online\s+(for|about)\s+/i, '')
+    .replace(/^(please\s+)?google\s+/i, '')
+    .replace(/\b(and\s+)?(summari[sz]e|explain|tell me|give me|show me)\b.*$/i, '')
+    .replace(/\b(what did you find|main points|key points|latest info|relevant information)\b.*$/i, '')
+    .replace(/[?.!,;:\s]+$/g, '')
+    .trim();
+  return query || String(text || '').trim();
+}
+
+function webSearchUrl(query, engine = 'duckduckgo') {
+  const safeQuery = String(query || '').trim();
+  const encoded = encodeURIComponent(safeQuery);
+  if (engine === 'google') return `https://www.google.com/search?q=${encoded}`;
+  if (engine === 'bing') return `https://www.bing.com/search?q=${encoded}`;
+  return `https://duckduckgo.com/?q=${encoded}`;
+}
+
+function openUserVisibleUrl(url) {
+  const opened = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    appendMessage('assistant', `I prepared the web search, but the browser blocked opening it automatically: ${url}`);
+    return false;
+  }
+  return true;
+}
+
+function webResultUrl(result) {
+  return String(result?.url || '').trim();
+}
+
+function normalizeWebResult(result) {
+  const title = String(result?.title || '').replace(/\s+/g, ' ').trim();
+  const url = webResultUrl(result);
+  const snippet = String(result?.snippet || result?.description || '').replace(/\s+/g, ' ').trim();
+  const source = String(result?.source || '').replace(/\s+/g, ' ').trim();
+  if (!title || !url) return null;
+  return {
+    source: source || new URL(url).hostname.replace(/^www\./, ''),
+    title: shortText(title, 160),
+    url,
+    snippet: shortText(snippet, 420),
+    published: result?.published ? String(result.published) : '',
+  };
+}
+
+function scoreWebResult(query, result) {
+  const queryTokens = new Set(contentTokens(query));
+  if (!queryTokens.size) return 0;
+  const resultTokens = contentTokens(`${result.title || ''} ${result.snippet || ''} ${result.source || ''}`);
+  let score = 0;
+  for (const token of resultTokens) {
+    if (queryTokens.has(token)) score += 1;
+  }
+  return score + (result.snippet ? 0.5 : 0);
+}
+
+const WEB_SEARCH_GENERIC_TOKENS = new Set([
+  'search',
+  'web',
+  'browser',
+  'local',
+  'model',
+  'models',
+  'comparison',
+  'timeline',
+  'production',
+  'market',
+  'impact',
+  'approval',
+  'agreement',
+  'source',
+  'sources',
+]);
+
+function distinctiveWebTokens(query) {
+  return [...new Set(contentTokens(query))]
+    .filter((token) => token.length > 3 && !WEB_SEARCH_GENERIC_TOKENS.has(token));
+}
+
+function distinctiveWebMatchCount(query, result) {
+  const tokens = distinctiveWebTokens(query);
+  if (!tokens.length) return 0;
+  const haystack = normalizeSearchText(`${result.title || ''} ${result.snippet || ''} ${result.source || ''}`);
+  return tokens.filter((token) => haystack.includes(token)).length;
+}
+
+function hasEnoughWebQueryCoverage(query, result) {
+  const tokens = distinctiveWebTokens(query);
+  if (tokens.length <= 1) return true;
+  const matches = distinctiveWebMatchCount(query, result);
+  return matches >= Math.min(2, tokens.length);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json,text/plain,*/*',
+        ...(options.headers || {}),
+      },
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function searchWikipedia(query, limit) {
+  const url = new URL('https://en.wikipedia.org/w/api.php');
+  url.searchParams.set('origin', '*');
+  url.searchParams.set('action', 'query');
+  url.searchParams.set('list', 'search');
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('srlimit', String(Math.min(limit, 5)));
+  url.searchParams.set('srsearch', query);
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`Wikipedia ${response.status}`);
+  const data = await response.json();
+  return (data.query?.search || []).map((item) => normalizeWebResult({
+    source: 'Wikipedia',
+    title: item.title,
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(item.title || '').replace(/\s+/g, '_'))}`,
+    snippet: String(item.snippet || '').replace(/<[^>]*>/g, ''),
+    published: item.timestamp || '',
+  })).filter(Boolean);
+}
+
+async function searchDuckDuckGoInstant(query, limit) {
+  const url = new URL('https://api.duckduckgo.com/');
+  url.searchParams.set('q', query);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('no_html', '1');
+  url.searchParams.set('skip_disambig', '1');
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`DuckDuckGo ${response.status}`);
+  const data = await response.json();
+  const rows = [];
+  if (data.AbstractText && data.AbstractURL) {
+    rows.push(normalizeWebResult({
+      source: data.AbstractSource || 'DuckDuckGo',
+      title: data.Heading || query,
+      url: data.AbstractURL,
+      snippet: data.AbstractText,
+    }));
+  }
+  const related = [];
+  for (const topic of data.RelatedTopics || []) {
+    if (topic.Topics) related.push(...topic.Topics);
+    else related.push(topic);
+  }
+  for (const topic of related.slice(0, limit)) {
+    rows.push(normalizeWebResult({
+      source: 'DuckDuckGo',
+      title: topic.Text || topic.FirstURL || query,
+      url: topic.FirstURL || '',
+      snippet: topic.Text || '',
+    }));
+  }
+  return rows.filter(Boolean);
+}
+
+async function searchOpenAlex(query, limit) {
+  const url = new URL('https://api.openalex.org/works');
+  url.searchParams.set('search', query);
+  url.searchParams.set('per-page', String(Math.min(limit, 5)));
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`OpenAlex ${response.status}`);
+  const data = await response.json();
+  return (data.results || []).map((item) => normalizeWebResult({
+    source: 'OpenAlex',
+    title: item.display_name || '',
+    url: item.doi ? `https://doi.org/${String(item.doi).replace(/^https?:\/\/doi.org\//i, '')}` : item.id,
+    snippet: item.primary_location?.source?.display_name
+      ? `${item.primary_location.source.display_name}${item.publication_year ? `, ${item.publication_year}` : ''}`
+      : `Scholarly result${item.publication_year ? ` from ${item.publication_year}` : ''}`,
+    published: item.publication_year || '',
+  })).filter(Boolean);
+}
+
+async function searchCrossref(query, limit) {
+  const url = new URL('https://api.crossref.org/works');
+  url.searchParams.set('query', query);
+  url.searchParams.set('rows', String(Math.min(limit, 5)));
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`Crossref ${response.status}`);
+  const data = await response.json();
+  return (data.message?.items || []).map((item) => normalizeWebResult({
+    source: 'Crossref',
+    title: Array.isArray(item.title) ? item.title[0] : item.title,
+    url: item.URL || (item.DOI ? `https://doi.org/${item.DOI}` : ''),
+    snippet: [
+      Array.isArray(item.publisher) ? item.publisher[0] : item.publisher,
+      item.issued?.['date-parts']?.[0]?.[0],
+      Array.isArray(item.subject) ? item.subject.slice(0, 3).join(', ') : '',
+    ].filter(Boolean).join(' | '),
+    published: item.issued?.['date-parts']?.[0]?.[0] || '',
+  })).filter(Boolean);
+}
+
+async function searchHackerNews(query, limit) {
+  const url = new URL('https://hn.algolia.com/api/v1/search');
+  url.searchParams.set('query', query);
+  url.searchParams.set('tags', 'story');
+  url.searchParams.set('hitsPerPage', String(Math.min(limit, 5)));
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`Hacker News ${response.status}`);
+  const data = await response.json();
+  return (data.hits || []).map((item) => normalizeWebResult({
+    source: 'Hacker News',
+    title: item.title || item.story_title || '',
+    url: item.url || `https://news.ycombinator.com/item?id=${item.objectID}`,
+    snippet: `${formatCount(item.points || 0)} points | ${formatCount(item.num_comments || 0)} comments`,
+    published: item.created_at || '',
+  })).filter(Boolean);
+}
+
+async function searchStackExchange(query, limit) {
+  const url = new URL('https://api.stackexchange.com/2.3/search/advanced');
+  url.searchParams.set('order', 'desc');
+  url.searchParams.set('sort', 'relevance');
+  url.searchParams.set('site', 'stackoverflow');
+  url.searchParams.set('pagesize', String(Math.min(limit, 5)));
+  url.searchParams.set('q', query);
+  const response = await fetchWithTimeout(url.href);
+  if (!response.ok) throw new Error(`StackExchange ${response.status}`);
+  const data = await response.json();
+  return (data.items || []).map((item) => normalizeWebResult({
+    source: 'Stack Overflow',
+    title: item.title || '',
+    url: item.link || '',
+    snippet: [
+      item.is_answered ? 'answered' : 'unanswered',
+      `${formatCount(item.score || 0)} score`,
+      `${formatCount(item.answer_count || 0)} answers`,
+    ].join(' | '),
+    published: item.creation_date ? new Date(item.creation_date * 1000).toISOString().slice(0, 10) : '',
+  })).filter(Boolean);
+}
+
+async function searchGitHub(query, limit) {
+  const url = new URL('https://api.github.com/search/repositories');
+  url.searchParams.set('q', query);
+  url.searchParams.set('sort', 'stars');
+  url.searchParams.set('order', 'desc');
+  url.searchParams.set('per_page', String(Math.min(limit, 5)));
+  const response = await fetchWithTimeout(url.href, {
+    headers: { accept: 'application/vnd.github+json' },
+  });
+  if (!response.ok) throw new Error(`GitHub ${response.status}`);
+  const data = await response.json();
+  return (data.items || []).map((item) => normalizeWebResult({
+    source: 'GitHub',
+    title: item.full_name || item.name || '',
+    url: item.html_url || '',
+    snippet: [
+      item.description || '',
+      `${formatCount(item.stargazers_count || 0)} stars`,
+      item.language || '',
+    ].filter(Boolean).join(' | '),
+    published: item.updated_at || '',
+  })).filter(Boolean);
+}
+
+async function performWebSearch(query, maxSources = state.webSearch.maxSources) {
+  const limit = Math.max(1, Math.min(5, Number(maxSources || 5)));
+  const providers = [searchDuckDuckGoInstant, searchWikipedia, searchStackExchange, searchGitHub, searchOpenAlex, searchCrossref, searchHackerNews];
+  const settled = await Promise.allSettled(providers.map((provider) => provider(query, limit)));
+  const errors = [];
+  const seen = new Set();
+  const results = [];
+  for (const item of settled) {
+    if (item.status === 'rejected') {
+      errors.push(item.reason?.message || String(item.reason));
+      continue;
+    }
+    for (const result of item.value || []) {
+      const key = webResultUrl(result).toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      if (hasEnoughWebQueryCoverage(query, result)) results.push(result);
+    }
+  }
+  const ranked = results
+    .map((result, index) => ({ ...result, _index: index, _score: scoreWebResult(query, result) }))
+    .sort((a, b) => (b._score - a._score) || (a._index - b._index));
+  const sourceCounts = new Map();
+  const selected = [];
+  for (const result of ranked) {
+    const source = result.source || 'source';
+    const count = sourceCounts.get(source) || 0;
+    if (count >= 2) continue;
+    selected.push(result);
+    sourceCounts.set(source, count + 1);
+    if (selected.length >= limit) break;
+  }
+  if (selected.length < limit) {
+    const selectedUrls = new Set(selected.map((result) => result.url));
+    for (const result of ranked) {
+      if (selectedUrls.has(result.url)) continue;
+      selected.push(result);
+      selectedUrls.add(result.url);
+      if (selected.length >= limit) break;
+    }
+  }
+  return {
+    query,
+    max_sources: limit,
+    results: selected
+      .map(({ _index, _score, ...result }) => result),
+    provider_errors: errors,
+  };
+}
+
+function webSearchAnswer(search, fallbackOpened = false, fallbackUrl = '') {
+  const results = search.results || [];
+  if (!results.length) {
+    return fallbackOpened
+      ? `I could not retrieve structured web results for "${search.query}". I opened a browser search so you can inspect results directly.`
+      : `I could not retrieve structured web results for "${search.query}". Search link: ${fallbackUrl || webSearchUrl(search.query)}`;
+  }
+  const lines = [
+    `Web results for: ${search.query}`,
+    `Quality: ${search.quality?.label || 'structured'} (${results.length}/${search.max_sources || results.length} sources)`,
+    '',
+    ...results.map((result, index) => [
+      `${index + 1}. ${result.title}`,
+      `Source: ${result.source}${result.published ? ` | ${result.published}` : ''}`,
+      result.snippet ? `Relevant info: ${result.snippet}` : '',
+      result.url,
+    ].filter(Boolean).join('\n')),
+  ];
+  return lines.join('\n\n');
+}
+
+function webSearchQuality(search) {
+  const results = search.results || [];
+  const sourceCount = new Set(results.map((result) => result.source).filter(Boolean)).size;
+  const label = !results.length
+    ? 'insufficient'
+    : results.length >= Math.min(3, search.max_sources || 5) && sourceCount >= 2
+      ? 'good'
+      : 'limited';
+  return {
+    label,
+    result_count: results.length,
+    source_count: sourceCount,
+    provider_error_count: (search.provider_errors || []).length,
+  };
+}
+
+function rememberWebSearchResults(search) {
+  if (!search.results?.length) return;
+  const body = [
+    `Query: ${search.query}`,
+    `Quality: ${search.quality?.label || 'structured'}`,
+    ...search.results.map((result, index) => (
+      `[W${index + 1}] ${result.title} | ${result.source}${result.published ? ` | ${result.published}` : ''}\n`
+      + `${result.snippet || ''}\n${result.url}`
+    )),
+  ].join('\n\n');
+  addPocketPalDataSource({
+    source_type: 'web_search',
+    title: `Web search: ${shortText(search.query, 80)}`,
+    text: body,
+    bytes: body.length,
+  });
+}
+
+async function runWebSearch(query, options = {}) {
+  const searchQuery = cleanWebSearchQuery(query);
+  if (!searchQuery) return { status: 'error', error: 'empty web search query' };
+  if (!extensionEnabled(state.webSearch.extensionId)) {
+    setExtensionEnabled(state.webSearch.extensionId, true);
+  }
+  const maxSources = Math.max(1, Math.min(5, Number(options.maxSources || state.webSearch.maxSources || 5)));
+  const url = webSearchUrl(searchQuery, options.engine || 'duckduckgo');
+  const proposal = proposeExtensionAction(state.webSearch.extensionId, state.webSearch.searchCapabilityId, {
+    query: searchQuery,
+    max_sources: maxSources,
+    url,
+    surface: NATIVE_APP ? 'ios_wkwebview' : 'browser',
+    user_visible: true,
+  });
+  if (proposal.status !== 'pending_user_approval') {
+    appendMessage('assistant', `Web search could not start: ${proposal.error || proposal.status || 'extension unavailable'}`);
+    log(`web search failed: ${proposal.error || proposal.status || 'extension unavailable'}`);
+    return proposal;
+  }
+  const search = await performWebSearch(searchQuery, maxSources);
+  search.quality = webSearchQuality(search);
+  const opened = search.results.length ? false : openUserVisibleUrl(url);
+  recordExtensionResult(proposal.action_id, {
+    action_id: proposal.action_id,
+    status: search.results.length || opened ? 'approved_executed' : 'failed',
+    output: {
+      query: searchQuery,
+      max_sources: maxSources,
+      url,
+      opened,
+      result_access: search.results.length ? 'structured_public_sources' : 'user_visible_browser',
+      results: search.results,
+      quality: search.quality,
+      provider_errors: search.provider_errors,
+    },
+  });
+  rememberWebSearchResults(search);
+  appendMessage('assistant', webSearchAnswer(search, opened, url));
+  log(`web search returned ${formatCount(search.results.length)} result${search.results.length === 1 ? '' : 's'}: ${searchQuery}`);
+  return {
+    ...proposal,
+    status: search.results.length ? 'searched' : opened ? 'opened' : 'blocked',
+    query: searchQuery,
+    url,
+    results: search.results,
+    quality: search.quality,
+    provider_errors: search.provider_errors,
+  };
+}
+
+async function submitWebSearchPrompt(text) {
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  try {
+    if (!state.coreReady) await loadAgentCore();
+    setProcessStep('plan', 'done', `web_search: up to ${formatCount(state.webSearch.maxSources)} sources`);
+    setProcessStep('lookup', 'active', 'Searching public sources');
+    const result = await runWebSearch(text);
+    setProcessStep('lookup', result.results?.length || result.status === 'opened' ? 'done' : 'error', result.url || result.error || result.status);
+    setProcessStep('generate', 'done', 'Decoder skipped for browser search action');
+    setProcessStep('render', 'done', 'Search action rendered');
+    finishProcessTrace(result.results?.length ? 'Web Search' : result.status === 'opened' ? 'Browser Search' : 'Blocked');
+  } catch (error) {
+    setProcessStep('render', 'error', error.message || String(error));
+    appendMessage('assistant', `Web search failed: ${error.message || String(error)}`);
+    finishProcessTrace('Error');
+  } finally {
+    setControlsBusy(false);
+  }
 }
 
 function ensureImageWorker() {
@@ -2674,6 +3192,18 @@ function buildPromptFallback(userText, contextRows) {
     `Mode: ${config.label}`,
     selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
     '',
+    '<AK_PROFILE> PocketPal saved slots:',
+    pocketPalSlotContext(),
+    '',
+    '<AK_PROFILE> Active PocketPal agent:',
+    pocketPalAgentContext(),
+    '',
+    '<AK_PROFILE> PocketPal local memory:',
+    pocketPalMemoryContext(),
+    '',
+    '<AK_CONTEXT> User data pointers:',
+    pocketPalDataSourceContext(userText),
+    '',
     '<AK_HISTORY> Recent conversation:',
     historyContext(),
     '',
@@ -2828,6 +3358,18 @@ function buildPrompt(userText, contextRows) {
           '<AK_HISTORY> Recent conversation:',
           historyContext(),
           '',
+          '<AK_PROFILE> PocketPal saved slots:',
+          pocketPalSlotContext(),
+          '',
+          '<AK_PROFILE> Active PocketPal agent:',
+          pocketPalAgentContext(),
+          '',
+          '<AK_PROFILE> PocketPal local memory:',
+          pocketPalMemoryContext(),
+          '',
+          '<AK_CONTEXT> User data pointers:',
+          pocketPalDataSourceContext(userText),
+          '',
           '<AK_READING_NOTES> Semantic reading notes:',
           evidenceReadingNotes(userText, contextRows),
           selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
@@ -2857,9 +3399,607 @@ function recordAssistantTurn(text) {
   }
 }
 
+function decisionFromPacket(packet) {
+  return packet?.decision_packet?.decision || packet?.decision || null;
+}
+
 function displayTextFromDecision(packet, fallbackText) {
-  const decision = packet?.decision_packet?.decision || packet?.decision || null;
+  const decision = decisionFromPacket(packet);
   return String(decision?.content || fallbackText || 'No answer generated.');
+}
+
+function decisionAction(packet) {
+  const decision = decisionFromPacket(packet);
+  return String(decision?.action || '').trim();
+}
+
+function decisionExtensionMetadata(packet) {
+  const metadata = decisionFromPacket(packet)?.proposal_metadata || {};
+  const nested = metadata.extension && typeof metadata.extension === 'object' ? metadata.extension : {};
+  return {
+    extensionId: String(metadata.extension_id || metadata.extensionId || nested.id || nested.extension_id || '').trim(),
+    capability: String(metadata.capability || metadata.capability_id || nested.capability || nested.capability_id || '').trim(),
+    query: String(metadata.query || metadata.search_query || metadata.request || '').trim(),
+  };
+}
+
+function loadPocketPalMemory() {
+  try {
+    const raw = localStorage.getItem(POCKETPAL_MEMORY_STORAGE_KEY);
+    const rows = raw ? JSON.parse(raw) : [];
+    state.pocketPalMemory = Array.isArray(rows)
+      ? rows.filter((item) => item && typeof item === 'object' && String(item.text || '').trim()).slice(-100)
+      : [];
+  } catch (error) {
+    state.pocketPalMemory = [];
+    log(`PocketPal memory load skipped: ${error.message || String(error)}`);
+  }
+}
+
+function loadPocketPalSlots() {
+  try {
+    const raw = localStorage.getItem(POCKETPAL_SLOTS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    state.pocketPalSlots = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    state.pocketPalSlots = {};
+    log(`PocketPal slots load skipped: ${error.message || String(error)}`);
+  }
+}
+
+function loadPocketPalDataSources() {
+  try {
+    const raw = localStorage.getItem(POCKETPAL_DATA_SOURCES_STORAGE_KEY);
+    const rows = raw ? JSON.parse(raw) : [];
+    state.pocketPalDataSources = Array.isArray(rows)
+      ? rows.filter((item) => item && typeof item === 'object' && String(item.text || '').trim()).slice(-50)
+      : [];
+  } catch (error) {
+    state.pocketPalDataSources = [];
+    log(`PocketPal data source load skipped: ${error.message || String(error)}`);
+  }
+}
+
+function loadPocketPalAgents() {
+  try {
+    const raw = localStorage.getItem(POCKETPAL_AGENTS_STORAGE_KEY);
+    const payload = raw ? JSON.parse(raw) : {};
+    const rows = Array.isArray(payload) ? payload : payload.agents;
+    state.pocketPalAgents = Array.isArray(rows)
+      ? rows.filter((item) => item && typeof item === 'object' && String(item.name || '').trim()).slice(-24)
+      : [];
+    state.activeAgentId = typeof payload?.activeAgentId === 'string' ? payload.activeAgentId : '';
+  } catch (error) {
+    state.pocketPalAgents = [];
+    state.activeAgentId = '';
+    log(`PocketPal agents load skipped: ${error.message || String(error)}`);
+  }
+}
+
+function loadWebSearchSettings() {
+  try {
+    const raw = localStorage.getItem(WEB_SEARCH_SETTINGS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const maxSources = Math.max(1, Math.min(5, Number(parsed.max_sources || state.webSearch.maxSources || 5)));
+    state.webSearch.maxSources = maxSources;
+    if (els.webSearchMaxSources) els.webSearchMaxSources.value = String(maxSources);
+  } catch (error) {
+    state.webSearch.maxSources = 5;
+    if (els.webSearchMaxSources) els.webSearchMaxSources.value = '5';
+    log(`web search settings load skipped: ${error.message || String(error)}`);
+  }
+}
+
+function persistPocketPalMemory() {
+  try {
+    localStorage.setItem(POCKETPAL_MEMORY_STORAGE_KEY, JSON.stringify(state.pocketPalMemory.slice(-100)));
+  } catch (error) {
+    log(`PocketPal memory save skipped: ${error.message || String(error)}`);
+  }
+}
+
+function persistWebSearchSettings() {
+  try {
+    localStorage.setItem(WEB_SEARCH_SETTINGS_STORAGE_KEY, JSON.stringify({
+      max_sources: state.webSearch.maxSources,
+    }));
+  } catch (error) {
+    log(`web search settings save skipped: ${error.message || String(error)}`);
+  }
+}
+
+function persistPocketPalSlots() {
+  try {
+    localStorage.setItem(POCKETPAL_SLOTS_STORAGE_KEY, JSON.stringify(state.pocketPalSlots || {}));
+  } catch (error) {
+    log(`PocketPal slots save skipped: ${error.message || String(error)}`);
+  }
+}
+
+function persistPocketPalDataSources() {
+  try {
+    localStorage.setItem(POCKETPAL_DATA_SOURCES_STORAGE_KEY, JSON.stringify(state.pocketPalDataSources.slice(-50)));
+  } catch (error) {
+    log(`PocketPal data source save skipped: ${error.message || String(error)}`);
+  }
+}
+
+function persistPocketPalAgents() {
+  try {
+    localStorage.setItem(POCKETPAL_AGENTS_STORAGE_KEY, JSON.stringify({
+      activeAgentId: state.activeAgentId || '',
+      agents: state.pocketPalAgents.slice(-24),
+    }));
+  } catch (error) {
+    log(`PocketPal agents save skipped: ${error.message || String(error)}`);
+  }
+}
+
+function pocketPalExportState() {
+  return {
+    memory: state.pocketPalMemory.slice(-100),
+    slots: { ...(state.pocketPalSlots || {}) },
+    data_sources: state.pocketPalDataSources.slice(-50),
+    agents: state.pocketPalAgents.slice(-24),
+    active_agent_id: state.activeAgentId || '',
+  };
+}
+
+function restorePocketPalState(payload) {
+  if (payload && typeof payload === 'object') {
+    state.pocketPalMemory = Array.isArray(payload.memory)
+      ? payload.memory.filter((item) => item && typeof item === 'object' && String(item.text || '').trim()).slice(-100)
+      : [];
+    state.pocketPalSlots = payload.slots && typeof payload.slots === 'object' && !Array.isArray(payload.slots)
+      ? payload.slots
+      : {};
+    state.pocketPalDataSources = Array.isArray(payload.data_sources)
+      ? payload.data_sources.filter((item) => item && typeof item === 'object' && String(item.text || '').trim()).slice(-50)
+      : [];
+    state.pocketPalAgents = Array.isArray(payload.agents)
+      ? payload.agents.filter((item) => item && typeof item === 'object' && String(item.name || '').trim()).slice(-24)
+      : [];
+    state.activeAgentId = typeof payload.active_agent_id === 'string' ? payload.active_agent_id : '';
+    if (!state.pocketPalAgents.some((agent) => agent.id === state.activeAgentId)) state.activeAgentId = '';
+    persistPocketPalMemory();
+    persistPocketPalSlots();
+    persistPocketPalDataSources();
+    persistPocketPalAgents();
+  } else {
+    loadPocketPalSlots();
+    loadPocketPalMemory();
+    loadPocketPalDataSources();
+    loadPocketPalAgents();
+  }
+  renderDataSourceList();
+  renderAgentList();
+}
+
+function pocketPalSlotContext() {
+  const entries = Object.entries(state.pocketPalSlots || {})
+    .filter(([key, value]) => String(key || '').trim() && value !== undefined && value !== null && String(value).trim())
+    .slice(-24);
+  if (!entries.length) return 'No saved PocketPal slots.';
+  return entries.map(([key, value]) => {
+    const safeKey = String(key).replace(/[^a-z0-9_.-]/gi, '_').slice(0, 48);
+    return `<AK_SLOT> <AK_SLOT_NAME>=${safeKey} <AK_SLOT_VALUE>=${shortText(String(value), 180)}`;
+  }).join('\n');
+}
+
+function scorePocketPalDataSource(query, source) {
+  const queryTokens = new Set(contentTokens(query));
+  if (!queryTokens.size) return 0;
+  const sourceTokens = contentTokens(`${source.title || ''} ${source.text || ''} ${(source.chunks || []).join(' ')}`);
+  let score = 0;
+  for (const token of sourceTokens) {
+    if (queryTokens.has(token)) score += 1;
+  }
+  return score;
+}
+
+function rankedPocketPalDataChunks(query, limit = 8) {
+  const rows = state.pocketPalDataSources.slice();
+  if (!rows.length) return [];
+  return rows
+    .flatMap((item, sourceIndex) => {
+      const chunks = Array.isArray(item.chunks) && item.chunks.length ? item.chunks : [item.text || ''];
+      return chunks.map((chunk, chunkIndex) => ({
+        item,
+        sourceIndex,
+        chunkIndex,
+        chunk,
+        score: scorePocketPalDataSource(query, {
+          title: item.title,
+          text: chunk,
+          chunks: [],
+        }),
+      }));
+    })
+    .sort((a, b) => (b.score - a.score) || (b.sourceIndex - a.sourceIndex) || (a.chunkIndex - b.chunkIndex))
+    .slice(0, limit);
+}
+
+function pocketPalDataSourceContext(query = '', limit = 8) {
+  const rows = rankedPocketPalDataChunks(query, limit);
+  if (!rows.length) return 'No saved user data sources.';
+  return rows.map(({ item, chunk, chunkIndex }, index) => {
+    const title = shortText(String(item.title || item.source_type || 'source'), 80);
+    const type = shortText(String(item.source_type || 'note'), 32);
+    const text = shortText(String(chunk || item.text || ''), 460);
+    return `[D${index + 1}] ${title} (${type}, chunk ${chunkIndex + 1}): ${text}`;
+  }).join('\n');
+}
+
+function activePocketPalAgent() {
+  return state.pocketPalAgents.find((agent) => agent.id === state.activeAgentId) || null;
+}
+
+function activeAgentPolicy(name, fallback = '') {
+  const agent = activePocketPalAgent();
+  return String(agent?.[name] || fallback).trim();
+}
+
+function pocketPalAgentContext() {
+  const agent = activePocketPalAgent();
+  if (!agent) return 'No custom agent selected.';
+  return [
+    `<AK_SLOT> <AK_SLOT_NAME>=agent_name <AK_SLOT_VALUE>=${shortText(agent.name, 80)}`,
+    `<AK_SLOT> <AK_SLOT_NAME>=agent_instruction <AK_SLOT_VALUE>=${shortText(agent.instruction, 360)}`,
+    `<AK_SLOT> <AK_SLOT_NAME>=agent_retrieval_policy <AK_SLOT_VALUE>=${shortText(agent.retrievalPolicy || 'auto', 80)}`,
+    `<AK_SLOT> <AK_SLOT_NAME>=agent_tool_policy <AK_SLOT_VALUE>=${shortText(agent.toolPolicy || 'ask_before_extensions', 80)}`,
+    `<AK_SLOT> <AK_SLOT_NAME>=agent_action_policy <AK_SLOT_VALUE>=${shortText(agent.actionPolicy || 'respond_or_ask', 80)}`,
+  ].join('\n');
+}
+
+function activeAgentAllowsAction(action) {
+  const agent = activePocketPalAgent();
+  if (!agent) return true;
+  const policy = String(agent.actionPolicy || 'respond_or_ask').trim();
+  if (action === 'save_memory') return policy === 'allow_memory' || policy === 'full_local_agent';
+  if (action === 'extension_request') return policy === 'allow_extension_requests' || policy === 'full_local_agent';
+  return true;
+}
+
+function pocketPalMemoryContext(limit = 8) {
+  const rows = state.pocketPalMemory.slice(-limit);
+  if (!rows.length) return 'No saved PocketPal memory.';
+  return rows.map((item, index) => {
+    const kind = String(item.kind || 'memory').trim();
+    const text = shortText(String(item.text || '').replace(/\s+/g, ' ').trim(), 220);
+    return `[M${index + 1}] ${kind}: ${text}`;
+  }).join('\n');
+}
+
+function saveMemoryFromDecision(packet) {
+  const decision = packet?.decision_packet?.decision || packet?.decision || null;
+  if (!decision || String(decision.action || '') !== 'save_memory') return;
+  const metadata = decision.proposal_metadata || {};
+  const memory = metadata.memory && typeof metadata.memory === 'object' ? metadata.memory : metadata;
+  const text = String(memory.text || metadata.text || '').replace(/\s+/g, ' ').trim();
+  if (!text) return;
+  const key = text.toLowerCase();
+  state.pocketPalMemory = state.pocketPalMemory.filter((item) => String(item.text || '').toLowerCase() !== key);
+  state.pocketPalMemory.push({
+    id: `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    created_at: new Date().toISOString(),
+    scope: String(memory.scope || 'local_user_profile'),
+    kind: String(memory.kind || 'preference'),
+    text,
+  });
+  state.pocketPalMemory = state.pocketPalMemory.slice(-100);
+  persistPocketPalMemory();
+  log(`PocketPal memory saved: ${shortText(text, 80)}`);
+}
+
+function applySlotUpdatesFromDecision(packet) {
+  const decision = decisionFromPacket(packet);
+  const updates = decision?.proposal_metadata?.slot_updates;
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return;
+  let changed = 0;
+  const next = { ...(state.pocketPalSlots || {}) };
+  for (const [key, value] of Object.entries(updates)) {
+    const normalizedKey = String(key || '').trim().replace(/[^a-z0-9_.-]/gi, '_').slice(0, 48);
+    if (!normalizedKey) continue;
+    if (value === null || value === undefined || value === '') {
+      if (Object.prototype.hasOwnProperty.call(next, normalizedKey)) {
+        delete next[normalizedKey];
+        changed += 1;
+      }
+      continue;
+    }
+    const normalizedValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    if (next[normalizedKey] !== normalizedValue) {
+      next[normalizedKey] = shortText(normalizedValue, 240);
+      changed += 1;
+    }
+  }
+  if (!changed) return;
+  state.pocketPalSlots = next;
+  persistPocketPalSlots();
+  log(`PocketPal slots updated: ${Object.keys(updates).join(', ')}`);
+}
+
+function switchModule(moduleId) {
+  const normalized = ['assistant', 'retrieval', 'agents'].includes(moduleId) ? moduleId : 'assistant';
+  for (const tab of els.moduleTabs) {
+    const active = tab.dataset.module === normalized;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  for (const panel of els.modulePanels) {
+    panel.hidden = panel.dataset.modulePanel !== normalized;
+  }
+}
+
+function saveUserDataSource() {
+  const text = String(els.userDataSource?.value || '').trim();
+  if (!text) return;
+  addPocketPalDataSource({
+    source_type: inferDataSourceType(text),
+    title: inferDataSourceTitle(text),
+    text,
+  });
+  if (els.userDataSource) els.userDataSource.value = '';
+  renderDataSourceList();
+  log(`PocketPal data source saved: ${shortText(text, 80)}`);
+}
+
+function inferDataSourceType(text) {
+  if (/^https?:\/\//i.test(text)) return 'url';
+  if (/^(\/|~\/|[a-z]:\\)/i.test(text)) return 'path';
+  return 'note';
+}
+
+function inferDataSourceTitle(text) {
+  const firstLine = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
+  return shortText(firstLine.replace(/^#+\s*/, '').trim() || 'User note', 80);
+}
+
+function chunkPocketPalText(text, maxChunks = 16) {
+  const normalized = String(text || '').replace(/\r/g, '').trim();
+  if (!normalized) return [];
+  const paragraphs = normalized.split(/\n{2,}/).map((part) => part.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (paragraphs.length > 1) {
+    const chunks = [];
+    for (const paragraph of paragraphs) {
+      if (paragraph.length > 900) {
+        for (let cursor = 0; cursor < paragraph.length && chunks.length < maxChunks; cursor += 820) {
+          chunks.push(paragraph.slice(cursor, cursor + 900).trim());
+        }
+      } else {
+        chunks.push(shortText(paragraph, 900));
+      }
+      if (chunks.length >= maxChunks) break;
+    }
+    return chunks.slice(0, maxChunks);
+  }
+  const chunks = [];
+  let current = '';
+  const pushCurrent = () => {
+    const chunk = current.trim();
+    if (chunk) chunks.push(shortText(chunk, 900));
+    current = '';
+  };
+  for (const paragraph of paragraphs.length ? paragraphs : [normalized.replace(/\s+/g, ' ')]) {
+    if ((current.length + paragraph.length + 1) > 900) pushCurrent();
+    if (paragraph.length > 900) {
+      for (let cursor = 0; cursor < paragraph.length && chunks.length < maxChunks; cursor += 820) {
+        chunks.push(paragraph.slice(cursor, cursor + 900).trim());
+      }
+      continue;
+    }
+    current = current ? `${current} ${paragraph}` : paragraph;
+    if (chunks.length >= maxChunks) break;
+  }
+  if (chunks.length < maxChunks) pushCurrent();
+  return chunks.slice(0, maxChunks);
+}
+
+function addPocketPalDataSource({ title, text, source_type: sourceType = 'note', bytes = 0 }) {
+  const normalizedText = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalizedText) return false;
+  const normalizedTitle = String(title || inferDataSourceTitle(normalizedText)).replace(/\s+/g, ' ').trim();
+  const chunks = chunkPocketPalText(text);
+  const key = `${sourceType}:${normalizedTitle}:${normalizedText.slice(0, 160)}`.toLowerCase();
+  state.pocketPalDataSources = state.pocketPalDataSources.filter((item) => String(item.key || '').toLowerCase() !== key);
+  state.pocketPalDataSources.push({
+    id: `src_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    created_at: new Date().toISOString(),
+    key,
+    source_type: String(sourceType || 'note'),
+    title: shortText(normalizedTitle || 'User data', 100),
+    bytes: Number.isFinite(bytes) ? bytes : 0,
+    text: shortText(normalizedText, 500),
+    chunks,
+  });
+  state.pocketPalDataSources = state.pocketPalDataSources.slice(-50);
+  persistPocketPalDataSources();
+  return true;
+}
+
+async function importUserDataFiles(fileList) {
+  const files = Array.from(fileList || []).filter(Boolean).slice(0, 12);
+  if (!files.length) return;
+  let imported = 0;
+  for (const file of files) {
+    try {
+      const text = await file.text();
+      if (addPocketPalDataSource({
+        source_type: 'file',
+        title: file.name || 'Local file',
+        bytes: file.size || text.length,
+        text,
+      })) {
+        imported += 1;
+      }
+    } catch (error) {
+      log(`file import skipped for ${file.name || 'local file'}: ${error.message || String(error)}`);
+    }
+  }
+  if (els.userDataFileInput) els.userDataFileInput.value = '';
+  renderDataSourceList();
+  if (imported) log(`PocketPal imported ${formatCount(imported)} local file${imported === 1 ? '' : 's'}`);
+}
+
+function renderDataSourceList() {
+  if (!els.userDataSourceList) return;
+  els.userDataSourceList.innerHTML = '';
+  if (!state.pocketPalDataSources.length) {
+    const empty = document.createElement('p');
+    empty.className = 'module-note';
+    empty.textContent = 'No saved data pointers yet.';
+    els.userDataSourceList.appendChild(empty);
+    return;
+  }
+  for (const source of state.pocketPalDataSources.slice().reverse()) {
+    const row = document.createElement('div');
+    row.className = 'agent-row';
+    const detail = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = source.title || 'Data pointer';
+    const body = document.createElement('span');
+    body.textContent = [
+      source.source_type || 'note',
+      source.bytes ? `${formatCount(source.bytes)} bytes` : '',
+      shortText(source.text || '', 130),
+    ].filter(Boolean).join(' | ');
+    detail.append(title, body);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      state.pocketPalDataSources = state.pocketPalDataSources.filter((item) => item.id !== source.id);
+      persistPocketPalDataSources();
+      renderDataSourceList();
+    });
+    row.append(detail, remove);
+    els.userDataSourceList.appendChild(row);
+  }
+}
+
+function renderAgentList() {
+  if (!els.agentList) return;
+  els.agentList.innerHTML = '';
+  if (!state.pocketPalAgents.length) {
+    const empty = document.createElement('p');
+    empty.className = 'module-note';
+    empty.textContent = 'No custom agents yet.';
+    els.agentList.appendChild(empty);
+    return;
+  }
+  for (const agent of state.pocketPalAgents.slice().reverse()) {
+    const row = document.createElement('div');
+    row.className = 'agent-row';
+    const detail = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = agent.name || 'Agent';
+    const body = document.createElement('span');
+    body.textContent = shortText(agent.instruction || '', 110);
+    const policy = document.createElement('span');
+    policy.textContent = [
+      `retrieval=${agent.retrievalPolicy || 'auto'}`,
+      `tools=${agent.toolPolicy || 'ask_before_extensions'}`,
+      `actions=${agent.actionPolicy || 'respond_or_ask'}`,
+    ].join(' | ');
+    detail.append(title, body, policy);
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.className = agent.id === state.activeAgentId ? '' : 'secondary';
+    run.textContent = agent.id === state.activeAgentId ? 'Active' : 'Run';
+    run.addEventListener('click', () => {
+      state.activeAgentId = agent.id;
+      persistPocketPalAgents();
+      renderAgentList();
+      setPill(els.modePill, `${shortText(agent.name, 22)} agent`, 'ready');
+      log(`active PocketPal agent: ${agent.name}`);
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      state.pocketPalAgents = state.pocketPalAgents.filter((item) => item.id !== agent.id);
+      if (state.activeAgentId === agent.id) {
+        state.activeAgentId = '';
+        setPill(els.modePill, modeConfig().pill, 'ready');
+      }
+      persistPocketPalAgents();
+      renderAgentList();
+      log(`PocketPal agent removed: ${agent.name || 'Agent'}`);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'agent-actions';
+    actions.append(run, remove);
+    row.append(detail, actions);
+    els.agentList.appendChild(row);
+  }
+}
+
+function createPocketPalAgent() {
+  const name = String(els.agentName?.value || '').trim() || 'PocketPal agent';
+  const instruction = String(els.agentInstruction?.value || '').replace(/\s+/g, ' ').trim();
+  if (!instruction) return;
+  const agent = {
+    id: `agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    created_at: new Date().toISOString(),
+    name: shortText(name, 80),
+    instruction: shortText(instruction, 800),
+    retrievalPolicy: String(els.agentRetrievalPolicy?.value || 'auto'),
+    toolPolicy: String(els.agentToolPolicy?.value || 'ask_before_extensions'),
+    actionPolicy: String(els.agentActionPolicy?.value || 'respond_or_ask'),
+  };
+  state.pocketPalAgents.push(agent);
+  state.pocketPalAgents = state.pocketPalAgents.slice(-24);
+  state.activeAgentId = agent.id;
+  persistPocketPalAgents();
+  if (els.agentName) els.agentName.value = '';
+  if (els.agentInstruction) els.agentInstruction.value = '';
+  renderAgentList();
+  log(`PocketPal agent created: ${agent.name}`);
+}
+
+function handleAssistantDecision(packet, userText) {
+  applySlotUpdatesFromDecision(packet);
+  const action = decisionAction(packet);
+  if (action === 'save_memory') {
+    if (!activeAgentAllowsAction('save_memory')) {
+      log('PocketPal memory save skipped by active agent action policy');
+      return;
+    }
+    saveMemoryFromDecision(packet);
+    return;
+  }
+  if (action !== 'extension_request') return;
+  if (!activeAgentAllowsAction('extension_request')) {
+    log('extension proposal skipped by active agent action policy');
+    return;
+  }
+  if (activePocketPalAgent() && activeAgentPolicy('toolPolicy', 'ask_before_extensions') === 'suggest_only') {
+    log('extension proposal left as suggestion by active agent tool policy');
+    return;
+  }
+  const extensionRequest = decisionExtensionMetadata(packet);
+  if (
+    extensionRequest.extensionId === state.webSearch.extensionId
+    && extensionRequest.capability === state.webSearch.searchCapabilityId
+  ) {
+    runWebSearch(userText || extensionRequest.query).catch((error) => {
+      appendMessage('assistant', `Web search failed: ${error.message || String(error)}`);
+      log(`web search failed: ${error.message || String(error)}`);
+    });
+    return;
+  }
+  const proposal = proposeLastDecisionExtensionAction({
+    user_request: String(userText || ''),
+    surface: 'chat',
+  });
+  if (proposal.status === 'pending_user_approval') {
+    log(`extension approval queued: ${proposal.extension_id}:${proposal.capability_id}`);
+    setProcessStep('plan', 'done', `Extension approval queued: ${proposal.extension_id}:${proposal.capability_id}`);
+  } else {
+    log(`extension proposal skipped: ${proposal.error || proposal.status || 'unavailable'}`);
+  }
 }
 
 function contentTokens(value) {
@@ -3268,6 +4408,7 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
   setProcessStep('generate', fallback ? 'error' : 'done', fallback ? 'Decoder timed out before answer' : `${formatCount(String(text || '').length)} characters generated`);
   const packet = recordAssistantTurn(responseText);
   const displayText = bindEvidenceAttribution(displayTextFromDecision(packet, responseText), rows);
+  handleAssistantDecision(packet, userText);
   setProcessStep('render', 'active', 'Rendering answer and evidence links');
   appendMessage('assistant', displayText);
   setProcessStep('render', 'done', 'Answer displayed');
@@ -3595,7 +4736,8 @@ function appendRetrieval(rows, { locked = state.processActive } = {}) {
 }
 
 function setControlsBusy(busy) {
-  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || (state.image.enabled ? false : state.modelBusy || !state.modelReady);
+  const browserOnlyMode = state.mode === 'web_search';
+  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || (state.image.enabled || browserOnlyMode ? false : state.modelBusy || !state.modelReady);
   els.prompt.disabled = busy;
   els.loadModel.disabled = state.image.enabled || busy || state.modelBusy;
   if (els.unloadModel) els.unloadModel.disabled = state.image.enabled || busy || state.modelBusy || !state.worker;
@@ -3627,6 +4769,14 @@ async function submitPrompt(event) {
     await submitQuickSearchPrompt(text);
     return;
   }
+  if (state.mode === 'web_search') {
+    await submitWebSearchPrompt(text);
+    return;
+  }
+  if (isUserVisibleWebSearchRequest(text)) {
+    await submitWebSearchPrompt(text);
+    return;
+  }
   resetProcessTrace(text);
   setControlsBusy(true);
   try {
@@ -3637,6 +4787,33 @@ async function submitPrompt(event) {
     state.retrievalRows = [];
     const freshResearchRequired = requiresFreshResearchContext(text);
     let plan = await planLiteTurn(text);
+    const agent = activePocketPalAgent();
+    const retrievalPolicy = activeAgentPolicy('retrievalPolicy', 'auto');
+    if (agent && retrievalPolicy === 'none' && !freshResearchRequired) {
+      plan = {
+        action: 'respond',
+        query: text,
+        reason: 'active agent retrieval policy disables paper lookup',
+      };
+      setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+      log('planner override: active agent retrieval policy disabled paper lookup');
+    } else if (agent && retrievalPolicy === 'always' && plan.action !== 'gather_context') {
+      plan = {
+        action: 'gather_context',
+        query: text,
+        reason: 'active agent retrieval policy requires retrieval',
+      };
+      setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+      log('planner override: active agent retrieval policy requires retrieval');
+    } else if (agent && retrievalPolicy === 'local_first' && state.pocketPalDataSources.length && !freshResearchRequired) {
+      plan = {
+        action: 'respond',
+        query: text,
+        reason: 'active agent will use saved user data before paper lookup',
+      };
+      setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+      log('planner override: active agent using saved user data before paper lookup');
+    }
     if (freshResearchRequired && plan.action !== 'gather_context') {
       plan = {
         action: 'gather_context',
@@ -3753,9 +4930,9 @@ async function submitImagePrompt(text) {
       options: {
         width: 512,
         height: 512,
-        steps: state.image.modelId.includes('_student_') ? 24 : 4,
+        steps: state.image.modelId.includes('sana') ? 50 : state.image.modelId.includes('_student_') ? 24 : 4,
         guidance: 0,
-        seed: state.image.modelId.includes('_student_') ? stableSeed(text) : Math.floor(Math.random() * 1_000_000_000),
+        seed: state.image.modelId.includes('sana') || state.image.modelId.includes('_student_') ? stableSeed(text) : Math.floor(Math.random() * 1_000_000_000),
       },
     });
   } catch (error) {
@@ -3813,6 +4990,7 @@ function setMode(mode) {
     : state.translation.enabled
       ? `Text to translate to ${translationTargetLabel()}...`
       : config.placeholder;
+  syncModelControls();
   log(`mode set: ${config.label}`);
 }
 
@@ -4221,6 +5399,17 @@ function proposeExtensionAction(extensionId, capabilityId, input = {}) {
   }
 }
 
+function proposeLastDecisionExtensionAction(input = {}) {
+  if (!state.coreReady || !state.core?.propose_last_decision_extension_action) {
+    return { status: 'error', error: 'extension core is not ready' };
+  }
+  try {
+    return parseCoreJson(state.core.propose_last_decision_extension_action(JSON.stringify(input || {})));
+  } catch (error) {
+    return { status: 'error', error: error.message || String(error) };
+  }
+}
+
 function recordExtensionResult(actionId, receipt) {
   if (!state.coreReady || !state.core?.record_extension_result) {
     return { status: 'error', error: 'extension core is not ready', action_id: actionId };
@@ -4283,6 +5472,7 @@ async function buildSessionExport() {
       translation_enabled: Boolean(state.translation.enabled),
       translation_source: els.translationSource?.value || 'auto',
       translation_target: els.translationTarget?.value || 'Spanish',
+      web_search_max_sources: state.webSearch.maxSources,
     },
     session: {
       messages: state.messages,
@@ -4290,6 +5480,7 @@ async function buildSessionExport() {
       pending_context_rows: state.pendingContextRows,
       retrieval_rows: state.retrievalRows.slice(0, 32),
     },
+    pocketpal: pocketPalExportState(),
     extensions: {
       status: extensions.status,
       manifests: extensions.extensions || [],
@@ -4371,7 +5562,13 @@ async function restoreSessionBundle(rawBundle) {
   }
   if (els.translationSource && settings.translation_source) els.translationSource.value = String(settings.translation_source);
   if (els.translationTarget && settings.translation_target) els.translationTarget.value = String(settings.translation_target);
+  if (settings.web_search_max_sources) {
+    state.webSearch.maxSources = Math.max(1, Math.min(5, Number(settings.web_search_max_sources || 5)));
+    if (els.webSearchMaxSources) els.webSearchMaxSources.value = String(state.webSearch.maxSources);
+    persistWebSearchSettings();
+  }
   restoreLocalStorage(bundle.storage?.local_storage);
+  restorePocketPalState(bundle.pocketpal);
   await dbRestore(bundle.storage?.indexed_db || []).catch((error) => {
     log(`session restore skipped IndexedDB metadata: ${error.message || String(error)}`);
   });
@@ -4411,19 +5608,45 @@ function exposeExtensionApi() {
     disable: (extensionId) => setExtensionEnabled(extensionId, false),
     list: listExtensionManifests,
     propose: proposeExtensionAction,
+    proposeLastDecision: proposeLastDecisionExtensionAction,
     record: recordExtensionResult,
     translateText: (text, options = {}) => runTranslator(text, { ...options, modality: 'text' }),
     translateAudio: (input, options = {}) => {
       const text = typeof input === 'string' ? input : input?.transcript || input?.text || '';
       return runTranslator(text, { ...options, modality: 'audio' });
     },
+    webSearch: runWebSearch,
     exportSession: buildSessionExport,
     restoreSession: restoreSessionBundle,
   });
 }
 
 function registerBuiltinExtensions() {
-  const manifests = [];
+  const manifests = [{
+    id: state.webSearch.extensionId,
+    name: 'Web Search',
+    version: '0.1.0',
+    source: 'local',
+    default_enabled: true,
+    approval_policy: 'always_ask',
+    capabilities: [
+      {
+        id: state.webSearch.searchCapabilityId,
+        description: 'Open a user-visible web search for the requested query.',
+        scopes: ['query.read', 'browser.open'],
+      },
+      {
+        id: state.webSearch.openCapabilityId,
+        description: 'Open a user-visible URL in the phone or browser web surface.',
+        scopes: ['url.open', 'browser.open'],
+      },
+    ],
+    metadata: {
+      adapter: 'browser',
+      native_surface: NATIVE_APP ? 'wkwebview_or_system_browser' : 'browser_tab',
+      result_access: 'user_visible_browser',
+    },
+  }];
   if (isLocalDevelopmentUrl(new URL(window.location.href))) {
     manifests.push({
       id: 'image_generation',
@@ -4439,21 +5662,21 @@ function registerBuiltinExtensions() {
       }],
       metadata: {
         adapter: 'browser',
-        backend: 'flux_student_local_dev',
-        model_id: 'agentkernel_lite_image_flux_student_dense_dev_v0',
-        quality_tier: 'stale_overfit_checkpoint_training_replacement_in_progress',
-        teacher_model: 'black-forest-labs/FLUX.1-dev',
-        student_checkpoint: 'checkpoints/agentkernel_lite_image_flux_flow_student_object_binding_dense_v0/flux_packed_student.pt',
-        student_step: 5000,
-        dev_endpoint: 'http://127.0.0.1:8798/generate',
+        backend: 'sana_student_browser_wasm_pending',
+        model_id: 'agentkernel_lite_image_sana_300m_bitnet_block12_13ff_browser_v0',
+        quality_tier: 'staged-bitnet-qat-browser-export',
+        teacher_model: 'Efficient-Large-Model/Sana_Sprint_0.6B_1024px_teacher_diffusers',
+        student_checkpoint: 'checkpoints/agentkernel_lite_image_sana_300m_bitnet_block12_13ff_recover_v10b/sana_latent_student_best_block12_13ff_3300.pt',
+        student_step: 3300,
         development_only: true,
-        replacement_training_run: 'checkpoints/agentkernel_lite_image_flux_flow_student_general_hq_fullstep_28l_dense_v2',
+        dense_reference_checkpoint: 'checkpoints/agentkernel_lite_image_sana_300m_broad_v6/sana_latent_student_best_anchor_broad_3000.pt',
       },
     });
   }
   for (const manifest of manifests) {
     const result = registerExtensionManifest(manifest);
     if (extensionInstallSucceeded(result)) {
+      if (manifest.default_enabled) setExtensionEnabled(manifest.id, true);
       log(`installed extension: ${manifest.name}`);
     } else {
       log(`extension install failed: ${result.error || manifest.id}`);
@@ -4464,6 +5687,13 @@ function registerBuiltinExtensions() {
 
 async function init() {
   setTheme(state.theme, false);
+  loadPocketPalSlots();
+  loadPocketPalMemory();
+  loadPocketPalDataSources();
+  loadPocketPalAgents();
+  loadWebSearchSettings();
+  renderDataSourceList();
+  renderAgentList();
   renderProcessTrace();
   await loadAgentCore();
   await restoreInstalledExtensionsFromCache();
@@ -4507,6 +5737,7 @@ async function init() {
   els.form.addEventListener('submit', submitPrompt);
   els.chatMode?.addEventListener('click', () => setMode('chat'));
   els.quickSearchMode?.addEventListener('click', () => setMode('quick_search'));
+  els.webSearchMode?.addEventListener('click', () => setMode('web_search'));
   els.thinkMode?.addEventListener('click', () => setMode('think'));
   els.deepResearchMode?.addEventListener('click', () => setMode('deep_research'));
   els.imageMode?.addEventListener('click', () => setImageMode(!state.image.enabled));
@@ -4514,6 +5745,7 @@ async function init() {
   els.translationSource?.addEventListener('change', syncTranslationControls);
   els.translationTarget?.addEventListener('change', syncTranslationControls);
   els.audioTranslate?.addEventListener('click', startAudioTranslation);
+  for (const tab of els.moduleTabs) tab.addEventListener('click', () => switchModule(tab.dataset.module || 'assistant'));
   els.loadModel.addEventListener('click', () => loadModel({ force: true }).catch((error) => log(error.message || String(error))));
   els.unloadModel?.addEventListener('click', () => unloadModel());
   els.loadPack.addEventListener('click', () => loadResearchPack());
@@ -4523,6 +5755,30 @@ async function init() {
   els.importSession?.addEventListener('click', () => els.importSessionInput?.click());
   els.importSessionInput?.addEventListener('change', () => importSessionFile(els.importSessionInput.files?.[0]));
   els.installExtension?.addEventListener('click', () => installExtensionFromInput());
+  els.saveUserDataSource?.addEventListener('click', saveUserDataSource);
+  els.userDataFileInput?.addEventListener('change', () => importUserDataFiles(els.userDataFileInput.files));
+  els.webSearchMaxSources?.addEventListener('change', () => {
+    const maxSources = Math.max(1, Math.min(5, Number(els.webSearchMaxSources.value || 5)));
+    state.webSearch.maxSources = maxSources;
+    els.webSearchMaxSources.value = String(maxSources);
+    persistWebSearchSettings();
+    log(`web search source limit set to ${formatCount(maxSources)}`);
+  });
+  els.clearUserDataSource?.addEventListener('click', () => {
+    state.pocketPalDataSources = [];
+    persistPocketPalDataSources();
+    if (els.userDataSource) els.userDataSource.value = '';
+    renderDataSourceList();
+    log('PocketPal data sources cleared');
+  });
+  els.createAgent?.addEventListener('click', createPocketPalAgent);
+  els.clearActiveAgent?.addEventListener('click', () => {
+    state.activeAgentId = '';
+    persistPocketPalAgents();
+    renderAgentList();
+    setPill(els.modePill, modeConfig().pill, 'ready');
+    log('active PocketPal agent cleared');
+  });
   els.extensionManifestUrl?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();

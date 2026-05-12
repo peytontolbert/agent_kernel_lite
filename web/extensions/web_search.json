@@ -1,0 +1,25 @@
+{
+  "id": "web_search",
+  "name": "Web Search",
+  "version": "0.1.0",
+  "source": "local",
+  "default_enabled": true,
+  "approval_policy": "always_ask",
+  "capabilities": [
+    {
+      "id": "web.search",
+      "description": "Open a user-visible web search for the requested query.",
+      "scopes": ["query.read", "browser.open"]
+    },
+    {
+      "id": "web.open_url",
+      "description": "Open a user-visible URL in the phone or browser web surface.",
+      "scopes": ["url.open", "browser.open"]
+    }
+  ],
+  "metadata": {
+    "adapter": "browser",
+    "native_surface": "wkwebview_or_system_browser",
+    "result_access": "user_visible_browser"
+  }
+}
