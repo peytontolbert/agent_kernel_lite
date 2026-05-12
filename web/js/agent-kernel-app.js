@@ -3190,6 +3190,7 @@ function buildPromptFallback(userText, contextRows) {
     'Do not generate paper titles or paper ids from memory; use evidence ids for grounded source references.',
     modeInstruction,
     `Mode: ${config.label}`,
+    activeAgentInstruction(),
     selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
     '',
     '<AK_PROFILE> PocketPal saved slots:',
@@ -3363,6 +3364,7 @@ function buildPrompt(userText, contextRows) {
           '',
           '<AK_PROFILE> Active PocketPal agent:',
           pocketPalAgentContext(),
+          activeAgentInstruction(),
           '',
           '<AK_PROFILE> PocketPal local memory:',
           pocketPalMemoryContext(),
@@ -3469,6 +3471,7 @@ function loadPocketPalAgents() {
       ? rows.filter((item) => item && typeof item === 'object' && String(item.name || '').trim()).slice(-24)
       : [];
     state.activeAgentId = typeof payload?.activeAgentId === 'string' ? payload.activeAgentId : '';
+    if (!state.pocketPalAgents.some((agent) => agent.id === state.activeAgentId)) state.activeAgentId = '';
   } catch (error) {
     state.pocketPalAgents = [];
     state.activeAgentId = '';
@@ -3634,9 +3637,42 @@ function activePocketPalAgent() {
   return state.pocketPalAgents.find((agent) => agent.id === state.activeAgentId) || null;
 }
 
+function syncActiveAgentPill() {
+  const agent = activePocketPalAgent();
+  if (agent) {
+    setPill(els.modePill, `${shortText(agent.name, 22)} agent`, 'ready');
+    return;
+  }
+  if (state.activeAgentId) {
+    state.activeAgentId = '';
+    persistPocketPalAgents();
+  }
+  setPill(els.modePill, modeConfig().pill, state.mode === 'deep_research' ? 'busy' : 'ready');
+}
+
+function setActivePocketPalAgent(agentId, { render = true, announce = true } = {}) {
+  const agent = state.pocketPalAgents.find((item) => item.id === agentId) || null;
+  state.activeAgentId = agent ? agent.id : '';
+  persistPocketPalAgents();
+  syncActiveAgentPill();
+  if (render) renderAgentList();
+  if (announce) log(agent ? `active PocketPal agent: ${agent.name}` : 'active PocketPal agent cleared');
+  return agent;
+}
+
 function activeAgentPolicy(name, fallback = '') {
   const agent = activePocketPalAgent();
   return String(agent?.[name] || fallback).trim();
+}
+
+function activeAgentInstruction() {
+  const agent = activePocketPalAgent();
+  if (!agent) return '';
+  return [
+    `Active agent selected: ${agent.name}.`,
+    `Follow this agent instruction unless it conflicts with user safety or the current user request: ${agent.instruction || 'Help the user with the selected task.'}`,
+    `Agent policies: retrieval=${agent.retrievalPolicy || 'auto'} tools=${agent.toolPolicy || 'ask_before_extensions'} actions=${agent.actionPolicy || 'respond_or_ask'}.`,
+  ].join('\n');
 }
 
 function pocketPalAgentContext() {
@@ -3890,7 +3926,8 @@ function renderAgentList() {
   }
   for (const agent of state.pocketPalAgents.slice().reverse()) {
     const row = document.createElement('div');
-    row.className = 'agent-row';
+    const active = agent.id === state.activeAgentId;
+    row.className = `agent-row${active ? ' active' : ''}`;
     const detail = document.createElement('div');
     const title = document.createElement('strong');
     title.textContent = agent.name || 'Agent';
@@ -3905,14 +3942,12 @@ function renderAgentList() {
     detail.append(title, body, policy);
     const run = document.createElement('button');
     run.type = 'button';
-    run.className = agent.id === state.activeAgentId ? '' : 'secondary';
-    run.textContent = agent.id === state.activeAgentId ? 'Active' : 'Run';
+    run.className = active ? '' : 'secondary';
+    run.textContent = active ? 'Active' : 'Use';
+    run.setAttribute('aria-pressed', active ? 'true' : 'false');
+    run.title = active ? `${agent.name || 'Agent'} is active` : `Use ${agent.name || 'agent'}`;
     run.addEventListener('click', () => {
-      state.activeAgentId = agent.id;
-      persistPocketPalAgents();
-      renderAgentList();
-      setPill(els.modePill, `${shortText(agent.name, 22)} agent`, 'ready');
-      log(`active PocketPal agent: ${agent.name}`);
+      setActivePocketPalAgent(agent.id);
     });
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -3938,8 +3973,8 @@ function renderAgentList() {
 
 function createPocketPalAgent() {
   const name = String(els.agentName?.value || '').trim() || 'PocketPal agent';
-  const instruction = String(els.agentInstruction?.value || '').replace(/\s+/g, ' ').trim();
-  if (!instruction) return;
+  const instruction = String(els.agentInstruction?.value || '').replace(/\s+/g, ' ').trim()
+    || `Act as ${name}. Follow the user's current request, use the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
   const agent = {
     id: `agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     created_at: new Date().toISOString(),
@@ -3951,11 +3986,9 @@ function createPocketPalAgent() {
   };
   state.pocketPalAgents.push(agent);
   state.pocketPalAgents = state.pocketPalAgents.slice(-24);
-  state.activeAgentId = agent.id;
-  persistPocketPalAgents();
   if (els.agentName) els.agentName.value = '';
   if (els.agentInstruction) els.agentInstruction.value = '';
-  renderAgentList();
+  setActivePocketPalAgent(agent.id, { render: true, announce: false });
   log(`PocketPal agent created: ${agent.name}`);
 }
 
@@ -4999,6 +5032,7 @@ function setMode(mode) {
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
   setPill(els.modePill, config.pill, state.mode === 'deep_research' ? 'busy' : 'ready');
+  syncActiveAgentPill();
   els.send.textContent = 'Send';
   els.prompt.placeholder = state.image.enabled
     ? 'Describe the image to generate...'
@@ -5709,6 +5743,7 @@ async function init() {
   loadWebSearchSettings();
   renderDataSourceList();
   renderAgentList();
+  syncActiveAgentPill();
   renderProcessTrace();
   await loadAgentCore();
   await restoreInstalledExtensionsFromCache();
@@ -5788,11 +5823,7 @@ async function init() {
   });
   els.createAgent?.addEventListener('click', createPocketPalAgent);
   els.clearActiveAgent?.addEventListener('click', () => {
-    state.activeAgentId = '';
-    persistPocketPalAgents();
-    renderAgentList();
-    setPill(els.modePill, modeConfig().pill, 'ready');
-    log('active PocketPal agent cleared');
+    setActivePocketPalAgent('');
   });
   els.extensionManifestUrl?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
