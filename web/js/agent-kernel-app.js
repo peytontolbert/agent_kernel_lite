@@ -1978,6 +1978,59 @@ function buildTranslationPrompt(text, options = {}) {
   ].join('\n');
 }
 
+function extractRewriteAgentText(text) {
+  const raw = String(text || '').trim();
+  return raw
+    .replace(/^\s*(?:reword|rewrite|paraphrase|clean up|polish)\s+(?:this|the following|that)?\s*[:\-]\s*/i, '')
+    .trim() || raw;
+}
+
+function buildRewriteAgentPrompt(text, agent = activePocketPalAgent()) {
+  return [
+    '<AK_CHAT> <AK_RESPOND>',
+    'Return exactly this decision format: Action: respond, then Content: the rewritten text only.',
+    'Task: rewrite/reword the user-provided text.',
+    'Preserve the original meaning, intent, names, facts, numbers, and formatting when possible.',
+    'Improve clarity, grammar, and flow. Do not answer the text. Do not add explanations, bullets, citations, labels, or commentary.',
+    agent ? `Active rewrite agent: ${agent.name}. ${agent.instruction || ''}` : '',
+    '',
+    'Text to rewrite:',
+    extractRewriteAgentText(text),
+  ].filter((line) => line !== '').join('\n');
+}
+
+async function submitRewriteAgentPrompt(text) {
+  resetProcessTrace(text);
+  setControlsBusy(true);
+  try {
+    if (!state.modelReady || state.loadedModelId !== els.model.value) await loadModel();
+    else setProcessStep('runtime', 'done', `Using loaded ${shortText(state.loadedModelId || els.model.value, 56)}`);
+    setProcessStep('plan', 'done', 'rewrite: active rewrite agent selected');
+    setProcessStep('lookup', 'done', 'Skipped retrieval for rewrite agent');
+    setProcessStep('compact', 'done', 'Rewrite-only context');
+    const prompt = buildRewriteAgentPrompt(text);
+    setProcessStep('compile', 'done', `${formatCount(prompt.length)} prompt characters`);
+    setProcessStep('generate', 'active', 'Generating rewrite');
+    const output = await generateUtilityText(prompt, {
+      maxNewTokens: Math.max(96, targetMaxTokens()),
+      temperature: 0.05,
+      decoderPrefix: 'Action: respond\nContent: ',
+    });
+    const packet = recordAssistantTurn(output);
+    const rewritten = displayTextFromDecision(packet, output).replace(/^Content:\s*/i, '').trim();
+    appendMessage('assistant', rewritten || 'I could not produce a rewrite.');
+    setProcessStep('render', 'done', 'Rewrite displayed');
+    finishProcessTrace('Complete');
+  } catch (error) {
+    setProcessStep('generate', 'error', error.message || String(error));
+    finishProcessTrace('Error');
+    appendMessage('assistant', `Could not run the rewrite agent: ${error.message || String(error)}`);
+    log(`rewrite agent failed: ${error.message || String(error)}`);
+  } finally {
+    setControlsBusy(false);
+  }
+}
+
 async function runTranslator(text, options = {}) {
   const inputText = String(text || '').trim();
   if (!inputText) throw new Error('No text was provided for translation.');
@@ -3675,6 +3728,20 @@ function activeAgentInstruction() {
   ].join('\n');
 }
 
+function activeAgentTaskKind(agent = activePocketPalAgent()) {
+  const text = `${agent?.name || ''} ${agent?.instruction || ''}`.toLowerCase();
+  if (/\b(reword|rewrite|paraphrase|wordsmith|clean\s+up|polish)\b/.test(text)) return 'rewrite';
+  return '';
+}
+
+function defaultAgentInstruction(name) {
+  const label = String(name || '').trim() || 'PocketPal agent';
+  if (activeAgentTaskKind({ name: label, instruction: label }) === 'rewrite') {
+    return 'Rewrite or reword the user-provided text only. Preserve the original meaning, names, facts, numbers, and intent. Improve clarity and flow. Do not answer the text, research it, explain the rewrite, or add commentary.';
+  }
+  return `Act as ${label}. Follow the user's current request, use the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
+}
+
 function pocketPalAgentContext() {
   const agent = activePocketPalAgent();
   if (!agent) return 'No custom agent selected.';
@@ -3974,7 +4041,7 @@ function renderAgentList() {
 function createPocketPalAgent() {
   const name = String(els.agentName?.value || '').trim() || 'PocketPal agent';
   const instruction = String(els.agentInstruction?.value || '').replace(/\s+/g, ' ').trim()
-    || `Act as ${name}. Follow the user's current request, use the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
+    || defaultAgentInstruction(name);
   const agent = {
     id: `agent_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     created_at: new Date().toISOString(),
@@ -4823,6 +4890,10 @@ async function submitPrompt(event) {
   }
   if (isUserVisibleWebSearchRequest(text)) {
     await submitWebSearchPrompt(text);
+    return;
+  }
+  if (activeAgentTaskKind() === 'rewrite') {
+    await submitRewriteAgentPrompt(text);
     return;
   }
   resetProcessTrace(text);
