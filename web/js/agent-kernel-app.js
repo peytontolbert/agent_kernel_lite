@@ -1978,59 +1978,6 @@ function buildTranslationPrompt(text, options = {}) {
   ].join('\n');
 }
 
-function extractRewriteAgentText(text) {
-  const raw = String(text || '').trim();
-  return raw
-    .replace(/^\s*(?:reword|rewrite|paraphrase|clean up|polish)\s+(?:this|the following|that)?\s*[:\-]\s*/i, '')
-    .trim() || raw;
-}
-
-function buildRewriteAgentPrompt(text, agent = activePocketPalAgent()) {
-  return [
-    '<AK_CHAT> <AK_RESPOND>',
-    'Return exactly this decision format: Action: respond, then Content: the rewritten text only.',
-    'Task: rewrite/reword the user-provided text.',
-    'Preserve the original meaning, intent, names, facts, numbers, and formatting when possible.',
-    'Improve clarity, grammar, and flow. Do not answer the text. Do not add explanations, bullets, citations, labels, or commentary.',
-    agent ? `Active rewrite agent: ${agent.name}. ${agent.instruction || ''}` : '',
-    '',
-    'Text to rewrite:',
-    extractRewriteAgentText(text),
-  ].filter((line) => line !== '').join('\n');
-}
-
-async function submitRewriteAgentPrompt(text) {
-  resetProcessTrace(text);
-  setControlsBusy(true);
-  try {
-    if (!state.modelReady || state.loadedModelId !== els.model.value) await loadModel();
-    else setProcessStep('runtime', 'done', `Using loaded ${shortText(state.loadedModelId || els.model.value, 56)}`);
-    setProcessStep('plan', 'done', 'rewrite: active rewrite agent selected');
-    setProcessStep('lookup', 'done', 'Skipped retrieval for rewrite agent');
-    setProcessStep('compact', 'done', 'Rewrite-only context');
-    const prompt = buildRewriteAgentPrompt(text);
-    setProcessStep('compile', 'done', `${formatCount(prompt.length)} prompt characters`);
-    setProcessStep('generate', 'active', 'Generating rewrite');
-    const output = await generateUtilityText(prompt, {
-      maxNewTokens: Math.max(96, targetMaxTokens()),
-      temperature: 0.05,
-      decoderPrefix: 'Action: respond\nContent: ',
-    });
-    const packet = recordAssistantTurn(output);
-    const rewritten = displayTextFromDecision(packet, output).replace(/^Content:\s*/i, '').trim();
-    appendMessage('assistant', rewritten || 'I could not produce a rewrite.');
-    setProcessStep('render', 'done', 'Rewrite displayed');
-    finishProcessTrace('Complete');
-  } catch (error) {
-    setProcessStep('generate', 'error', error.message || String(error));
-    finishProcessTrace('Error');
-    appendMessage('assistant', `Could not run the rewrite agent: ${error.message || String(error)}`);
-    log(`rewrite agent failed: ${error.message || String(error)}`);
-  } finally {
-    setControlsBusy(false);
-  }
-}
-
 async function runTranslator(text, options = {}) {
   const inputText = String(text || '').trim();
   if (!inputText) throw new Error('No text was provided for translation.');
@@ -3241,6 +3188,7 @@ function buildPromptFallback(userText, contextRows) {
     'Do not claim to execute, test, install, browse, or modify files.',
     'Answer the user directly. When using evidence, cite the evidence id such as [1] or [P1]; the interface renders the exact paper title and PDF link from that id.',
     'Do not generate paper titles or paper ids from memory; use evidence ids for grounded source references.',
+    activeAgentRuntimePreamble(),
     modeInstruction,
     `Mode: ${config.label}`,
     activeAgentInstruction(),
@@ -3429,7 +3377,7 @@ function buildPrompt(userText, contextRows) {
           evidenceReadingNotes(userText, contextRows),
           selectedContext ? 'Context target: answer about the selected paper already added to chat. Do not search for or introduce a different paper.' : '',
         ].filter((line) => line !== '').join('\n');
-        return `${packet.prompt}\n${readingAppendix}`;
+        return [activeAgentRuntimePreamble(), packet.prompt, readingAppendix].filter(Boolean).join('\n');
       }
       return buildPromptFallback(userText, contextRows);
     } catch (error) {
@@ -3728,18 +3676,24 @@ function activeAgentInstruction() {
   ].join('\n');
 }
 
-function activeAgentTaskKind(agent = activePocketPalAgent()) {
-  const text = `${agent?.name || ''} ${agent?.instruction || ''}`.toLowerCase();
-  if (/\b(reword|rewrite|paraphrase|wordsmith|clean\s+up|polish)\b/.test(text)) return 'rewrite';
-  return '';
+function activeAgentRuntimePreamble() {
+  const agent = activePocketPalAgent();
+  if (!agent) return '';
+  return [
+    '<AK_AGENT_ACTIVE>',
+    `Agent name: ${agent.name || 'PocketPal agent'}`,
+    `Agent instruction: ${agent.instruction || defaultAgentInstruction(agent.name)}`,
+    `Retrieval policy: ${agent.retrievalPolicy || 'auto'}`,
+    `Tool policy: ${agent.toolPolicy || 'ask_before_extensions'}`,
+    `Action policy: ${agent.actionPolicy || 'respond_or_ask'}`,
+    'The active agent instruction is the primary task contract for this turn. Apply it directly to the user request. Do not substitute a research assistant behavior unless the agent instruction or the user explicitly asks for research.',
+    '</AK_AGENT_ACTIVE>',
+  ].join('\n');
 }
 
 function defaultAgentInstruction(name) {
   const label = String(name || '').trim() || 'PocketPal agent';
-  if (activeAgentTaskKind({ name: label, instruction: label }) === 'rewrite') {
-    return 'Rewrite or reword the user-provided text only. Preserve the original meaning, names, facts, numbers, and intent. Improve clarity and flow. Do not answer the text, research it, explain the rewrite, or add commentary.';
-  }
-  return `Act as ${label}. Follow the user's current request, use the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
+  return `Use the user-configured agent named "${label}" for the current request. Treat the agent name and any saved instruction as the task definition, follow the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
 }
 
 function pocketPalAgentContext() {
@@ -4892,10 +4846,6 @@ async function submitPrompt(event) {
     await submitWebSearchPrompt(text);
     return;
   }
-  if (activeAgentTaskKind() === 'rewrite') {
-    await submitRewriteAgentPrompt(text);
-    return;
-  }
   resetProcessTrace(text);
   setControlsBusy(true);
   try {
@@ -4908,7 +4858,15 @@ async function submitPrompt(event) {
     let plan = await planLiteTurn(text);
     const agent = activePocketPalAgent();
     const retrievalPolicy = activeAgentPolicy('retrievalPolicy', 'auto');
-    if (agent && retrievalPolicy === 'none' && !freshResearchRequired) {
+    if (agent && retrievalPolicy === 'auto' && !freshResearchRequired) {
+      plan = {
+        action: 'respond',
+        query: text,
+        reason: 'active agent handles the prompt directly unless retrieval is requested',
+      };
+      setProcessStep('plan', 'done', `${plan.action}: ${plan.reason}`);
+      log('planner override: active agent prompt-first route');
+    } else if (agent && retrievalPolicy === 'none' && !freshResearchRequired) {
       plan = {
         action: 'respond',
         query: text,
