@@ -56,6 +56,66 @@ jobs:
           PY
           chmod 600 "$RUNNER_TEMP/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
+      - name: Diagnose App Store Connect certificates
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          node <<'NODE'
+          const crypto = require('crypto');
+          const fs = require('fs');
+
+          const apiBase = 'https://api.appstoreconnect.apple.com/v1';
+          const keyId = process.env.ASC_KEY_ID;
+          const issuerId = process.env.ASC_ISSUER_ID;
+          const keyPath = `${process.env.RUNNER_TEMP}/private_keys/AuthKey_${keyId}.p8`;
+          const bundleId = process.env.BUNDLE_ID;
+
+          function base64url(value) {
+            return Buffer.from(value).toString('base64url');
+          }
+
+          function token() {
+            const now = Math.floor(Date.now() / 1000);
+            const header = { alg: 'ES256', kid: keyId, typ: 'JWT' };
+            const payload = { iss: issuerId, iat: now, exp: now + 20 * 60, aud: 'appstoreconnect-v1' };
+            const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+            const signature = crypto.sign('sha256', Buffer.from(unsigned), {
+              key: fs.readFileSync(keyPath, 'utf8'),
+              dsaEncoding: 'ieee-p1363',
+            });
+            return `${unsigned}.${signature.toString('base64url')}`;
+          }
+
+          async function request(path) {
+            const response = await fetch(`${apiBase}${path}`, {
+              headers: { Authorization: `Bearer ${token()}` },
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(`${path} failed: ${JSON.stringify(body.errors || body)}`);
+            return body;
+          }
+
+          async function main() {
+            const bundleResponse = await request(`/bundleIds?filter[identifier]=${encodeURIComponent(bundleId)}&limit=1`);
+            console.log(`ASC bundle id visible: ${bundleResponse.data?.[0]?.attributes?.identifier || 'none'}`);
+            const certificates = await request('/certificates?limit=50');
+            const certificateTypes = certificates.data?.reduce((counts, certificate) => {
+              const type = certificate.attributes?.certificateType || 'UNKNOWN';
+              counts[type] = (counts[type] || 0) + 1;
+              return counts;
+            }, {}) || {};
+            console.log(`Visible certificate types: ${JSON.stringify(certificateTypes)}`);
+          }
+
+          main().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
+          echo "Diagnostic complete; stopping before build/upload."
+          exit 1
+
       - name: Archive app
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
