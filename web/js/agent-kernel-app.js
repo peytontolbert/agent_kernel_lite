@@ -3285,6 +3285,7 @@ function buildActiveAgentDirectPrompt(userText) {
     `Action policy: ${agent?.actionPolicy || 'respond_or_ask'}`,
     'The active agent instruction is the primary task contract for this turn.',
     '</AK_AGENT_ACTIVE>',
+    activeAgentIntentHint(agent, userText),
     `<AK_CONTEXT> Saved user data: ${dataContext || 'none'}`,
     '<AK_PROFILE> User text slots:',
     `<AK_SLOT> <AK_SLOT_NAME>=SOURCE_TEXT <AK_SLOT_VALUE>=${userText}`,
@@ -3922,6 +3923,31 @@ function activeAgentRuntimePreamble() {
     'The active agent instruction is the primary task contract for this turn. Apply it directly to the user request. Do not answer as the base assistant when an active agent is selected unless the active agent instruction asks for normal assistant chat. Do not substitute a research assistant behavior unless the agent instruction or the user explicitly asks for research.',
     '</AK_AGENT_ACTIVE>',
   ].join('\n');
+}
+
+function activeAgentIntentHint(agent, userText = '') {
+  if (!agent) return '';
+  const haystack = `${agent.name || ''} ${agent.instruction || ''} ${userText || ''}`.toLowerCase();
+  const pairs = [
+    ['rewrite', /\b(rewrite|reword|paraphrase|make .*professional|polish|grammar|tone|shorter|clearer)\b/],
+    ['translation', /\b(translate|translation|spanish|french|german|italian|portuguese)\b/],
+    ['summary', /\b(summarize|summary|tl;?dr|recap)\b/],
+    ['action_items', /\b(action item|todo|to-do|tasks?|owners?|deadlines?|bullet points?|bullets?)\b/],
+    ['plan', /\b(plan|schedule|itinerary|steps|roadmap)\b/],
+    ['checklist', /\b(checklist|check list)\b/],
+    ['risks', /\b(risk|risks|review|concerns|failure modes?)\b/],
+    ['json', /\b(json|structured object|schema)\b/],
+    ['ranking', /\b(rank|sort|priority|prioritize|order)\b/],
+    ['extraction', /\b(extract|pull out|identify|entities|fields)\b/],
+    ['subject', /\b(subject line|email subject)\b/],
+    ['brainstorm', /\b(brainstorm|ideas|generate ideas|names)\b/],
+    ['source_echo', /\b(exact|verbatim|source text|preserve all)\b/],
+    ['saved_data', /\b(saved data|memory|remembered|my note|my code)\b/],
+    ['web_search', /\b(web|search|online|current|recent|latest|today)\b/],
+  ];
+  const intent = pairs.find(([, pattern]) => pattern.test(haystack))?.[0] || 'casual';
+  const task = intent === 'rewrite' ? 'active_agent_rewrite' : `active_agent_${intent}`;
+  return `<AK_TASK_HINT> intent=${intent} task=${task} source_text_required=${intent !== 'casual'}`;
 }
 
 function defaultAgentInstruction(name) {
