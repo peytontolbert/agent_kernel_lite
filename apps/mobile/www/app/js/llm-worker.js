@@ -1,6 +1,26 @@
 const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
-const MODEL_STACK_BITNET_RUNTIME_URL = new URL('../vendor/model-stack-bitnet/encdec_runtime.js?v=20260502-wasm-sampler', import.meta.url).href;
+const MODEL_STACK_BITNET_RUNTIME_URL = new URL('../vendor/model-stack-bitnet/encdec_runtime.js?v=20260514-intent-head', import.meta.url).href;
 const MODEL_STACK_BITNET_WGSL_URL = new URL('../vendor/model-stack-bitnet/bitnet_linear.wgsl', import.meta.url).href;
+const AGENT_INTENT_LABELS = [
+  'plan',
+  'action_items',
+  'rewrite',
+  'translation',
+  'web_search',
+  'casual',
+  'source_echo',
+  'saved_data',
+  'ask_user',
+  'summary',
+  'title',
+  'checklist',
+  'risks',
+  'json',
+  'ranking',
+  'extraction',
+  'subject',
+  'brainstorm',
+];
 
 let hfPipeline = null;
 
@@ -883,6 +903,38 @@ async function embedModelStack({ text, requestId, maxEncoderTokens }) {
   post('embedded', { requestId, embedding: Array.from(embedding) });
 }
 
+function softmax(values) {
+  const maxValue = Math.max(...values);
+  const weights = values.map((value) => Math.exp(Number(value) - maxValue));
+  const total = weights.reduce((sum, value) => sum + value, 0) || 1;
+  return weights.map((value) => value / total);
+}
+
+async function classifyAgentIntentModelStack({ text, requestId, maxEncoderTokens }) {
+  if (!modelStackRuntime) throw new Error('Model-stack runtime is not loaded.');
+  if (typeof modelStackRuntime.agentIntentLogits !== 'function') {
+    throw new Error('Loaded model does not expose agent intent logits.');
+  }
+  const tokenizer = modelStackTokenizer || createByteTokenizer();
+  const encIds = tokenizer.encode(String(text || ''), Math.max(64, Math.min(1024, Number(maxEncoderTokens || 768))));
+  post('status', { message: 'classifying agent intent with AgentKernel BitNet encoder' });
+  const logits = Array.from(await modelStackRuntime.agentIntentLogits(encIds));
+  const probabilities = softmax(logits);
+  const ranked = probabilities
+    .map((probability, index) => ({
+      id: AGENT_INTENT_LABELS[index] || `intent_${index}`,
+      index,
+      probability,
+    }))
+    .sort((a, b) => b.probability - a.probability);
+  post('intent', {
+    requestId,
+    intent: ranked[0]?.id || '',
+    confidence: ranked[0]?.probability || 0,
+    ranked: ranked.slice(0, 5),
+  });
+}
+
 self.addEventListener('message', (event) => {
   const data = event.data || {};
   (async () => {
@@ -892,6 +944,8 @@ self.addEventListener('message', (event) => {
       await generate(data);
     } else if (data.type === 'embed') {
       await embedModelStack(data);
+    } else if (data.type === 'intent') {
+      await classifyAgentIntentModelStack(data);
     } else if (data.type === 'cancel') {
       const generationId = Number(data.generationId || activeGenerationId || 0);
       if (generationId) cancelledGenerationIds.add(generationId);

@@ -835,6 +835,21 @@ export class BitNetEncoderDecoderWebGPU {
     return this.retrievalEmbedding(encInputIds, { ...options, kind: "doc" });
   }
 
+  async agentIntentLogits(encInputIds, options = {}) {
+    if (!this.manifest?.model?.agent_intent_labels && !this.linears?.agent_intent_head) {
+      throw new Error("model manifest does not expose an agent intent head");
+    }
+    const inputIds = Array.from(encInputIds || [], Number);
+    const memory = await this.encode(inputIds);
+    const pooled = meanPoolRows(
+      memory,
+      inputIds.length,
+      this.graph.d_model,
+      options.attentionMask || inputIds.map((id) => (id === 0 ? 0 : 1)),
+    );
+    return this.linear("agent_intent_head").run(pooled, 1);
+  }
+
   async decode(decInputIds, memory, memoryLen) {
     let x = embed(decInputIds, this.tensor("dec_embed.weight"), this.graph.d_model);
     for (let i = 0; i < this.graph.n_layers; i += 1) {

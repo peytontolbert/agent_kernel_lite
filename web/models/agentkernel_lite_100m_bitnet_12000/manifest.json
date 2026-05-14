@@ -1,142 +1,4 @@
 {
-  "agentkernel_lite": {
-    "chat_contract": {
-      "code_execution": false,
-      "extensions_may_be_suggested": true,
-      "primary_action": "respond",
-      "structured_decision": true
-    },
-    "model_family": "agentkernel_lite_encdec_v1",
-    "parameter_count": 102257408,
-    "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v14_agent_only_repair_from_v13/agentkernel_lite_encdec_manifest.json",
-    "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v14_agent_only_repair_from_v13/model",
-    "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v14_agent_only_repair_from_v13/tokenizer"
-  },
-  "compression": {
-    "dense_dtype": "float32",
-    "dense_float32_include": [],
-    "quant_exclude": [],
-    "quant_include": [],
-    "quantization": {
-      "activation_quant": "none",
-      "modules": [
-        "encoder.0.attn.w_q",
-        "encoder.0.attn.w_k",
-        "encoder.0.attn.w_v",
-        "encoder.0.attn.w_o",
-        "encoder.0.mlp.w_in",
-        "encoder.0.mlp.w_out",
-        "encoder.1.attn.w_q",
-        "encoder.1.attn.w_k",
-        "encoder.1.attn.w_v",
-        "encoder.1.attn.w_o",
-        "encoder.1.mlp.w_in",
-        "encoder.1.mlp.w_out",
-        "encoder.2.attn.w_q",
-        "encoder.2.attn.w_k",
-        "encoder.2.attn.w_v",
-        "encoder.2.attn.w_o",
-        "encoder.2.mlp.w_in",
-        "encoder.2.mlp.w_out",
-        "encoder.3.attn.w_q",
-        "encoder.3.attn.w_k",
-        "encoder.3.attn.w_v",
-        "encoder.3.attn.w_o",
-        "encoder.3.mlp.w_in",
-        "encoder.3.mlp.w_out",
-        "encoder.4.attn.w_q",
-        "encoder.4.attn.w_k",
-        "encoder.4.attn.w_v",
-        "encoder.4.attn.w_o",
-        "encoder.4.mlp.w_in",
-        "encoder.4.mlp.w_out",
-        "encoder.5.attn.w_q",
-        "encoder.5.attn.w_k",
-        "encoder.5.attn.w_v",
-        "encoder.5.attn.w_o",
-        "encoder.5.mlp.w_in",
-        "encoder.5.mlp.w_out",
-        "decoder.0.self_attn_block.mlp.w_in",
-        "decoder.0.self_attn_block.mlp.w_out",
-        "decoder.0.self_attn_block.attn.w_q",
-        "decoder.0.self_attn_block.attn.w_k",
-        "decoder.0.self_attn_block.attn.w_v",
-        "decoder.0.self_attn_block.attn.w_o",
-        "decoder.0.cross_block.cross.w_q",
-        "decoder.0.cross_block.cross.w_k",
-        "decoder.0.cross_block.cross.w_v",
-        "decoder.0.cross_block.cross.w_o",
-        "decoder.0.cross_block.mlp.w_in",
-        "decoder.0.cross_block.mlp.w_out",
-        "decoder.1.self_attn_block.mlp.w_in",
-        "decoder.1.self_attn_block.mlp.w_out",
-        "decoder.1.self_attn_block.attn.w_q",
-        "decoder.1.self_attn_block.attn.w_k",
-        "decoder.1.self_attn_block.attn.w_v",
-        "decoder.1.self_attn_block.attn.w_o",
-        "decoder.1.cross_block.cross.w_q",
-        "decoder.1.cross_block.cross.w_k",
-        "decoder.1.cross_block.cross.w_v",
-        "decoder.1.cross_block.cross.w_o",
-        "decoder.1.cross_block.mlp.w_in",
-        "decoder.1.cross_block.mlp.w_out",
-        "decoder.2.self_attn_block.mlp.w_in",
-        "decoder.2.self_attn_block.mlp.w_out",
-        "decoder.2.self_attn_block.attn.w_q",
-        "decoder.2.self_attn_block.attn.w_k",
-        "decoder.2.self_attn_block.attn.w_v",
-        "decoder.2.self_attn_block.attn.w_o",
-        "decoder.2.cross_block.cross.w_q",
-        "decoder.2.cross_block.cross.w_k",
-        "decoder.2.cross_block.cross.w_v",
-        "decoder.2.cross_block.cross.w_o",
-        "decoder.2.cross_block.mlp.w_in",
-        "decoder.2.cross_block.mlp.w_out",
-        "decoder.3.self_attn_block.mlp.w_in",
-        "decoder.3.self_attn_block.mlp.w_out",
-        "decoder.3.self_attn_block.attn.w_q",
-        "decoder.3.self_attn_block.attn.w_k",
-        "decoder.3.self_attn_block.attn.w_v",
-        "decoder.3.self_attn_block.attn.w_o",
-        "decoder.3.cross_block.cross.w_q",
-        "decoder.3.cross_block.cross.w_k",
-        "decoder.3.cross_block.cross.w_v",
-        "decoder.3.cross_block.cross.w_o",
-        "decoder.3.cross_block.mlp.w_in",
-        "decoder.3.cross_block.mlp.w_out",
-        "decoder.4.self_attn_block.mlp.w_in",
-        "decoder.4.self_attn_block.mlp.w_out",
-        "decoder.4.self_attn_block.attn.w_q",
-        "decoder.4.self_attn_block.attn.w_k",
-        "decoder.4.self_attn_block.attn.w_v",
-        "decoder.4.self_attn_block.attn.w_o",
-        "decoder.4.cross_block.cross.w_q",
-        "decoder.4.cross_block.cross.w_k",
-        "decoder.4.cross_block.cross.w_v",
-        "decoder.4.cross_block.cross.w_o",
-        "decoder.4.cross_block.mlp.w_in",
-        "decoder.4.cross_block.mlp.w_out",
-        "decoder.5.self_attn_block.mlp.w_in",
-        "decoder.5.self_attn_block.mlp.w_out",
-        "decoder.5.self_attn_block.attn.w_q",
-        "decoder.5.self_attn_block.attn.w_k",
-        "decoder.5.self_attn_block.attn.w_v",
-        "decoder.5.self_attn_block.attn.w_o",
-        "decoder.5.cross_block.cross.w_q",
-        "decoder.5.cross_block.cross.w_k",
-        "decoder.5.cross_block.cross.w_v",
-        "decoder.5.cross_block.cross.w_o",
-        "decoder.5.cross_block.mlp.w_in",
-        "decoder.5.cross_block.mlp.w_out",
-        "lm_head"
-      ],
-      "num": 109,
-      "scheme": "bitnet",
-      "spin": false,
-      "weight_opt": "none"
-    },
-    "quantize_bitnet": true
-  },
   "dense_dtype": "float32",
   "dense_float32_patterns": [],
   "dense_tensors": {
@@ -144,7 +6,7 @@
       "bytes": 3752960,
       "dtype": "float32",
       "path": "dense/dec_embed_weight.f32.bin",
-      "sha256": "00a7c5f19dcea49f7ed88cc0f3cab919a1aea0deddee2f219d0ac33f321562aa",
+      "sha256": "e5197ff5ef0cb5ba5ee98d86ac188fae3ed95cbcedee5ef5ecd2cb5ee5e87338",
       "shape": [
         1466,
         640
@@ -154,7 +16,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/dec_norm_bias.f32.bin",
-      "sha256": "e98ba9b2a739554d4f9586b019ddb38cdcf0c71dca5193c1714a353cb803bd3f",
+      "sha256": "4c5cfd82a8cfecb569c3c5fff71004c7c752ef221d8ebfc9e989ca82e9532cca",
       "shape": [
         640
       ]
@@ -163,7 +25,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/dec_norm_weight.f32.bin",
-      "sha256": "fc688df13d938f0d51644f8fbab4980f3e2da1ab66bb3d045b0ca495d4bff15e",
+      "sha256": "691286ae5f1e0128d5b82b9eefa1dc77d0a7ce4a8c45358570a14b9d88edf745",
       "shape": [
         640
       ]
@@ -172,7 +34,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_0_cross_block_n1_weight.f32.bin",
-      "sha256": "bf6279e665e80749990a6f7a60504c16b22c1fb2ff91ba8fef5c1052923bb02a",
+      "sha256": "b2a0615e647492ccb822126082095563725aae2c195e607627ad469300965651",
       "shape": [
         640
       ]
@@ -181,7 +43,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_0_cross_block_n2_weight.f32.bin",
-      "sha256": "e201b3a3b3790de30f82dc7e42d96ba92ca77a49cf91cc0c306d5f434c063fa5",
+      "sha256": "cbd213e6a5d18b993e2c815541e7f73959df891cb8d4262754249cba7de471a3",
       "shape": [
         640
       ]
@@ -190,7 +52,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_0_self_attn_block_n1_weight.f32.bin",
-      "sha256": "6e4df43640559831f467299a49eb6e5b435296afaae7d99e8311730ad4a190db",
+      "sha256": "9acf6f15adaa32cf235bc692419634876ac4f8274562b4bf11f9678c9f6992eb",
       "shape": [
         640
       ]
@@ -199,7 +61,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_0_self_attn_block_n2_weight.f32.bin",
-      "sha256": "a2f0291a171a6c71525effac8a3cf654191834b31bb0e9b3086792e2aacb6a45",
+      "sha256": "a23cfff3f0ce71d3cb7431227daf3117cf1772752ab5621ea7fb5fff0f14da36",
       "shape": [
         640
       ]
@@ -208,7 +70,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_1_cross_block_n1_weight.f32.bin",
-      "sha256": "53dd857a1266c0d81ed02844cd545fd855dfdad4410b067a3d51e0289d2b214a",
+      "sha256": "503aeeae5e56cd91fe5da39f956b6f22b4566d6276d50153b2abed090b123bbe",
       "shape": [
         640
       ]
@@ -217,7 +79,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_1_cross_block_n2_weight.f32.bin",
-      "sha256": "5391a3a2295ac67a8cba0770bfb65d4c27ee8636e1aa89e02fb24f9425144d9e",
+      "sha256": "fc98ae67978c726d21e79b540fc16b3edbd66c0c4f3faf6eba540e4c74af5920",
       "shape": [
         640
       ]
@@ -226,7 +88,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_1_self_attn_block_n1_weight.f32.bin",
-      "sha256": "954543447b8d9d802781e03604fc4b3bafe004a98cb1671b80fee95d39024513",
+      "sha256": "88f09941dd9c0f8def5f6a51cbeeb4c32f977ad42e00302d59c040030aa96941",
       "shape": [
         640
       ]
@@ -235,7 +97,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_1_self_attn_block_n2_weight.f32.bin",
-      "sha256": "3d72d2f1fa28bee7eab279c7fbdcdcf91fc6a4bb2a3c57c6cb34ec9885ee890e",
+      "sha256": "89ca0ed760a18fe52a3c1031186d5e95b9fa882d1e7cccb2851649950a6a420c",
       "shape": [
         640
       ]
@@ -244,7 +106,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_2_cross_block_n1_weight.f32.bin",
-      "sha256": "309a011c0526568fe7b49ca317ed48af806ca20a5700f2070dd29cc0224e5199",
+      "sha256": "27ae37430735b31ff4c2679ce1651f34fa039dd5db65af789cf49c14440be2a7",
       "shape": [
         640
       ]
@@ -253,7 +115,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_2_cross_block_n2_weight.f32.bin",
-      "sha256": "cde1123f8d9b4f95b28fd65a440a89db303dc14d5965e5292ca7d9a747a8f5ce",
+      "sha256": "e981ef45d8cb6138fd59014fde119e5f6478c515db97254e5d87ae9c22c350ca",
       "shape": [
         640
       ]
@@ -262,7 +124,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_2_self_attn_block_n1_weight.f32.bin",
-      "sha256": "8838dee057cb492d12cc257106df77713181f3a05b80bb8160fc4e6000743f6b",
+      "sha256": "0023a4abdd580fc07e7d1c6888f81a3b4db26db47621a80681abe442c837d70a",
       "shape": [
         640
       ]
@@ -271,7 +133,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_2_self_attn_block_n2_weight.f32.bin",
-      "sha256": "d7067b859122e3da8fb61f70b1b1b127836baa2328fb5dcb46dc6c6634c49f56",
+      "sha256": "702f774ed9652ae0aaaa02dbd2fda8784bcf2b88c47ac37eed50c3d455204c75",
       "shape": [
         640
       ]
@@ -280,7 +142,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_3_cross_block_n1_weight.f32.bin",
-      "sha256": "4b5bba0418bcfb5a67dbc62c5d5ae2d00a3f28d51771b152d758c9589be28a30",
+      "sha256": "c3c064064604b2e71f2eaade7066ebd9d430d92e65957eccf402921e2c23cccd",
       "shape": [
         640
       ]
@@ -289,7 +151,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_3_cross_block_n2_weight.f32.bin",
-      "sha256": "76daf0352a5cd1954701664576dc7a9d70089cb7464ab91300c1d1055851c8ae",
+      "sha256": "19b800f5a3f27e3c4922b96f71c5543b6aab83e83d08779448da47e5389e9ba8",
       "shape": [
         640
       ]
@@ -298,7 +160,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_3_self_attn_block_n1_weight.f32.bin",
-      "sha256": "baeac87a5b4b9d8ad1b3cec342956a6284b7b9b7fdfe6b842a8a8a9acacbc435",
+      "sha256": "c0ea07cb424ae8ae17455598af7c0156ccef69e95380f46fe5a667c1883efce9",
       "shape": [
         640
       ]
@@ -307,7 +169,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_3_self_attn_block_n2_weight.f32.bin",
-      "sha256": "7d0dcd8c6a95544d9e5cfca606724641d221b2664ebbb4496b83d71f65a5f8aa",
+      "sha256": "6cf9f36dc53e5d45ed0e926e6eaf5f9f71a365bab92fe1aa9139d12c323d8b92",
       "shape": [
         640
       ]
@@ -316,7 +178,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_4_cross_block_n1_weight.f32.bin",
-      "sha256": "4659e910e29c9b5359dbdfd391ef0de52ada2c412b1710576c3a6bdc155a934e",
+      "sha256": "0da46eda1f0d306f259ef56dfb8b7ceb408f53d7ff59dc0ac7948711394a2e8a",
       "shape": [
         640
       ]
@@ -325,7 +187,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_4_cross_block_n2_weight.f32.bin",
-      "sha256": "f5d1300e9c54359afe44f076cccf891d248817996aa262fd8ad40aeac4eeb6f1",
+      "sha256": "3632d00a5631dbb989837b5eb155f571c96833e066ec0c330cf25ae328c921fe",
       "shape": [
         640
       ]
@@ -334,7 +196,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_4_self_attn_block_n1_weight.f32.bin",
-      "sha256": "976dea807d77a13854f1ce1f6d376a0a4990f5f48a2ee47b19a22544220d1ead",
+      "sha256": "7b9a9798b446a3b5d54c60f3b79409335fb57c77f934cfdcf904980ce79540b8",
       "shape": [
         640
       ]
@@ -343,7 +205,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_4_self_attn_block_n2_weight.f32.bin",
-      "sha256": "f9ad3a69623f33a5f22a386ef1d2a57b14c00c1260866152ed443b670203b7dd",
+      "sha256": "6722da4e4dd5e7898dba75e3393e1b4d5d038c8d12979e706b60ab9bf800d020",
       "shape": [
         640
       ]
@@ -352,7 +214,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_5_cross_block_n1_weight.f32.bin",
-      "sha256": "1081c54d4cd1925128df08694e103e388a55ee18853e966b29e5d05443ab8ce8",
+      "sha256": "5a9d6037600a93cb7957f771109a7152ef254cec74ac014c1182133b3dd2523a",
       "shape": [
         640
       ]
@@ -361,7 +223,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_5_cross_block_n2_weight.f32.bin",
-      "sha256": "1085478bf408fe289edcdfe4b5d4634cef6a97c3527dc1b05c4d40a03e4a3e91",
+      "sha256": "704bb70ef134bf440f8be3b2c72456211eb6f69651770aa3997328aa8edbf32c",
       "shape": [
         640
       ]
@@ -370,7 +232,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_5_self_attn_block_n1_weight.f32.bin",
-      "sha256": "6a40859fe65df3e54148e44bb7d8c9234d9f738d5fe3f1b3e798a16b94481437",
+      "sha256": "424c6817c36b7ddfeb38bed67580c63ecd9649134ae68db413ee7011498c613c",
       "shape": [
         640
       ]
@@ -379,7 +241,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/decoder_5_self_attn_block_n2_weight.f32.bin",
-      "sha256": "d126f6eb6c877dacf1765602966a08c601b2ccac005acbebd786662c4b479f47",
+      "sha256": "19bcf929d4a368ebb8237eaa611551b4116eb71cbe97a4c3e98bff52d86a5fee",
       "shape": [
         640
       ]
@@ -388,7 +250,7 @@
       "bytes": 3752960,
       "dtype": "float32",
       "path": "dense/enc_embed_weight.f32.bin",
-      "sha256": "00a7c5f19dcea49f7ed88cc0f3cab919a1aea0deddee2f219d0ac33f321562aa",
+      "sha256": "e5197ff5ef0cb5ba5ee98d86ac188fae3ed95cbcedee5ef5ecd2cb5ee5e87338",
       "shape": [
         1466,
         640
@@ -398,7 +260,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/enc_norm_bias.f32.bin",
-      "sha256": "5fe387b0047cb65eb23916da7b1886ab90223e1e2ed15f57cb05c7ab8a4a31b2",
+      "sha256": "f10b5ebc25a618cb8441e82053f07e9f5c609cde8106377c38dc4e0cfb19541c",
       "shape": [
         640
       ]
@@ -407,7 +269,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/enc_norm_weight.f32.bin",
-      "sha256": "9f538df24cfcedb1e289863182a8f4e174ce8ccef61f1257d2148534ad6e2022",
+      "sha256": "7a922d1d795cb4cbf36685ef063bb56195564ca2a672e582ece770d627444566",
       "shape": [
         640
       ]
@@ -416,7 +278,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_0_n1_weight.f32.bin",
-      "sha256": "809c5d7a70d3b116e59f6c72188190f98fa30203460f2a0965dc9c51e00d0476",
+      "sha256": "317d5605b0ae98ce8af892a3a84f27e0c0b8d36ccc31874839fdadc375c8d4b2",
       "shape": [
         640
       ]
@@ -425,7 +287,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_0_n2_weight.f32.bin",
-      "sha256": "2809cd5c883de684fa5928bde72daefc04307d168924317e46293e8f90dfd9c5",
+      "sha256": "d00458315b4f3669b74d3e27a1f97104af4bc7503340eaf35606d705a2c6a6b3",
       "shape": [
         640
       ]
@@ -434,7 +296,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_1_n1_weight.f32.bin",
-      "sha256": "7c33dda4170585f64b1b8b7bdfa59356da39897d4c3735bea7df860241490cc7",
+      "sha256": "d93a05cfa5396bfad49996df1ca60038c83976968507f8d5c4a41746dd0ff1c8",
       "shape": [
         640
       ]
@@ -443,7 +305,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_1_n2_weight.f32.bin",
-      "sha256": "586fce4dcfd5c5073a8aa07b7b26617d1392a9d49939588491ed7833b8fc1ef1",
+      "sha256": "1c81f6129f0de1fcd567555f0cac986011ddd98d34fb26971b702bd660d8df61",
       "shape": [
         640
       ]
@@ -452,7 +314,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_2_n1_weight.f32.bin",
-      "sha256": "14c08dee2f5512c97d2fff37eb575852ddb6d576f20ca86fbf6294edbacdd345",
+      "sha256": "c529e31d61676288e5e772f8661cc31ad406fd3d16fe3ca5ce49b366655831a9",
       "shape": [
         640
       ]
@@ -461,7 +323,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_2_n2_weight.f32.bin",
-      "sha256": "a7e6ca4220f6a13103d055debff4da2f484b57e575bf09d570a7ea4e731c7a6a",
+      "sha256": "12e1e33d7ecbc8f0d3400f856c63d730d0553dcf0e5387b6b73156cb0dfba6ad",
       "shape": [
         640
       ]
@@ -470,7 +332,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_3_n1_weight.f32.bin",
-      "sha256": "f597aed65d2b14a099fcdce747691738814081eb68fac0f3ee08cc95d18da3f2",
+      "sha256": "ea339e9f8bddd4ce51cb35f479dd2b25f46e39102dbfef004605b85a767bc457",
       "shape": [
         640
       ]
@@ -479,7 +341,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_3_n2_weight.f32.bin",
-      "sha256": "68b1c14e0d46cffac5114f328c1c445db243dfa4ef474117c780e95abfcad611",
+      "sha256": "1586098c755e76748b883289d0367c7728ef19d07fc7e69b63cc2357f22d940a",
       "shape": [
         640
       ]
@@ -488,7 +350,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_4_n1_weight.f32.bin",
-      "sha256": "013aa86eca761dcdd8e6b96a19d6422ee270e4656062a42065be3a2a5581d13f",
+      "sha256": "625c70302a969fc7803fbe6123f43ce4caa99d2c993e75fd69e32baab4992673",
       "shape": [
         640
       ]
@@ -497,7 +359,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_4_n2_weight.f32.bin",
-      "sha256": "eb851dcb8da243e5ebe45fd06c43988927a80db2cda7b7f0c57f2778d0e008b5",
+      "sha256": "63c28bd2194a612e59ac1fee9520ef06e5a83f0a9f0baa71a33912fbe0642527",
       "shape": [
         640
       ]
@@ -506,7 +368,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_5_n1_weight.f32.bin",
-      "sha256": "b31ff1c767085abb69fd0ff62135d79236be4c39fdc425970a8a432c46c63232",
+      "sha256": "7ca0041a7ddb13c4369a349cd007bf88befa66017002dcfa2e1bc89019f677da",
       "shape": [
         640
       ]
@@ -515,7 +377,7 @@
       "bytes": 2560,
       "dtype": "float32",
       "path": "dense/encoder_5_n2_weight.f32.bin",
-      "sha256": "e4666ac766a1c84ee6dd5387d1fc5abd2a14d72424177d9ce3db7a4ed9f8877a",
+      "sha256": "654f9eb35a0ed69e30b7270a3b4b60f8aec0c392bacfb8244ec08fa351c4b3ab",
       "shape": [
         640
       ]
@@ -1414,6 +1276,12 @@
         "name": "lm_head",
         "projection": "lm_head",
         "stack": "output"
+      },
+      {
+        "kind": "linear",
+        "name": "agent_intent_head",
+        "projection": "agent_intent_head",
+        "stack": "unknown"
       }
     ],
     "lm_head": "lm_head",
@@ -1478,7 +1346,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_0_attn_w_q.packed_weight.u8.bin",
-          "sha256": "ad4b9d90ebefa093c9cdfa5718471681432572e037c07229d134204b70844a14",
+          "sha256": "6d45db5398159a2ec952965f54adffbf6239af584190ce9551a0bb39d2fb989a",
           "shape": [
             640,
             160
@@ -1488,7 +1356,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_attn_w_q.scale_values.f32.bin",
-          "sha256": "3dd844a6c4873693851909723871b3d0a76d0c364fece8689b936126649cf82b",
+          "sha256": "4be09bb8a00aab82a8afb8dfee7db3e42e4f68ccc94c7cf59422f120a194ddd3",
           "shape": [
             1
           ]
@@ -1549,7 +1417,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_0_attn_w_k.packed_weight.u8.bin",
-          "sha256": "f052cc6bb469e345ee489d48c8031c4146987c8c3d4d4787d7b37edfda4fda34",
+          "sha256": "13f9385d19a4f259cabc688bab281860fbadff3081134336afa83e2f5709cdb1",
           "shape": [
             640,
             160
@@ -1559,7 +1427,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_attn_w_k.scale_values.f32.bin",
-          "sha256": "e35883e7360d35a476ef2a8ac08b9cc7ec4a6cd166cb2f62909aced858bcbfd3",
+          "sha256": "149d4aa56e2f3916830491db916bcc6950d3228db96d7b5b88652c606d7802cb",
           "shape": [
             1
           ]
@@ -1620,7 +1488,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_0_attn_w_v.packed_weight.u8.bin",
-          "sha256": "e9346d627a8ffe723741f0b351ca326b83ad63388f0e3b6c81c1e6ee6e0b3862",
+          "sha256": "cd379d34c98b2a4e647991671c1a4f41c0b185fd73eb371fea49b7edf33c2929",
           "shape": [
             640,
             160
@@ -1630,7 +1498,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_attn_w_v.scale_values.f32.bin",
-          "sha256": "767d8cf9168a53dafecab1ba08943e5e32f5e0d7c106c822e25e70bea9792558",
+          "sha256": "36c1221fa5305f624f2efdfb914bc003a52fd05d53bb2adc0c1b24a9d66e1185",
           "shape": [
             1
           ]
@@ -1691,7 +1559,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_0_attn_w_o.packed_weight.u8.bin",
-          "sha256": "0cccb1fe3a47606fce6089496f903802b36124f2e0b65a55443a26c845c1452c",
+          "sha256": "a056535bd0e6a19a46839661fb072c2688d336d117b4ac8a51d4f26c74ac7ec3",
           "shape": [
             640,
             160
@@ -1701,7 +1569,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_attn_w_o.scale_values.f32.bin",
-          "sha256": "ef7b3c0c13353b9f42477c60c0bf7981f7484eb8163c543dcb7af6df062eb43f",
+          "sha256": "00a48dfd212457f1771021da917fd8b3c1f35b9b8acf5aef1026b50dc75f2556",
           "shape": [
             1
           ]
@@ -1753,7 +1621,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_0_mlp_w_in.bias.f32.bin",
-          "sha256": "5e27e484c99d4f1252417d8c53f3043867611a4c92ec5ef28fd046f17643568f",
+          "sha256": "5794359f80ee3547a2f19ff3a64862362d6cf5668f1109cf14949ad7db2d60fb",
           "shape": [
             4096
           ]
@@ -1771,7 +1639,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_0_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "38a215106bbb5748d83274c0d999c633abdd02ca79e0f7f441caf061e9dc55f1",
+          "sha256": "173c7c937354b13cd36703126010af1c726816b32ba39b331902aad61061dcfa",
           "shape": [
             4096,
             160
@@ -1781,7 +1649,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_mlp_w_in.scale_values.f32.bin",
-          "sha256": "35edad360ec7366999870b97cc2b643122b0c627915f94bb1b7239e60ce9754d",
+          "sha256": "0e2d55debc326ef92c0161da2cae0c0beaba3a022e6ca58fcc1e6e507f7d456f",
           "shape": [
             1
           ]
@@ -1833,7 +1701,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_0_mlp_w_out.bias.f32.bin",
-          "sha256": "bbec931d0975cfa3e6943e70706cd67436ffcb711ff6a4e24ae20bdd07066e92",
+          "sha256": "b4ac5f45c772b6f5b0b7ac3b7877df9c9feb1b0ab88a0e25475eeffbdaf8e5bc",
           "shape": [
             640
           ]
@@ -1851,7 +1719,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "encoder_0_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "d5eeb3c1a678c0688b6aa056aff3fd61bb240cdc6d8bde0dea6e236e938ed3bb",
+          "sha256": "4dcc2f45faff5c31ce586dc9bfd5e683b02838647e5d0eb495bea02f4ee283b4",
           "shape": [
             640,
             512
@@ -1861,7 +1729,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_0_mlp_w_out.scale_values.f32.bin",
-          "sha256": "1faaad060895357f23f2200b5dc46721992ae70062eea85f9868df2964eacbc7",
+          "sha256": "223c66e7ad1573f69a4defa630a984f990897a0dedd1a4cf3d1e7fe1ed82da54",
           "shape": [
             1
           ]
@@ -1922,7 +1790,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_1_attn_w_q.packed_weight.u8.bin",
-          "sha256": "1e511f65a06f9a4d1108c2a8b9c289bc8ece2b9118f82d55a427e8744e6204a8",
+          "sha256": "893f66de43e76d259c1e7bb0ee364f4476c663fa51e02c3e73dcba2e348768d5",
           "shape": [
             640,
             160
@@ -1932,7 +1800,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_attn_w_q.scale_values.f32.bin",
-          "sha256": "a1ade8bcbb6af6b714c4cf85990363be703cac4600820958ea70934724f643f2",
+          "sha256": "8039f9e7ab1ee770d4b722be871ff5ab063009fe76d2b8759ee51adda3c8bba2",
           "shape": [
             1
           ]
@@ -1993,7 +1861,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_1_attn_w_k.packed_weight.u8.bin",
-          "sha256": "f576bf05b0e480ff43c5fe80067b66717bf4ffffa8fc101fdf0ffce796f3452e",
+          "sha256": "3fccbde470ee492c34864dd3adc772063244ef53fd5146fd2045e01757d08d74",
           "shape": [
             640,
             160
@@ -2003,7 +1871,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_attn_w_k.scale_values.f32.bin",
-          "sha256": "3ee9cb2363eb03ddc18088d6f595dddfc6cf5033048ca59105153abb567bff47",
+          "sha256": "6f567c5ef2f6d7c3fb7a0907ad98e6f0dd15107caddcfa863283d493d61d525f",
           "shape": [
             1
           ]
@@ -2064,7 +1932,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_1_attn_w_v.packed_weight.u8.bin",
-          "sha256": "12070a4b37f639279c97daef50a2eba32559b39358b19c2e66949535d3b5606c",
+          "sha256": "beb1ecb89f0a8a4ff6da0a1d4c48cbe200dc0a7119ae1cdb7b529035bf6114c1",
           "shape": [
             640,
             160
@@ -2074,7 +1942,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_attn_w_v.scale_values.f32.bin",
-          "sha256": "1ae66d86de68bb2075b6e56db90c9d1e245b4cbc4ed34b16843375a2465b6507",
+          "sha256": "467f5949aec19f02b9c5e755d0d3b4aab6a3cd999aa21e5509a204c50cd25bb0",
           "shape": [
             1
           ]
@@ -2135,7 +2003,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_1_attn_w_o.packed_weight.u8.bin",
-          "sha256": "a451fd6fcacd5ca8c83183e334fc556907bc2dd50bfad1db157ff955f4506370",
+          "sha256": "59a6a4c5500ee87dee39d1d62be809f861175a79e48535d590bb0dd2cc46353a",
           "shape": [
             640,
             160
@@ -2145,7 +2013,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_attn_w_o.scale_values.f32.bin",
-          "sha256": "346703b6ead8789de4fef18ab850b087be13684261c6452aafc0b17a8d461d28",
+          "sha256": "a614a5f5765a27469a03489fff89173d3b33d5adce53d0f15cf71f2883fa6beb",
           "shape": [
             1
           ]
@@ -2197,7 +2065,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_1_mlp_w_in.bias.f32.bin",
-          "sha256": "cbc1b8c92c5ceacbda90fe1acbd9393053ceb180629af4dae393eec9e2439dc0",
+          "sha256": "864288e8daaa99f05605fb0973c16a743af6be60b155e9f1405c04ecc48b9640",
           "shape": [
             4096
           ]
@@ -2215,7 +2083,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_1_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "560ba856fc6498a1900cef60b954b612b443aad3524e4817d0a23038311ebc3b",
+          "sha256": "1d376700b7c3aaa1f33686c2f6fa98fce2b83163c1d9f161d8956d330724d435",
           "shape": [
             4096,
             160
@@ -2225,7 +2093,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_mlp_w_in.scale_values.f32.bin",
-          "sha256": "b4bb652a0c4291ab4d893118417a1115735edeeef472983c7ed863093914f6ba",
+          "sha256": "cb9d08e9f167473e117b17fac0d7ce75e3f7402f78c5b8eee246d1810a3f25aa",
           "shape": [
             1
           ]
@@ -2277,7 +2145,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_1_mlp_w_out.bias.f32.bin",
-          "sha256": "2c960dc8b01acca911d8610885789deabb6b8bdd26e05d345abc098b8161d62c",
+          "sha256": "c46799b6140afa805c2ce17c0aad2392b1488389b9d53ddf3b5b0f6b052b3188",
           "shape": [
             640
           ]
@@ -2295,7 +2163,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "encoder_1_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "c1b9dc0e40216ee654c8ed876e6cfbd513fea7f27be4924f421acd6478dd161b",
+          "sha256": "f3c7fc203e4eb2c768a5dc71c2f46b706d8203647b783e6363fc82d22427c67f",
           "shape": [
             640,
             512
@@ -2305,7 +2173,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_1_mlp_w_out.scale_values.f32.bin",
-          "sha256": "65090a0b82eef76a876b8cc8d302646654c7b3102b984dbd6f6e0f04541b02f0",
+          "sha256": "8f01f0a7cf3864ce8dd8f854e4536e48fcb9098dc6fd887d78c18b480e2fc5e5",
           "shape": [
             1
           ]
@@ -2366,7 +2234,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_2_attn_w_q.packed_weight.u8.bin",
-          "sha256": "3b25718f01330efc340ff478419008e6fb7191d2235af1d736d80fee47268766",
+          "sha256": "603fb9d8fd86814e18a927f83f911a91172746aa79f555c0fc0f4579b02fcadd",
           "shape": [
             640,
             160
@@ -2376,7 +2244,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_attn_w_q.scale_values.f32.bin",
-          "sha256": "12b87104f23a2d9eef7d97ed334b025e5d64fe385594ad9f203ee3fc121089e0",
+          "sha256": "43f51b23725a03f91e84571a271404cd65470b9a3c7b843b9daea8133767e329",
           "shape": [
             1
           ]
@@ -2437,7 +2305,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_2_attn_w_k.packed_weight.u8.bin",
-          "sha256": "646a097b3171774760830a6a3f9350882b35fd274d6f84c30aa3d76bdd8eca2a",
+          "sha256": "f381775f1ae664c802a7071982f70f4e126278243eb3b3f746f70a29b54e2a25",
           "shape": [
             640,
             160
@@ -2447,7 +2315,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_attn_w_k.scale_values.f32.bin",
-          "sha256": "bddd6a0e76425b2cf5c261549f07d3cf1bbd04a03729cd2a5fe2136013fde879",
+          "sha256": "1efecd4e1cbb8630f993ec0fa5c2b7b08e170878c2dbec383e1b840c55fb17c1",
           "shape": [
             1
           ]
@@ -2508,7 +2376,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_2_attn_w_v.packed_weight.u8.bin",
-          "sha256": "118974a680bae5b10d5ee94d78daeaae3a7b854306c38ce8775c51619a0ea97b",
+          "sha256": "1bd2ca056fcbbed8d1806c077ab4ed6350099258d4e6a94d9b7f7e098e696038",
           "shape": [
             640,
             160
@@ -2518,7 +2386,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_attn_w_v.scale_values.f32.bin",
-          "sha256": "8365fcf71a201421576dc8cc046c7bf781d0a98b162d5ba4322559522474f5b4",
+          "sha256": "bda95f526b28c695349aaacad5c6accce3766e7e147827072121cd9707b1dbda",
           "shape": [
             1
           ]
@@ -2579,7 +2447,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_2_attn_w_o.packed_weight.u8.bin",
-          "sha256": "09fc03a328c5d8e779626ef5c5e20945e7790545cac484d0cf1fc1431db7ef75",
+          "sha256": "248dcf3a249264f40edb6c0fee72894da2aa99bfb11c3e0cb727246a98b01ee4",
           "shape": [
             640,
             160
@@ -2589,7 +2457,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_attn_w_o.scale_values.f32.bin",
-          "sha256": "b82e6c44c0dd7e85e1228b50ae236d658b8d3e52bc679b5223366ba19f84620f",
+          "sha256": "b4e025dd6bb1d8bdaec4650d2ef5e3e02d9f1f5fddb82d1be17f08ad7da7622b",
           "shape": [
             1
           ]
@@ -2641,7 +2509,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_2_mlp_w_in.bias.f32.bin",
-          "sha256": "48f4b868264410bd3db99397bf76608b5aac251b1a2b8d82791e8b2b264cdd81",
+          "sha256": "10b7850ea9d88b9cc45375fe5e182084b5d68b24d9ef6e418324e9fceab881e1",
           "shape": [
             4096
           ]
@@ -2659,7 +2527,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_2_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "d0e20b718f39bc703dd928a08e96dc4cc4c68fca6268cb3a98dba0d9264951ad",
+          "sha256": "50032f38fa159984f0fea415167bc1cfea75df946e4f6094fa7982d39050f896",
           "shape": [
             4096,
             160
@@ -2669,7 +2537,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_mlp_w_in.scale_values.f32.bin",
-          "sha256": "deafe122e244bcd078fe8ade3208010d207e71194ebcb125b750bff3dd66f2b3",
+          "sha256": "8a6289759421710a6e93a99d3067141434c2b983241c4245a197f2237f5b3e47",
           "shape": [
             1
           ]
@@ -2721,7 +2589,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_2_mlp_w_out.bias.f32.bin",
-          "sha256": "42b4948fab83880d530cfed8e7fa46f5e5a38f46d5cba1439e1df421d4f39030",
+          "sha256": "978b1ccaea5b9e047d1f49e2ff2f1017d7fe15469fe29f50cb9cc0be78c797e5",
           "shape": [
             640
           ]
@@ -2749,7 +2617,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_2_mlp_w_out.scale_values.f32.bin",
-          "sha256": "9f6c6e0a5548daa955eb83a46bb1ae6a26da2713f07ea8c808cbd971d4844a48",
+          "sha256": "9b5baabee05aee1a1e164da2b44a997c77be5c696beef83e11ac3a0e027e6854",
           "shape": [
             1
           ]
@@ -2810,7 +2678,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_3_attn_w_q.packed_weight.u8.bin",
-          "sha256": "59a844c85afc17e6fe340f3aa16c3e27bcc5013ce62f0a723337731f3eb8ac46",
+          "sha256": "b0a7924bf670803c7ad0de3a9ee5266aa021004b84dab4e17da28feb077bd585",
           "shape": [
             640,
             160
@@ -2820,7 +2688,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_attn_w_q.scale_values.f32.bin",
-          "sha256": "8e012bcbbb9710eb4e75a1706f76b0282c50cf95205c05fb36e4498529204590",
+          "sha256": "f08f8bb73218e6ff1734f0b9aec197e62bddd79dc58f4356f47dd5879ac7da8b",
           "shape": [
             1
           ]
@@ -2881,7 +2749,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_3_attn_w_k.packed_weight.u8.bin",
-          "sha256": "191a18e8acff41a862739f6f2d438685d58b1bb1fe3ae1312391c550678198ff",
+          "sha256": "bc820b40f58fba737bf4bebc5acf6c975b35178018994cb21847bab779b97638",
           "shape": [
             640,
             160
@@ -2891,7 +2759,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_attn_w_k.scale_values.f32.bin",
-          "sha256": "1fbed76b6303c91b004b2be907d44d74b5d6e4697b4b4995d272ad1caf92f071",
+          "sha256": "0df751e26bfe89d13d12e5d9e6c2dc8c49e1f08e9125576f859697dd5daaf12b",
           "shape": [
             1
           ]
@@ -2952,7 +2820,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_3_attn_w_v.packed_weight.u8.bin",
-          "sha256": "cd228357ffe34d013553391b9e721b2bbcf931aa3aef6271a79aeb89e1a27e85",
+          "sha256": "3577532bc625b3630e3e82c737b0286550388369323dcd40113143e9b2bd0569",
           "shape": [
             640,
             160
@@ -2962,7 +2830,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_attn_w_v.scale_values.f32.bin",
-          "sha256": "08b1c320d071d220d4f11c22f05699dfc24466d149081fd492f48bab790d160e",
+          "sha256": "d0823b3b133804656180a471ddc940e28c14c54e6eaa5cd5a9c310b91efd2826",
           "shape": [
             1
           ]
@@ -3023,7 +2891,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_3_attn_w_o.packed_weight.u8.bin",
-          "sha256": "d35a80bf80e45cbd38d49a11fa83f3d02b440a570a6bbbab8fa15138bf308e5d",
+          "sha256": "2d45acf9b4ac2047bbc8c040a398bfb7bf798d054c70e9d16f80958a947d2f85",
           "shape": [
             640,
             160
@@ -3033,7 +2901,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_attn_w_o.scale_values.f32.bin",
-          "sha256": "5052328e3d808a3208347053b86ab479ac0c1a776475191ddc688eab843c22b7",
+          "sha256": "cf92737d751fdd93613ded14d119491b36698c2788f412e70cc73c0269ab7cdf",
           "shape": [
             1
           ]
@@ -3085,7 +2953,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_3_mlp_w_in.bias.f32.bin",
-          "sha256": "d994e629681ef97719b4f6473fb8e883fc61cef81e341e83c4f8a1130327658f",
+          "sha256": "0fe6c0082766204d2605d45a8503424f19166671e9495d0976e86f73c2a7b97c",
           "shape": [
             4096
           ]
@@ -3103,7 +2971,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_3_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "eccb4ebeea3da60a1323d2ace7d69f1fa4756b16446adc5ca59734fb8cd398e6",
+          "sha256": "ddd0c51407148bf3ab089aa6433085a023373f190f61891bf63b652f7405269b",
           "shape": [
             4096,
             160
@@ -3113,7 +2981,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_mlp_w_in.scale_values.f32.bin",
-          "sha256": "7b58c946d1aebcf9a3248a7f6e657573de152d4eca36fd71391b118be108fe2f",
+          "sha256": "7db35e23b2e69cc14ade13cf619da4b46b038b8c170dca37b8742a5d4225d951",
           "shape": [
             1
           ]
@@ -3165,7 +3033,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_3_mlp_w_out.bias.f32.bin",
-          "sha256": "0473802607720959341b46eb48ddbd5ecdc1be37e10e7d0765102674fbd07ae7",
+          "sha256": "7d4ec9621add6e37554924f10513c596758e3221cab5e0519d79d88396e53f70",
           "shape": [
             640
           ]
@@ -3183,7 +3051,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "encoder_3_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "0c6a345eb89a6d0c201ef86f2be152a3631666cbfec29f834c9146434acfcba3",
+          "sha256": "9a34509fbbc8e5139aebeb81be95edd5df69f591e2c27a82870f35f3af74d4b8",
           "shape": [
             640,
             512
@@ -3193,7 +3061,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_3_mlp_w_out.scale_values.f32.bin",
-          "sha256": "87e1998e813ca62b8588d0a13c7a35b862212219602efbcefb3058d4ef666a04",
+          "sha256": "80d027aedae1365d65964e285ad5a4a7104f8f5fab0b3f4adddd437cfab4f144",
           "shape": [
             1
           ]
@@ -3254,7 +3122,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_4_attn_w_q.packed_weight.u8.bin",
-          "sha256": "a4ea5f1762c96e769550229653c415e1f9f1062be11b213fbce044822fafeb0f",
+          "sha256": "963bf07494f7cfb51bdc19f9fbd91119950e553c4d19b9b48862883293bc0c3d",
           "shape": [
             640,
             160
@@ -3264,7 +3132,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_attn_w_q.scale_values.f32.bin",
-          "sha256": "5b843e483b95f3134200c7f93a1552af7b05ed23ba5e767733d231954ec7a7ba",
+          "sha256": "288d6a6ff570092b1bf3b038488cc87d72c09790912d19b8358a28f29da1fe3e",
           "shape": [
             1
           ]
@@ -3325,7 +3193,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_4_attn_w_k.packed_weight.u8.bin",
-          "sha256": "707d108738b4fcfece5234eb0900ffe28ef6edf843ffe466be9395e7280af3e3",
+          "sha256": "6e0ccd39e1828679e6498a8ed58983fac57f0363d2564c770169a7b56e4fc1fe",
           "shape": [
             640,
             160
@@ -3335,7 +3203,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_attn_w_k.scale_values.f32.bin",
-          "sha256": "8a03372bcc5bd0410b1210206f9c5b1f06a2d370e7680bda74ae1c281348dcb1",
+          "sha256": "c17478b345e3f7340561c47fac96ff240cf0268c8814a9ecf19709f0d9147a82",
           "shape": [
             1
           ]
@@ -3396,7 +3264,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_4_attn_w_v.packed_weight.u8.bin",
-          "sha256": "c672824baa775ab0037b640b886bc71c2fee0bdfc41fef48eee2c4c2abe27633",
+          "sha256": "af29e618c53a0d6e10c7232339d237e07c10f9fc6a07db9f3b868dfb436e6020",
           "shape": [
             640,
             160
@@ -3406,7 +3274,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_attn_w_v.scale_values.f32.bin",
-          "sha256": "560d700c6eddc786198989b6eb8734b7ac4ce450826c3166fe3cb0831dd7ad9f",
+          "sha256": "0661daac2666bb90865141d3f8bd03b078b7ec8877f9eab1cf253bc7c380efdd",
           "shape": [
             1
           ]
@@ -3467,7 +3335,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_4_attn_w_o.packed_weight.u8.bin",
-          "sha256": "426bc30b0f260e8b493d3ecb62e496d302e55aa115857a0c45574827597925d6",
+          "sha256": "8db6cfca50e15e4aabb1cfb9df87a4ae946b00321344191d40c7a01c9dc9b6f9",
           "shape": [
             640,
             160
@@ -3477,7 +3345,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_attn_w_o.scale_values.f32.bin",
-          "sha256": "e443da992779519bb9b1421b26aa570659372ef93c9621312a4e4ff803ad7c73",
+          "sha256": "2b68e163ebe1e2eabd819e762279b8f566b2f5002653e314744c104c8b66de27",
           "shape": [
             1
           ]
@@ -3529,7 +3397,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_4_mlp_w_in.bias.f32.bin",
-          "sha256": "353a73a5a93e2e07b2512a1bd8d8f077d7e8fe46ed2f19bc7c4095f6d42d274d",
+          "sha256": "04aaa6467bcc00e7d6764182b48154932884f13d7356f38b9a753bdf1a917936",
           "shape": [
             4096
           ]
@@ -3547,7 +3415,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_4_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "c461d66b358990f5b30b308f9936e2316c33428f2b8f08dd670ddb4c0925868b",
+          "sha256": "7a9b347c6a9b254e924466a83072c840a818d0c971a6acee53aaa18f9a956a6a",
           "shape": [
             4096,
             160
@@ -3557,7 +3425,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_mlp_w_in.scale_values.f32.bin",
-          "sha256": "e640936a4c348c8021f7ce1e67c18fee00a443b0cfbee5301332653438e21c02",
+          "sha256": "d6d647ebdfd9a3ba479a3bdcfee85961125522d58a72965d4b77a20a6ea11277",
           "shape": [
             1
           ]
@@ -3609,7 +3477,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_4_mlp_w_out.bias.f32.bin",
-          "sha256": "e1887b4dc193cf06b9ccb202817ceff8b5d82845a5d494aae11cd109d3c5092f",
+          "sha256": "8bb4202bfd6b4a11fbc154bf7568fa49ecde2ad72d2951676fb9c6192610394d",
           "shape": [
             640
           ]
@@ -3627,7 +3495,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "encoder_4_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "e955ea3378e8088136c2f79240043ede62f11f51b5c6b5eb6fe1da756615d9ad",
+          "sha256": "aa43c58597764be77898bfff39ccd54cdd651d258aed9da698e37ec8b29c1c18",
           "shape": [
             640,
             512
@@ -3637,7 +3505,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_4_mlp_w_out.scale_values.f32.bin",
-          "sha256": "106e1525e9829d602e3849e54eed944c034a20020106546be59e1bb133bb888c",
+          "sha256": "eb5a4237cfc3e6b881f3d672575bd50c3859e1cd2d97d291ee86c024ab42a8b0",
           "shape": [
             1
           ]
@@ -3698,7 +3566,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_5_attn_w_q.packed_weight.u8.bin",
-          "sha256": "7c6e74138e91fa3faaf71b0b538bd8f513d65104cfaadf4d5a7b527a23783117",
+          "sha256": "1c5e78b8654fdd80f570a28d8529feddcb47afbe84b9d93cd5069fcb81581468",
           "shape": [
             640,
             160
@@ -3708,7 +3576,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_attn_w_q.scale_values.f32.bin",
-          "sha256": "3734e413e06d7be671e136f316dda9f213df50f7b27390b39fd7e7e5180c8b8a",
+          "sha256": "67012db8ed5bd2370b5a297d539458bbc269b7da00b100579bcca82da3396042",
           "shape": [
             1
           ]
@@ -3769,7 +3637,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_5_attn_w_k.packed_weight.u8.bin",
-          "sha256": "0f9ffff2ec5649817790802d8dbd961487f5e321163ee68dabf3097d2cd7475a",
+          "sha256": "1c277d3a4aebf6f04c0498664a0f2ec9f66b39d1b22cfc3b42d6b9c5df243541",
           "shape": [
             640,
             160
@@ -3779,7 +3647,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_attn_w_k.scale_values.f32.bin",
-          "sha256": "c45948b8dc418c8dbf3625e87d07414aed0438a7bfcdff586059982f2b3be1a1",
+          "sha256": "4b33ebd09432282db62e4897ea7a5a34f10e001f1a929c015002d848b921d416",
           "shape": [
             1
           ]
@@ -3840,7 +3708,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_5_attn_w_v.packed_weight.u8.bin",
-          "sha256": "3560d4a44e7cd68e313bc2f57ff121b016d67d1be19da85813145ae6f9b60e1d",
+          "sha256": "b6563850697999e2eb110ca09a29ba1bcb3f295e58da2d9a3ebf89b4ab161a25",
           "shape": [
             640,
             160
@@ -3850,7 +3718,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_attn_w_v.scale_values.f32.bin",
-          "sha256": "eceebb551378cc351136874849fe09dc7b5177a57f0457240913355ff3236f77",
+          "sha256": "85a124e65920d0cccfb590989eea9ad865447ea89c526cb020bc3f8077a45279",
           "shape": [
             1
           ]
@@ -3911,7 +3779,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "encoder_5_attn_w_o.packed_weight.u8.bin",
-          "sha256": "df7831bbc50ef1aaeb71e105120d4a6192aaf980e29020369742731deb5d61e6",
+          "sha256": "01f44998703a4c26e9e49bb199e6b992364949c580eb3c9d11bf207c748b96a4",
           "shape": [
             640,
             160
@@ -3921,7 +3789,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_attn_w_o.scale_values.f32.bin",
-          "sha256": "f418945619787a6d9eea34b9b1c3ba6104b0e7b09ef30d07ba5a1dabf66ea87c",
+          "sha256": "846b216912b95eddd494e5d6c2082cb5a78458b7f34f1e873463824faae00cd6",
           "shape": [
             1
           ]
@@ -3973,7 +3841,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "encoder_5_mlp_w_in.bias.f32.bin",
-          "sha256": "f6a42dedae9bc32ccd2e064d23b76f62279bf3096b2c1d3c1c1f41fefb7f9498",
+          "sha256": "b656e834f42a1a7939d917a5299951c8a5bf4bedf476a1a60615939cd93fe3f6",
           "shape": [
             4096
           ]
@@ -3991,7 +3859,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "encoder_5_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "83b04f40fd073d866c920284f1ebc1604abcf021f7259345d19ddb9da7907669",
+          "sha256": "a7a52e057ca8e67cfe1b6e1d1be053ca7b67c05a2a026b1a8500158b465e01ce",
           "shape": [
             4096,
             160
@@ -4001,7 +3869,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_mlp_w_in.scale_values.f32.bin",
-          "sha256": "0610e9a094fa6beb255003ce4df347ec8fcfa5d1f945ed6922bed4381ac2eef3",
+          "sha256": "8a94e6d722b01b0ea262419aabce8a5b1117c7654b38e2944b7b43c375e9e8fa",
           "shape": [
             1
           ]
@@ -4053,7 +3921,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "encoder_5_mlp_w_out.bias.f32.bin",
-          "sha256": "9b144d5cb68da90890d56ed63b6bcd1aff23ee6418e145b6e753f7c692346376",
+          "sha256": "5c3a3dbc7889e7640003f39537ccb1717c0838fa81e833447b43de86797f5eba",
           "shape": [
             640
           ]
@@ -4071,7 +3939,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "encoder_5_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "7e7b73f7fa8d9878d7de90460a5a6b7bfdbfd9ed65bb4388fd785ff7c91539b7",
+          "sha256": "03172f7f3248d2340ffbc26d77dda2a886a27d433f8c7797d9cce28e6f1547ff",
           "shape": [
             640,
             512
@@ -4081,7 +3949,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "encoder_5_mlp_w_out.scale_values.f32.bin",
-          "sha256": "88ba7ac350ac10f2c4eabe76f168f36a5f2e505f287b87ade8fd63506e2b3bbf",
+          "sha256": "f3ad6036006a76dee966b2211be341fb48000c38babc084d7d7b2dfd2fc5be62",
           "shape": [
             1
           ]
@@ -4133,7 +4001,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "437eec912af76410450507d264d1216b668d4e50b955b191ad6a9be8f3f1c11c",
+          "sha256": "af36a8854d8bc6d205526378a2ae7355b3d1aef0a09557b0c5f9c4b2408300b8",
           "shape": [
             4096
           ]
@@ -4151,7 +4019,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "ff8ec90a6cf3143ed7a3e6d37960e1c415264a1770dd496e2816b849de2bec9b",
+          "sha256": "6486f27acecb5f0273323341d3101139f7429bc7797e77ead5791c6c414f933a",
           "shape": [
             4096,
             160
@@ -4161,7 +4029,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "33a43296525bb37acb33720ce0f1802d94817068d7bbb22e15df8aaf3345432a",
+          "sha256": "ba34aa96c4ca18029ca5112742ea91440572f9c2f0be7369694d12c4936615c8",
           "shape": [
             1
           ]
@@ -4213,7 +4081,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "a0a099932a62f1ac48d0351251b62d2eeecb3ef2e123e8a901ac25b10333ad23",
+          "sha256": "4a52e266c49fc5e52e5dc615d6994d14c0234b590e74a8bd341a5c385e59ee2b",
           "shape": [
             640
           ]
@@ -4231,7 +4099,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "064360901fc0240d829dd509551d8b498168503b25cf3bf36bf6d85b3ca820a6",
+          "sha256": "a79e362da19175d8f31b416ddd6150e62623f360205ddd4f3262bd89cacc5fdf",
           "shape": [
             640,
             512
@@ -4241,7 +4109,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "f2ef9abb8f0a9f071115dbe012a4df9977eb7304a217b6036acf1d0f919e1a12",
+          "sha256": "2c6824ee04b8275e486b706e58e68aa8f67a1d0ea5d4f739ddfaa2d18de54e01",
           "shape": [
             1
           ]
@@ -4302,7 +4170,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "75e1857a2de47faf89dcf327118e4ad770bbb7f12fe75dc4c080dab6c194b76e",
+          "sha256": "e11bee9d9fe5ad45cfde7e6da873cf946025d1926ccf1de63b58c4eaa9c3c767",
           "shape": [
             640,
             160
@@ -4312,7 +4180,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "7c4d468b505ca3a243cfda1e36b5c5236e5456dc7d23ae236fd29261fbc7f688",
+          "sha256": "ca76ee5f7ea77e0c6b2465b4d8812dd6d5277b29b7b49311afa778ff3c9e6e10",
           "shape": [
             1
           ]
@@ -4373,7 +4241,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "f888dce4a97aa5e53ff16a26f333598e92d791ef8f97c314a5eff8f83ce8d925",
+          "sha256": "d4136f8dedb3a1869666327e4c41d3501da64e24c3d1bd0a06dda8f7fd729e45",
           "shape": [
             640,
             160
@@ -4383,7 +4251,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "1942e6ab05629efa38e53a4a29fb1ed95f4ee1aafd4ef0026330e32074da206d",
+          "sha256": "0bb79ffa8c00747d8bf2c841e3f2466398f6532c96c05c31711910572a4a77a9",
           "shape": [
             1
           ]
@@ -4444,7 +4312,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "8c3dafa2a7bd0c25408498fdd04228a78e06e5263053a1f2d31d68f63af6b02f",
+          "sha256": "e6182d29d4fe6ea74d15fb211d02b09e2247df43b6455d88282b56e5736ba209",
           "shape": [
             640,
             160
@@ -4454,7 +4322,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "ee7f11b8e3372d58217290e1702dd856b9c6d07522a9e4ee8d7193156c4efc7b",
+          "sha256": "0c696da4d6ff2e3e1072d071761b9ae748502fc863b528eb18cbc65c9be0ac0f",
           "shape": [
             1
           ]
@@ -4515,7 +4383,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "9eafbfff11ca2bee63d417e95842ab72f32e48f196ceddb1ff89ffcaac622410",
+          "sha256": "f1f8d6e47fe28aa80d7d450c37fbf352a7f584905b71ac907048072e9e31f765",
           "shape": [
             640,
             160
@@ -4525,7 +4393,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "e538a69dfd01d7feead891bc264340c13c45237d426054d5f2d3be4daa3781fb",
+          "sha256": "4da26b749f8e214a5321ba6fee4d84fe947dd63b1c58f160b7724be5b67674aa",
           "shape": [
             1
           ]
@@ -4586,7 +4454,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "4e438411e0fedd0f20ed36bf98c815ff34a716d1201ffba5081027d5f64d23ff",
+          "sha256": "bf0c6f4381c1c0eb95539f7a733610101198fd529d4a04077158e57a0f295bfc",
           "shape": [
             640,
             160
@@ -4596,7 +4464,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "36f70f2d76bc10e557ae4a9e389417f3e8dd6302fc946089194fc0380c76ff84",
+          "sha256": "76ebbf76e4373140eab1843a484c4e6a8e31bb33558628e6c6b57d03844029e5",
           "shape": [
             1
           ]
@@ -4657,7 +4525,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "503db69a23c65737c5f7f23ac811aa8950a59a78ace1db2186329ba2fd014f58",
+          "sha256": "52a8ab822a00732b98346116cb80133bf28f0f67f7a9f073e6e0c15a0ab6cf1e",
           "shape": [
             640,
             160
@@ -4667,7 +4535,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "f661e22c788e272484ab30273092cf23df324535a322a4d8e1ac74f3c4701035",
+          "sha256": "61843f09f04168fa048201bdc8e3d7194b066351ce5cf8385621957876a66de6",
           "shape": [
             1
           ]
@@ -4728,7 +4596,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "f0a3d3ec395504ed789c69d41e42998875d5424c9848616aa25be001ce683851",
+          "sha256": "20ef66dd18288d07f6f2c2d74f36269608bd0e85aad3c60289b623f219cc6c7f",
           "shape": [
             640,
             160
@@ -4738,7 +4606,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "2b59e070a1b893fb4c68d16e9d6ec21c21a6bab5573ddbdd67afc5560ed3857f",
+          "sha256": "4d4c749993dba286bd238e0cc5d3cbc56788a3669a293228d6de6eb732926e5f",
           "shape": [
             1
           ]
@@ -4799,7 +4667,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "dc633bcca8fcd76ca496b6480fcfe14c6a8f57a6026fbcdb4496e5b6f32474ca",
+          "sha256": "d3095eb0cd22d173d23b71b924daf465a6a34d3d0c54a31f99ece4ee6c4ad184",
           "shape": [
             640,
             160
@@ -4809,7 +4677,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "9bc68dfcbe17c8f9858bed9c4b769bacd28bb2586d57ad01dc8581518e77737c",
+          "sha256": "0866896a43b61900f78da0c9d7f5b2c0ab309d066a96f18c94e7b5471077c88b",
           "shape": [
             1
           ]
@@ -4861,7 +4729,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_0_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "50adfb413d25471f628a6be1d5ba8e0e2c62eaa9679218443ad6ddf6a8cf1ed6",
+          "sha256": "5e825dc157bb1da0a965319419a65d0fe2b687accae99aa071e254923bd51999",
           "shape": [
             4096
           ]
@@ -4879,7 +4747,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "d4ff0f6058c15bfbf84f868137016950e50305ae8b56cd924cb33bdc348f6ef5",
+          "sha256": "783ccf9e0697b175f16db7f5e28782c515e2f091dd5c9ba2a8df851a3321702f",
           "shape": [
             4096,
             160
@@ -4889,7 +4757,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "4514d137319761a3e78f56700fa58247d3f6c8c46a61acb32b34733819e06cda",
+          "sha256": "3348b1577f523e87d72580feffa1b75fe4e261de6550fe39675ac602a8a542db",
           "shape": [
             1
           ]
@@ -4941,7 +4809,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_0_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "21582af8fe40ad7b09d73eb5aa6888b621c0702c6102ca22448e04db2a71227a",
+          "sha256": "adaf89ea3d26dd6b50f520add01d57806fa3de746a54088e4952655fe82f45a5",
           "shape": [
             640
           ]
@@ -4959,7 +4827,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_0_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "d3279363fa7bb8412c96a044fc6e231d8527ae5d4ad108e21b1e19a6842d9e8b",
+          "sha256": "00399de4cb3bc71583cb681ec2ecb2b4d31d3333dc8a0509ef4f7b2e2eee7bdf",
           "shape": [
             640,
             512
@@ -4969,7 +4837,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_0_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "3662743d43aa946c88a14ba767e4a42e189b592f038714490b9af5b1ea9579c0",
+          "sha256": "b50425c1a6ce620405b17ff9fe6f1c3ee1b256eb6e71e8c1fe94c0c146c3e0d5",
           "shape": [
             1
           ]
@@ -5021,7 +4889,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "ed2614c5180c776d7739294a4f7adb6f8ecad17e5c8f538cbb8baad95500f517",
+          "sha256": "a9127479c43aa8847364aa822c0e50915c77e514a7d9d984071f9a935d3b2b0b",
           "shape": [
             4096
           ]
@@ -5039,7 +4907,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "fc6c3faabb6988de0f125a51198e2e8a4332b551a7f62cca8b914ef4efcf9bc5",
+          "sha256": "3691c02ce9e3f97f682e53891e0075a348b0bf34d6f5897382ba358753b51058",
           "shape": [
             4096,
             160
@@ -5049,7 +4917,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "5f53bd863d4f5635b741590706a3b79e1b2b31df5856b664bacfa786dbba3361",
+          "sha256": "526446dac0a5d069dde64d26dd7a5fae325ba15b4c246d9ebc61fa63dc86ff38",
           "shape": [
             1
           ]
@@ -5101,7 +4969,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "4e81e616215155d437c9427197d5edd62840f98e715777e1f54e14af68df1cbe",
+          "sha256": "b860eb4da91a8f7b72bbab6a1b7c2e02efeaaa333b312fc609fab12671648ab3",
           "shape": [
             640
           ]
@@ -5119,7 +4987,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "b87d1491daafa7973d637521bb21ea285fcbcf3e66a7d01eb2f75503ed5a85eb",
+          "sha256": "3202ef70612072ecd9acc36c99438c6ee8fa8c394ab74157ef9983ea3231cbea",
           "shape": [
             640,
             512
@@ -5129,7 +4997,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "17c8674951e3a38f834264e60914dd2242c8efb6aac30d0948b7457125978017",
+          "sha256": "57587ff8166a082f9dda612c58dc8f4f42fa34abacdcb26157994f79008985ba",
           "shape": [
             1
           ]
@@ -5190,7 +5058,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "ee18b8d0a40e323a19806b0e21e2d99506faa7680e72ce6aa3f4cd546ada005b",
+          "sha256": "4c1d17b708127cc553617a0aa744d567beb8ff81e63c992bcd7cd9ab33fd519d",
           "shape": [
             640,
             160
@@ -5200,7 +5068,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "b898ead2e49d58242cd7a02e0c4acbd9a98a0e83b3264c8ceb6f93b760bb1487",
+          "sha256": "a21204dd769b9db75074d81d9233660d4cdb8cef8a8001a420e8bb916432f1eb",
           "shape": [
             1
           ]
@@ -5261,7 +5129,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "492f1949e5010afa6f9eac6a5a36d595c0525400082f0f45c422d6cf154d9975",
+          "sha256": "a7b7af555f24216b373edb7bff59100c033d8b6f8c73f52cc5308fd1338a6640",
           "shape": [
             640,
             160
@@ -5271,7 +5139,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "0a816948a66e19713b14e7d3469a775860e079a7f57fceaac5e8722d513cc0b1",
+          "sha256": "49ab1c3b2222209b08a51cf3c17506618927fc7fc73f2bf899f8d85aa9c2961f",
           "shape": [
             1
           ]
@@ -5332,7 +5200,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "20f2d94c82e6bb49b16fa94d5ef73d49a3bc722d0552c9da19288c38fc446567",
+          "sha256": "3f7a3510085ac3f2cd1f73d02e490fee55cd7f380460dc1a0a35743b825a92c0",
           "shape": [
             640,
             160
@@ -5342,7 +5210,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "c1b2b7f0436a9e64cbdeb6b3eca06e1e9b508f1d1bc36141b96ed5b15e3ceb73",
+          "sha256": "c2857b132cc2e9705b028a70768873b5d1114ab7ec1c755fccf71c10ec7e57a2",
           "shape": [
             1
           ]
@@ -5403,7 +5271,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "cc310f0d777fd689d1b73c6dad8b1608b5e82cf4f424aafca563676d20b7a56d",
+          "sha256": "649eff8db99bc56ff9dd41ea6d781a34ed866e5197c035df410b163d25ec024d",
           "shape": [
             640,
             160
@@ -5413,7 +5281,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "036f7bb311a704a68c8ec54b81c75190a3c3849937abad7312b3a455c0ce239d",
+          "sha256": "d132fa9984a0a17581f6dcbb8cadc7ec53e1eceb07027c6b555514afbb7a1fa2",
           "shape": [
             1
           ]
@@ -5474,7 +5342,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "7aaff4b8eb7c8c4aec6da91b8233e700c4dfed34fc121ef30f7fd9e01291195b",
+          "sha256": "622dd23df744f491091e292580b9d08efb87a19e630c2e8bd758c524a4638218",
           "shape": [
             640,
             160
@@ -5484,7 +5352,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "82e9f6c6401aef42480d5ad358ea52a83a281c1e0bce826484d7aa7b557a6788",
+          "sha256": "71b3901b133e1a3d5db79388cda5a574ac7ee8ab31a1573456a13d9606936d25",
           "shape": [
             1
           ]
@@ -5545,7 +5413,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "884b619eb09b15c62c20721453b5c07ccd886c513064951acf921a9e91ce3403",
+          "sha256": "bf3ba94e5099ed4670be8917f11fe35c2f3e31e09c6b53e0b4794f890782842c",
           "shape": [
             640,
             160
@@ -5555,7 +5423,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "713470c4b2a098770d74ee57155ae9c0616abc2444922f4d2b00e64e23de612d",
+          "sha256": "c09ac7478f056398b8c84fd16ee1c29f5dd7c7000fbdde7249521f02fc992807",
           "shape": [
             1
           ]
@@ -5616,7 +5484,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "93da4567531c1514119a473a0a4a964e63f2285fdfa962a75b67f94e0fdf2ded",
+          "sha256": "37d919726d927db803bb059bbca538a8a3b25cdc59cdd32fb906f0e4f96673f3",
           "shape": [
             640,
             160
@@ -5626,7 +5494,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "4cf6ba9320a8dd7eb59b33e23534ef238e06580307fea99bc9c041044923a9ce",
+          "sha256": "d963a065799fb8534e4b5884fa7fcbfb1fae0d4c89af3764f719314f0386b015",
           "shape": [
             1
           ]
@@ -5687,7 +5555,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "d7cb28088c4df805991365add74a484457db21689238c090de51b999a3a02173",
+          "sha256": "02a2809d5885f28c6f30dcc10b16720de65140033adad6667289673e79ebda57",
           "shape": [
             640,
             160
@@ -5697,7 +5565,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "87f74469a8fe5b0cd38d34baca07fa843a88df8ee475dca6730aab1645bec1cd",
+          "sha256": "9b4be5bde0a42ecbccdc153789b70590378639f6d95af94e88088820ab03021b",
           "shape": [
             1
           ]
@@ -5749,7 +5617,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_1_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "f9a33ba9e8f7ffe85c0bc925de16fe248241c964e3edd8ca4e62df09b8dcc1f0",
+          "sha256": "2c8aec5dd779a50b6c7f541ec499da257d75209c44b4f42f8ff524ebd0cecbd2",
           "shape": [
             4096
           ]
@@ -5767,7 +5635,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "d016e4e4d1590e1f8d0e5cda3b359f5a17bb8458946ccde7f2c63d4301ada732",
+          "sha256": "dd93e151c52b91b4a1dedb7e12acabd5e843163548e8d2c60b5f79de7a60efaf",
           "shape": [
             4096,
             160
@@ -5777,7 +5645,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "b1320349bac8a139756b2f5fd96d7c29d38413dddf3e642ebb5efa4f3cf70f93",
+          "sha256": "b76d09b2225354fb364d916c8062fda5b8521357f0519382e8c9c00ce1bde4c6",
           "shape": [
             1
           ]
@@ -5829,7 +5697,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_1_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "46aeaff9c8e7d5dbbba2e312ecfea8cc68f8672f173036f0327418e45bc8413b",
+          "sha256": "e86bfe39203d04e948631e4282df7d704ab490ecb7e220358b97589281b4ccff",
           "shape": [
             640
           ]
@@ -5847,7 +5715,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_1_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "3c49aed0180e44a8252c66c6e6f00c30218a00b5bbca82c2302b1ce44db5f5e1",
+          "sha256": "b5b31109a5d820c92dafdffca56b6f8270df2ffda6a8b289778a5ec2e143dde6",
           "shape": [
             640,
             512
@@ -5857,7 +5725,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_1_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "0437c2ca76e3d2ce85572b61da4ad7336da1ff248605b354cd966a2535b6f54d",
+          "sha256": "fce0b8cb580a30bd12c5e7c8114ed97ec72cdc0a561992778d78fd1a96e9d644",
           "shape": [
             1
           ]
@@ -5909,7 +5777,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "1c70568517e5b71dae94d2acfee6575280ee75df293f831e5d6a7bfffcbefd5d",
+          "sha256": "2b90202f2d75565406c11112c60d1e9465d4b977e8c2fd450dc0730026373626",
           "shape": [
             4096
           ]
@@ -5927,7 +5795,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "fa4500c69e4152aa8f7f69073bc2566e36e332f0fa9360e0190cec60a74d682f",
+          "sha256": "6f5c1a23882715a0e0fc6720af7bd41a3b8fe7816259c918f72782b101f245e6",
           "shape": [
             4096,
             160
@@ -5937,7 +5805,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "8dce033542f9a6424ea76b5a88bf4de841336360f8138f20ddc0dda256542d50",
+          "sha256": "4e394b94a5f3c64fbfe0b466d878ca5ab6e33e62ef5ea6da13645caa8148a1b4",
           "shape": [
             1
           ]
@@ -5989,7 +5857,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "fb9dec584fc51d871239544a36c14cd18fdcf592df4a44a0ff58bd6269dd63ec",
+          "sha256": "0ad6d5adc509dfb25dcc235ea5467d4cdac14846bb73c5903cb42960a2754074",
           "shape": [
             640
           ]
@@ -6007,7 +5875,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "4af1cc973ce00891d05499f212918b8dc1c6deb762db594f21b8dabc4b7d004f",
+          "sha256": "2c8da9029776fde816f41b0f589c45a391a89bbf2355c952c9022a321558002b",
           "shape": [
             640,
             512
@@ -6017,7 +5885,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "c90bce7503f7d777e3b08e44946ed2650b945e77e70b0136487f652e97b93b6c",
+          "sha256": "349f1c6abcc70267d0c84d3f2a82b538da04c4ea583649a0cf8638ef03689f14",
           "shape": [
             1
           ]
@@ -6078,7 +5946,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "432d5330910d4aa85635f43f176ee1904294039c2e164388a25ac6176a70ffe6",
+          "sha256": "064f8ffa1265c4b4819e4eac23024687d1a6908be3032bc83c913738745a0c59",
           "shape": [
             640,
             160
@@ -6088,7 +5956,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "d076a4f6d8a8b3fe5250cdb45e9849accc99ccfef7fe7d866134acbb2b76c27b",
+          "sha256": "266e9860fa0349a656d2b69227e9293a6a371e88215bf59ab9e68429b79cdcd3",
           "shape": [
             1
           ]
@@ -6149,7 +6017,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "2dc112957e8d6b15f50304baa9630486616d2466eedcf637f77f38a0ef8f72f3",
+          "sha256": "e26449ff58aa262ae6422bb70e24c6487c1244ac4d70e9a4cc1b491aa1a3f646",
           "shape": [
             640,
             160
@@ -6159,7 +6027,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "0c6bc523807f027d2c63dfb68ffc90680d3a9e5de5b08fa0dca26071d6876da3",
+          "sha256": "839dd81325fbbd6f91185d94bcbdf61547f2f1968cd2965cc05475ae553cfe0d",
           "shape": [
             1
           ]
@@ -6220,7 +6088,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "2eabe87852dc6bc47367e04d170613b707cdc5729554148890738186062f17d7",
+          "sha256": "de47c560854003a8c2e6d691027e837ef1f8d3658aca379375ccb3274d4ccaac",
           "shape": [
             640,
             160
@@ -6230,7 +6098,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "6bb7e3f628959c334f8fe33f6b9183524106d3b5b8c9d1e0335e012ab9163d5b",
+          "sha256": "164a2acab2bd74299633779f5e64968a84eac90144066b3aaee3c0c96419545c",
           "shape": [
             1
           ]
@@ -6291,7 +6159,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "4f90934f0cd3f29b0533ceaade86cfac676e415f483e8abc09dc190c255e20e6",
+          "sha256": "aec3650a1f816fa71afe020128ff376a9aa81d9453a8890cd849e2a243bd2417",
           "shape": [
             640,
             160
@@ -6301,7 +6169,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "a667bf84b52e8bc91fa983bb300258c30572531da4e201b0813049ca716dbb66",
+          "sha256": "8910f843b51950b90ef1ba954a2d8098ac77b5904b7115aaf8676cdd2e7ebc69",
           "shape": [
             1
           ]
@@ -6362,7 +6230,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "c1edbdf8e7b50752a70bceb62a7425253df51906c2b2c110c9b12274a1f01f43",
+          "sha256": "edfbe267ac3a3b59c0f8462f44d01679da119c25c45f0fd89b3134de7821af2f",
           "shape": [
             640,
             160
@@ -6372,7 +6240,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "af97b788130ac174a0cc0f4de15ef836ddf7e6195bddc0978004d969c95e457e",
+          "sha256": "f99b826e8a9e900333ff1be838fb406c69551325bd8c08fb5146cae11bd83843",
           "shape": [
             1
           ]
@@ -6433,7 +6301,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "4b2cb6469e84668137e105df9662603899d99f4b218d52ffb34dacd333ad842b",
+          "sha256": "856d67413d9eb4ea5fb223d33de724fdfc44046bf630442ee09353b161bec841",
           "shape": [
             640,
             160
@@ -6443,7 +6311,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "ef3cacc8368d29a591d98efce586a51e7fbc7b73673e2df22fc021ab603fd0a8",
+          "sha256": "78cad3ec6e4d55dbba9b26cf5c2bb9606aee73fd561dc2b66ccd46424aa5aac8",
           "shape": [
             1
           ]
@@ -6504,7 +6372,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "15f744da27c40d9c62a6571f21980f2c854f23567a5cb7065adf1d2ebd8d6f26",
+          "sha256": "39ea7fc94d746748500bb83568bfb09f0bb2ab71fb0642e4bcc2865197965f25",
           "shape": [
             640,
             160
@@ -6514,7 +6382,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "55edd45c1441d2855466e7a896a761c9db7877d11ea2a01d6bf7247d4bea5b0d",
+          "sha256": "3db4e57eaed6e9e6e6de8091f0ce48d1c6874a6b8798d85a3dd3d0090a543155",
           "shape": [
             1
           ]
@@ -6575,7 +6443,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "2996aa5dcf25ad50be561f229c255f4514451e5ac901e89bc4e7eead99725333",
+          "sha256": "1de6555921c46c3edf2c8cef4ec64861d8934cca5b91a30378e7508210ab858e",
           "shape": [
             640,
             160
@@ -6585,7 +6453,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "d4c990acfe8f0b98d5632f15bcd7b5853c457f41dbabfe4c37b5a3b1fced1ffe",
+          "sha256": "9061f9ed26979a6b29ae3e27182e83e60167b026de96f98c9fc1c0f3771dda19",
           "shape": [
             1
           ]
@@ -6637,7 +6505,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_2_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "086b71ddd214b5fdfdd96f35ee19ca91fc7271aa5767394e7cb5b21fce1931e6",
+          "sha256": "863011e5b74792605dabc59978884b0bda752f436e303e1b5eb27e68a83f853e",
           "shape": [
             4096
           ]
@@ -6655,7 +6523,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "79589ac2bfcb1de55fe31ef1a0b1de903f2f52d94e5a02fc59d2a13eb1600506",
+          "sha256": "e0b98806ff39b527fd294c90b6b786e9c0f58e243d1b555d384424ae581dbc8d",
           "shape": [
             4096,
             160
@@ -6665,7 +6533,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "d4e93f226385c63d8650ab0684117526d4adbcd1f10d5cc0cae73cb7249722d8",
+          "sha256": "27cc984735088d4746fdda71ddf44351a781bbdb182e7e9bba6fe57ee69520aa",
           "shape": [
             1
           ]
@@ -6717,7 +6585,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_2_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "c631ce06f79894199d5baaffd635f95b2bab935f604a35339f1def425ac5d933",
+          "sha256": "a958bafc7b4f9fd888e862608db3750077f2594beffc9129d1ce174d42c0d7a8",
           "shape": [
             640
           ]
@@ -6735,7 +6603,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_2_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "c265f39dc94100571c845da469d994eb8c3dee8cea58172be697e327c370e847",
+          "sha256": "8c3f59c65554f186dd45f614c364fd0bbdc3ec94c71ca8725b992976d75a5c34",
           "shape": [
             640,
             512
@@ -6745,7 +6613,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_2_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "1aa90abe6f9cce6de40dee057bffe8e9c86d8b3ef7cf9fb3ff769a74f7da1924",
+          "sha256": "400950da9fd643fa3737b7a0a1a1832310f2b3c877db2845485be8e813b7d03d",
           "shape": [
             1
           ]
@@ -6797,7 +6665,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "5da0c42cc934f4ce3350b6202c33c1ff5921c50913fba056f77de72ee21c041c",
+          "sha256": "75e835420a7fed6e23cbfa6c42c7267e8bf250d51213cce8161edfaaf784251a",
           "shape": [
             4096
           ]
@@ -6815,7 +6683,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "c2d047a6f3c4c38e4ea74b2bd69844322f81e695060d86970f73f5264e78ef40",
+          "sha256": "6aa48ffb7fe94f79eeeb460ef94d7b5b203cf75d0aa0d4d2d6d28bcf91b624cb",
           "shape": [
             4096,
             160
@@ -6825,7 +6693,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "4770159333437a82b79bdb36504dc3cbb028c522b83078692040f27372c0a669",
+          "sha256": "d751464161f8148c974ba84142d5c7067ad5a43b27c249012c8a3963ef35989e",
           "shape": [
             1
           ]
@@ -6877,7 +6745,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "04edce3990ec0de0010d8839d0b0714fd102268f9bc8c5a3faa904a078a8e5e1",
+          "sha256": "77cd25ae834eaf9b7642bb79203dd2f61dd2050ddd271482a984d402743e5fbe",
           "shape": [
             640
           ]
@@ -6895,7 +6763,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "18791614e5a2cbb579e8379d0de1e3886a110dec820f11d9cea3491889d9036a",
+          "sha256": "6f28c265932575fd3be5b970a1014a15785a8e44fd8b6be908223b2621ce543e",
           "shape": [
             640,
             512
@@ -6905,7 +6773,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "b2836e221dea4dbfa71bff1980eb4c10efb2efccaa6678d1801b9768320001ea",
+          "sha256": "9ee9b2b3d6f054fe6773ae1bba93477bc2bb83fbb189d6161d5b3bc5bef0eb2f",
           "shape": [
             1
           ]
@@ -6966,7 +6834,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "78418f87cbc7d99c4ea6152955f1502a41ff5c9af1bdbb39da48423db7713666",
+          "sha256": "b59187c24a8a8ffe879dddc3a731c227aba31125ff7007089b3bb8cb3f3fc2ed",
           "shape": [
             640,
             160
@@ -6976,7 +6844,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "f87f6dcd917771d4b5b7f1ca7cffdf9cfb765a04f613a6706550281de2753892",
+          "sha256": "1c226c1214bfa3acabdcfb979a1257ce0e70ab6b10dbd3cccb6d0a6a1ff7b8ee",
           "shape": [
             1
           ]
@@ -7037,7 +6905,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "b8faa272fa616c517404131c99cc12914de7e23a5211e093d766d6231493ef8d",
+          "sha256": "10e7b75438fd392bbc35b8b9d2f17536a995e626af8cbc2a0e0aa00f11d5eaf0",
           "shape": [
             640,
             160
@@ -7047,7 +6915,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "7c5ef2677ab8c6eefdcf7fa53e043536f7342d91959bc95ff9ade7b9972510d9",
+          "sha256": "5b4c224765aad0316d89856c26c41c0e90c56f9db442dfa24cb6fbde36ac88bb",
           "shape": [
             1
           ]
@@ -7108,7 +6976,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "7f79ec0dd8e9cea654fc50e5a711fe5899cabad76f86e7699c948d4be7b501c2",
+          "sha256": "b6d8c61cff7a4799894fc5545d2941508ec388b491d49ef5b4fb168a4e6769de",
           "shape": [
             640,
             160
@@ -7118,7 +6986,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "a8cbca812e7f92b2697b116791733f954b2f8b85356e950fa3ebc223c43c3fc2",
+          "sha256": "12a4ecc4703fe0ce7f5f762d5decce6a3b0617a871bf04263b91f62835d4af30",
           "shape": [
             1
           ]
@@ -7179,7 +7047,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "ec3c065e37b1cf4b237eea82606ce1f48d337e61b45b09c05cda774816b3df54",
+          "sha256": "e076a0c8dc8d2b1f28e075e7edfb85a6b9f07d2f01c98252e78c52998f80b6e1",
           "shape": [
             640,
             160
@@ -7189,7 +7057,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "34c4d77f71559257e2d90b1ca4dc8d9f1f3fed610925979667ceb58e024dad92",
+          "sha256": "b06bc6b7dee5851634a9adca2e9165ea1ad81f7e9621af428244a9c08a68daf1",
           "shape": [
             1
           ]
@@ -7250,7 +7118,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "9cf4e965d1ec9820ebc1a9edd913eb67a9d27abd5915526d37c0f6de5d8a59d0",
+          "sha256": "2ec72b24ca22799544096425763a2af03f4f8bbbc391c56bcc466254cd02924a",
           "shape": [
             640,
             160
@@ -7260,7 +7128,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "7d55cb90b7fa3cb8c4975452861857e3b95d023a1839f0366eb90d3ef7800d79",
+          "sha256": "02872c630e2926da54cf0b50f51be1300110ba8c9ead7e94381356b38fdfe76e",
           "shape": [
             1
           ]
@@ -7321,7 +7189,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "07bd6b5a01b652f26256a37d03a75237e8cd4b68687e51c9f7a8eef72eba7909",
+          "sha256": "169598120f4b48dcdad4fc9810ce4a97a6684ba67d9b6145d9e25ee19e7d20bc",
           "shape": [
             640,
             160
@@ -7331,7 +7199,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "f5a6199dd6cf3b0c9e9f160b16666162bf551035cb9ec8c2836e9879050730cb",
+          "sha256": "3264fc6d195fadbd4617d8d48a5e32ba3555e56e1c22066a891348e83fc71e66",
           "shape": [
             1
           ]
@@ -7392,7 +7260,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "e69c80c2566e4165a30515c14d66a257b5a7c4505e37339ebd26ae0dab469943",
+          "sha256": "33fca5fc22fa53df5948adfc3217a24e997c8d1d1e5f965de859a18a072b9c03",
           "shape": [
             640,
             160
@@ -7402,7 +7270,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "ebf40e7fc4dfd954213642ddb012c2ebfca1ffd703abdcfef99e6bca96ee3e4b",
+          "sha256": "9af5bfaeb35eb7ee9f9ab5ce0204ee06d4a9f84b67adbbc2783dfe4dd4d53d2a",
           "shape": [
             1
           ]
@@ -7463,7 +7331,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "850c5eabecf420e3dc1fe54772341f9da6b21f4ec84c88fe5c1717a2d9585ff2",
+          "sha256": "18e1c9042ba5a7583c9fa9dea6f70f7dd70a2675b71e7ec9fb34d4e746d9276f",
           "shape": [
             640,
             160
@@ -7473,7 +7341,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "8cb9c5a280fb80cedd033e20dd38cfbd8de2cff1f2ace0dfa347780e750bf50b",
+          "sha256": "6de29ad6f330f09f2d2ee43f0cf001c394322eeeb3c7d722061363479f58e143",
           "shape": [
             1
           ]
@@ -7525,7 +7393,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_3_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "b440987fd83df1b435676ac9b2f3cc6c1f23495de83b974cafc3f44f5e194c11",
+          "sha256": "271a9769dcc2a989424c2a9d0828b45f8811d65a283739c56cd00433b7981195",
           "shape": [
             4096
           ]
@@ -7543,7 +7411,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "acaede7685d55d6f4d1be871aa29954b0040194f5a9646d87e5b3d56e71c9f61",
+          "sha256": "83f0d80ee11beef61d84478df5f7a62db06140390b72d8858b44bfe9196fb2eb",
           "shape": [
             4096,
             160
@@ -7553,7 +7421,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "13a08b62de8f0f804918664575b958e23b36c2879485e51dd2ac54128b04fe2c",
+          "sha256": "737f49c370be678bd4f6860b334fdb7570cac2070ebd3b87a498bad5a7c664f1",
           "shape": [
             1
           ]
@@ -7605,7 +7473,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_3_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "cb9512698d58fafb28e0b58339a3426451dc0591d21afabd9dcc47133e71153b",
+          "sha256": "1c21103114a2909bb2a3ce8dee27132ba09418dce1e8b9439bb5683165a13e11",
           "shape": [
             640
           ]
@@ -7623,7 +7491,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_3_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "4c386210141d185c354e2acf37fdd7b9178410d31d6a64a13fdb35ecaa9e9afa",
+          "sha256": "2ac37a7a0311cab808a6e327ba6e26989b6d0a4632f97db650270ced520b9616",
           "shape": [
             640,
             512
@@ -7633,7 +7501,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_3_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "97bc2d3c01dd33b1d1064a17c50ab4a19b77cc6c044231b1340986779b1641fa",
+          "sha256": "5988546dd9bffc2d562f0856bb052616e42a69649bd7b0d469d0ab8d910853c4",
           "shape": [
             1
           ]
@@ -7685,7 +7553,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "cea92bbc44512e03a949f417d8c930ff2e60525b1e87cf5bd4e555c4ef82ce99",
+          "sha256": "ec643ff75861cb4d7924ce3e80b763211ace43d91394f01c7097ecd202494071",
           "shape": [
             4096
           ]
@@ -7703,7 +7571,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "0bb0bc0457d9e86dfc3f5a19f51bb414f638fbabef0b25c92c1519ed1c7e7830",
+          "sha256": "1501d0ee3853a60241199d772504e2609460acf434bcec1c03c6a02feeb0b491",
           "shape": [
             4096,
             160
@@ -7713,7 +7581,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "65729fc175dec53272d15efed27441c8518ebaab84d21eef9c1406d6e9446210",
+          "sha256": "d3cb4fa857010ed7cb3a57e57b0cd7b9fe5a9f3b7e1ef382767003d59928a05e",
           "shape": [
             1
           ]
@@ -7765,7 +7633,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "8b8f030710c79ecb580cbba5e5a631ce7500b95f31902298c2ee3c93ba98b3f3",
+          "sha256": "ba57b27ba7345fd255d0affbc67211079ad3709d89e22a092f594e26bed4e863",
           "shape": [
             640
           ]
@@ -7783,7 +7651,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "c6b06d1ea61ad010c597cb748ead82d55764ec4cb91e68d5d230a94663fb3797",
+          "sha256": "df6587783cdf45cff22cb16d130ba5a437fd66a7bf5e84044395adb5bb238a90",
           "shape": [
             640,
             512
@@ -7793,7 +7661,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "60b9dd409fb8ec1f71302430defd6c1b426a0a8485b2c44bafa82720b666ed15",
+          "sha256": "aad3959f0b1adff16617c50c4f9d64f5cc721e54271ae1d1cd4713a192f9e5be",
           "shape": [
             1
           ]
@@ -7854,7 +7722,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "a67c56c1e0befe38dba348a0c7d5e5185b9e6a3b4d91045ffa89f8afa12e5903",
+          "sha256": "c0d457897d8108e83ae25e39384ec794b431bef4a067934cc35646b34bca6299",
           "shape": [
             640,
             160
@@ -7864,7 +7732,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "babf9c091c7b01bf065176f3dcbc30c219892250783442096a2bd176f8644b82",
+          "sha256": "59791d6a5bfea35e863a21943e3980f7cdeae2be1cc2bd99b64f817685559956",
           "shape": [
             1
           ]
@@ -7925,7 +7793,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "23cf0f5b5e10d36c38c0f677fb20f454aab0394e9441c216675c6e23d3429b5d",
+          "sha256": "332b647009fdedda94b27de22650db8b3838e652f4992fa4db6d6249819340a7",
           "shape": [
             640,
             160
@@ -7935,7 +7803,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "9749506ec8d696091fd3960dabdb63f94929c40bc97ca4d94a842131170b0315",
+          "sha256": "0febd6042599dab4032c67f63bd4f01b6b12921dd5f3909977210e5608f02e57",
           "shape": [
             1
           ]
@@ -7996,7 +7864,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "1c171d703d3cb42e43832657b4f5610840e3a92b825ff2eae1564b1e97f66680",
+          "sha256": "81c0630294ff3d9cf364acc335ddd8f4bdd6955bfba2ccc1d9b18debf2856d2b",
           "shape": [
             640,
             160
@@ -8006,7 +7874,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "db102e4abe293e296e89fd9ef98f11bfe83a958e58d36fcd91c05b78901cd951",
+          "sha256": "018c3bca88a9f2de7d9e938fd1bc1ec4ca9d1fac82f74827688a8d033472f949",
           "shape": [
             1
           ]
@@ -8067,7 +7935,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "ae380b48c32477e9495dad3783d1646cf645d1f89863dc2d49b36f842fdb1a64",
+          "sha256": "ffe31942c22add4374ee45eebdfa1c295024fda0cb5d2dc70e4d5b4875411269",
           "shape": [
             640,
             160
@@ -8077,7 +7945,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "6f86c741a33a8030e6515174f99812e3cec663afc226437a1d6f38af34dc5cdc",
+          "sha256": "bb2b983ea2958ed6fce8e4872a042b5ea3934a31bf62eaa808680a8623dcb57f",
           "shape": [
             1
           ]
@@ -8138,7 +8006,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "75168c96ff92a1f4e162eaddc6d78a30b74234a6d406c44b533ca494428966fd",
+          "sha256": "cfc60bd8efc75dfd1c69468a0419cd50cc1941fc4244d5f806f63a0c5af17041",
           "shape": [
             640,
             160
@@ -8148,7 +8016,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "5d1367e936aa3524247bd2f428061b0747b1f5f78989b85daab6d16036c2645a",
+          "sha256": "cbc95cfd56faacf4621b5c1b140b7234ad3e6162e46a6a62acacee3336368f71",
           "shape": [
             1
           ]
@@ -8209,7 +8077,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "7f6bc90891a9becaae274e97373cbef8624b70711c210bebb22db6af52be2893",
+          "sha256": "318f2898cd03a5037d9464209beafb0a7d4c4f087eb7fbaac775966e4a5071ef",
           "shape": [
             640,
             160
@@ -8219,7 +8087,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "0488e5177056f3c58dd4939c32ab4ad57287d6a1cdb63d455dcadab4c26f9fba",
+          "sha256": "1a1d1fedba45f8fc0202d6da7f82d30a56f407659791a500804bed69a553114b",
           "shape": [
             1
           ]
@@ -8280,7 +8148,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "b220c6a9f5605428168be27131cb64c77d4df9f5d28d7167872811f1db1c9c6f",
+          "sha256": "f6c56b160f92ed3143448dc29e7fffcd1160c1cfd8f19f7342366eb7a7439579",
           "shape": [
             640,
             160
@@ -8290,7 +8158,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "24ac254088993e7abdecc15113758bd284e5c50a06e2795a6069910129d4f9ef",
+          "sha256": "49c5b882a2e4f1cf4f8d73f54fedd35bbf5c2201d478cbdfecbab9b8c008fee4",
           "shape": [
             1
           ]
@@ -8351,7 +8219,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "20f416a120b202d8f3984ddba873a6e3d04884b653c9bec3d1c7f1ab1142f1b3",
+          "sha256": "621c9e72f8d9576ba0d251ca6fb2d927ce75c7be665dabab57499a0af88d8130",
           "shape": [
             640,
             160
@@ -8361,7 +8229,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "e8ddd0e679d0d08cb987366dc28f6ad8be43a102e6e756270e4925ac0f52b71a",
+          "sha256": "98ce651b5fba5354d2554925a396b09de531249bc1b30575ec063da7c17623af",
           "shape": [
             1
           ]
@@ -8413,7 +8281,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_4_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "ccca2299710ca3e5b7d2a57f3be6507bd52bfe8788025ab84bc57e25f2d6ded6",
+          "sha256": "feecafd7487707cb0fe1dcfea6764e00a6067e9c722b131dca190a8be51c62a3",
           "shape": [
             4096
           ]
@@ -8431,7 +8299,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "a9d5eac8703e56977f3903b383457d69855e6eb2c6b67e75a44651b6f992590b",
+          "sha256": "16c0bd341d1ddccffc288bf86b6f7419ef0050d1a3ccbc475938042865c4f02c",
           "shape": [
             4096,
             160
@@ -8441,7 +8309,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "7288ff2fed6076ad0415ae1bc1d6bf72a0487ed5c9cee55bc9e44bc4ff2ced1e",
+          "sha256": "b935956c228b0e2afb13bfe2aeefdebbe5738223a3a5123ef67bcb0cca7efc9d",
           "shape": [
             1
           ]
@@ -8493,7 +8361,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_4_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "47923d1d426b1e10ef3aebc300e0b51e6af926bd7efb5e76f5439358fdd8def6",
+          "sha256": "57f1d27d5187d9faadf7e4d350bf1480881480f13cffe093494863e211a26f9e",
           "shape": [
             640
           ]
@@ -8511,7 +8379,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_4_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "096b657af926feeb29533ff677b9ce31b046b4b33a76390cc7e2093ca99edcaa",
+          "sha256": "c5842aa842b18e107250105defb88a1ba2a8349b892b95f35d12d87bf7187945",
           "shape": [
             640,
             512
@@ -8521,7 +8389,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_4_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "29cd17880d7959e2099f14b752d11ddfea7d7599259c4b7667a13ebb903761bb",
+          "sha256": "b141455b2120a035d9457e36d4fc8d65297b691e7783980cb66e8e64588a3cb3",
           "shape": [
             1
           ]
@@ -8573,7 +8441,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_mlp_w_in.bias.f32.bin",
-          "sha256": "a1237007607ba712907db5a3353ce282dcf5115ccb5507719972f7825087ca0c",
+          "sha256": "e967bd3178431232371011e071450b2ff2326340751376749e2b0e35188c2f3a",
           "shape": [
             4096
           ]
@@ -8591,7 +8459,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "23580def327d4a43dc87256e3aa4735c7f34eb234637c307b64503b2c5147a16",
+          "sha256": "f4fad76d59af489b0fc7993f69e61d0de501418e0b04c0fc85df9a00b1f76a37",
           "shape": [
             4096,
             160
@@ -8601,7 +8469,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "86918b82213b7efecf10ef6675e8a955a390fa377ebc757baf88114ef8f8e3fb",
+          "sha256": "d8ed5b727013c56b1a03ab0f32beb9af20459f769718ba17fc3dffddef895002",
           "shape": [
             1
           ]
@@ -8653,7 +8521,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_mlp_w_out.bias.f32.bin",
-          "sha256": "8b6f6249773018fb62d7bb19ddf1ca5403183b085c7a32dc6b6c3e4470aece98",
+          "sha256": "f3e5f15578711b04e7674563e1aec73405036c8c1123edd9ad8bd7a395f6ee66",
           "shape": [
             640
           ]
@@ -8671,7 +8539,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "2c875c9642c597dbccfbeabf07fde9545f349d3cce5dd84fe64b61650fa15fb0",
+          "sha256": "55b2f3343ef2eff93ace05c26bedb82f0fcc173a6dd16be4434b74bf3eb2b5db",
           "shape": [
             640,
             512
@@ -8681,7 +8549,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "558fe3f1cd5a97d703355c1ff0382967b8b6546466cca968519e71290d890ca8",
+          "sha256": "79e8c53250a4e5bc84eaad9ac05de4e02f049b8aff97d1cdd1bf7b28a1c4b40a",
           "shape": [
             1
           ]
@@ -8742,7 +8610,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_attn_w_q.packed_weight.u8.bin",
-          "sha256": "26b7cfbcb06a0c0a233802752dea50629754c4c2c6dfd919a4373dda97ced8b0",
+          "sha256": "f03468f32a500358bb19cd6027c382067bb738f06efcb5482414060832402ff1",
           "shape": [
             640,
             160
@@ -8752,7 +8620,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_attn_w_q.scale_values.f32.bin",
-          "sha256": "1f9e76924f3107142ccb66582064c7a8e584a0a567e2ecfad3fa71d48e15bf3a",
+          "sha256": "7016fd2ff9cb52a80be3d76a23567a9a0e7acad0dba11a9f4515be98fbc8e232",
           "shape": [
             1
           ]
@@ -8813,7 +8681,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_attn_w_k.packed_weight.u8.bin",
-          "sha256": "2ae8df599ef0b06c8446ce9b365de09416841ccb515c38529384e00fe8b35457",
+          "sha256": "38588e32f396c7edb0b29109bbb85f5037c5cc9ccb9161daf0b6c6c7fc7c63a3",
           "shape": [
             640,
             160
@@ -8823,7 +8691,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_attn_w_k.scale_values.f32.bin",
-          "sha256": "d9c8357d86db32b77132141a35cbcebaf60366e1ca4f38e4d694c0fc5aff2c14",
+          "sha256": "b416b017637f3aafe53635184f380f5d15c3ff63e0d36c93cde977175f1ca806",
           "shape": [
             1
           ]
@@ -8884,7 +8752,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_attn_w_v.packed_weight.u8.bin",
-          "sha256": "8443e3e464371d8dd75264497495a7df864d1fb238e359471b185025ec603d2d",
+          "sha256": "db48b75aa026f38d2ea7d4a48625124f3d37de54f7337bb937aea49a58464c8b",
           "shape": [
             640,
             160
@@ -8894,7 +8762,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_attn_w_v.scale_values.f32.bin",
-          "sha256": "02372fe717f3ac31cea1e5f610c648c2481f4af97e3b5a557c5322e5284c7b6a",
+          "sha256": "6b941127e7729c501903a4360c63cd3936ba0b137df552c62a98d359b9765ef4",
           "shape": [
             1
           ]
@@ -8955,7 +8823,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_self_attn_block_attn_w_o.packed_weight.u8.bin",
-          "sha256": "7785f376f2f93f7f0193c9371b7a6f67c269b4e87240a62e3d431c520c4b2f78",
+          "sha256": "35f178255cbdeb9fabfc2c7621c1359dfe23122bcc3f6e1ce251758805dacbce",
           "shape": [
             640,
             160
@@ -8965,7 +8833,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_self_attn_block_attn_w_o.scale_values.f32.bin",
-          "sha256": "4c2f77486809f53e311afa077cc98e8dd8f5223c717157b30bd16efca47202d7",
+          "sha256": "fd526f4ada72d325c2117e5aa01f24cb618c34d8cd64b878023f04ce7d847fda",
           "shape": [
             1
           ]
@@ -9026,7 +8894,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_cross_w_q.packed_weight.u8.bin",
-          "sha256": "5359b71b2152931d633730473f617eab2f91e9551a3119e88b41f20e96133a69",
+          "sha256": "a53505529898f633bc22de068776f432d7e9c263b12c39c82457c7eac6a7c6de",
           "shape": [
             640,
             160
@@ -9036,7 +8904,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_cross_w_q.scale_values.f32.bin",
-          "sha256": "a976e3ac01df7c81ac2424da4a5119c6ba9e828a86ae34951dec6a8c4a258754",
+          "sha256": "646102b95c410087e1db26259aa220224abe09a37d4c0ef77636434b8a9a51e3",
           "shape": [
             1
           ]
@@ -9097,7 +8965,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_cross_w_k.packed_weight.u8.bin",
-          "sha256": "0397e322f1f08d1cb09ebccd10ff208942cce53597211dfa2f3c699905b37646",
+          "sha256": "43151f115927f11b02705061ec5f336f86a16c10779f3fb6481fb370196875f4",
           "shape": [
             640,
             160
@@ -9107,7 +8975,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_cross_w_k.scale_values.f32.bin",
-          "sha256": "1d5a80d193a55b21996870e186a992093c980c826ca756d34d07512b74d9f1f8",
+          "sha256": "8c7e1a85864eb84ce44adbfdac2297c8e32142256e865fb70519999957444f1d",
           "shape": [
             1
           ]
@@ -9168,7 +9036,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_cross_w_v.packed_weight.u8.bin",
-          "sha256": "71453f07cf2585e44a2535da9abab753fa729f7f0658ffd1afc2b1530ef6d459",
+          "sha256": "6be3135b806d87a54f80c8001c3fef1cc0fa49eb7197066bd259f8dced63b999",
           "shape": [
             640,
             160
@@ -9178,7 +9046,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_cross_w_v.scale_values.f32.bin",
-          "sha256": "25fe4785a0e34c84c893e130addb7841ff95482f39bb679e2e743643caf38a14",
+          "sha256": "342acaecd4ca3b931dc858476839ff757cbfa9a96476808665d82004040515dc",
           "shape": [
             1
           ]
@@ -9239,7 +9107,7 @@
           "bytes": 102400,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_cross_w_o.packed_weight.u8.bin",
-          "sha256": "a8dd138c76f62821dbc808faa16c641dfdd894800d75a53e8b6ba5bec65251aa",
+          "sha256": "2b41f149306400bfea558ccc7bcd791db06fca1d169019b7ebb6adcf3a1a6be7",
           "shape": [
             640,
             160
@@ -9249,7 +9117,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_cross_w_o.scale_values.f32.bin",
-          "sha256": "df1dc909f90113b8222ffff7c06b2f2fbcc58b11fa53e01beb16535f776dc50e",
+          "sha256": "f69dc6350c4a4494a360578f4569f825c40d24d4d0ee7feba304d19b0f6d7515",
           "shape": [
             1
           ]
@@ -9301,7 +9169,7 @@
           "bytes": 16384,
           "dtype": "float32",
           "path": "decoder_5_cross_block_mlp_w_in.bias.f32.bin",
-          "sha256": "f18d27c3ea91ab7ca1809e21aa7d2f9ce53f9075b0d4f22b2a69a3965ac6ed62",
+          "sha256": "5cda8ea7ca09a672244dbdee9310fe567fd4bf7b60420b1b67a648b53c57030b",
           "shape": [
             4096
           ]
@@ -9319,7 +9187,7 @@
           "bytes": 655360,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_mlp_w_in.packed_weight.u8.bin",
-          "sha256": "e1715ff111c750f2f55c531463781cf2938c09b9a2114470280066e212e6f5d4",
+          "sha256": "0f0a2a6ad48d9b94cabf5c66360d53d46a1df3923c70ec04fc0945f89ddc253d",
           "shape": [
             4096,
             160
@@ -9329,7 +9197,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_mlp_w_in.scale_values.f32.bin",
-          "sha256": "c4dd4a3e5f62821a901f5542d133fd6d54a88b651c4e6a6181ad7dd480005741",
+          "sha256": "21f24fd10a3648ebbf41a2d826793b592fcedde18910e91ea0408eebd24950a9",
           "shape": [
             1
           ]
@@ -9381,7 +9249,7 @@
           "bytes": 2560,
           "dtype": "float32",
           "path": "decoder_5_cross_block_mlp_w_out.bias.f32.bin",
-          "sha256": "a2e0c959adbb60cefee9173cfb5a9563136ea42dc8aa257c7d4f0bcb8694e4f1",
+          "sha256": "f4f5d3465fc783d97a84711020c665069e84ec8d9abab858a55ccf2c6fc63b64",
           "shape": [
             640
           ]
@@ -9399,7 +9267,7 @@
           "bytes": 327680,
           "dtype": "uint8",
           "path": "decoder_5_cross_block_mlp_w_out.packed_weight.u8.bin",
-          "sha256": "71a8fbd12cb82aa91e2e63272ce49776eb46306bb5526ffbcb09f43d47a5fa6e",
+          "sha256": "98a88b15f4647f8cf6f9c7024fe53494aebb9d5d9a237f61f51808f186221681",
           "shape": [
             640,
             512
@@ -9409,7 +9277,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "decoder_5_cross_block_mlp_w_out.scale_values.f32.bin",
-          "sha256": "a8579974cb2aeac05041694f6dfc48494977f30e1128206240ae46d8b8d021cf",
+          "sha256": "86de3611a61a56a52c80e3c45b321e1eb7628a568cbda2e2c8b8e9eaac84da2d",
           "shape": [
             1
           ]
@@ -9470,7 +9338,7 @@
           "bytes": 235520,
           "dtype": "uint8",
           "path": "lm_head.packed_weight.u8.bin",
-          "sha256": "060f7d5ef7390d431457c038f91e5cb4f83479ac7fe892a49a0152caf62022da",
+          "sha256": "a136abbd20766b69a6ac049ff7ceacfedbd423f01a740e1d66a6ec0352151198",
           "shape": [
             1472,
             160
@@ -9480,7 +9348,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "lm_head.scale_values.f32.bin",
-          "sha256": "e0a5b485146c66cb987ec1302640c0a60955216c335c73991c4c9ad0d885f478",
+          "sha256": "894fea87d4cbd808625c28741288151a6a31ae83299f68f751b945c706dd59bd",
           "shape": [
             1
           ]
@@ -9495,11 +9363,92 @@
           ]
         }
       }
+    },
+    {
+      "act_quant_bits": 8,
+      "act_quant_method": "absmax",
+      "act_quant_mode": "none",
+      "act_quant_percentile": 0.999,
+      "format": "bitnet_w2a8",
+      "in_features": 640,
+      "layout_header": [
+        1,
+        16,
+        32,
+        18,
+        640,
+        32,
+        640,
+        0,
+        18,
+        1,
+        80,
+        1,
+        0
+      ],
+      "name": "agent_intent_head",
+      "out_features": 18,
+      "tensors": {
+        "act_scale": {
+          "bytes": 4,
+          "dtype": "float32",
+          "path": "agent_intent_head.act_scale.f32.bin",
+          "sha256": "e00e5eb9444182f352323374ef4e08ebcb784725fdd4fd612d7730540b3e0c8c",
+          "shape": []
+        },
+        "bias": {
+          "bytes": 72,
+          "dtype": "float32",
+          "path": "agent_intent_head.bias.f32.bin",
+          "sha256": "d87fb6e07426092e220eff3b0c5a373b3a87570898a3786307b09b9e773c1ed5",
+          "shape": [
+            18
+          ]
+        },
+        "layout_header": {
+          "bytes": 52,
+          "dtype": "int32",
+          "path": "agent_intent_head.layout_header.i32.bin",
+          "sha256": "725ebb1ef588d26f646a28e20ea86b0fab9bd2597dda062ac5cc5129ac846a7e",
+          "shape": [
+            13
+          ]
+        },
+        "packed_weight": {
+          "bytes": 5120,
+          "dtype": "uint8",
+          "path": "agent_intent_head.packed_weight.u8.bin",
+          "sha256": "52f12517cdfa0808620bcce56d5981e2ced4f85daad7ff42332e1f9c8b13e35f",
+          "shape": [
+            32,
+            160
+          ]
+        },
+        "scale_values": {
+          "bytes": 4,
+          "dtype": "float32",
+          "path": "agent_intent_head.scale_values.f32.bin",
+          "sha256": "a2133ba41e38ce6f8ed24e593d72aa936c72043fea5c9c3ae1f1e3ac14188574",
+          "shape": [
+            1
+          ]
+        },
+        "segment_offsets": {
+          "bytes": 8,
+          "dtype": "int32",
+          "path": "agent_intent_head.segment_offsets.i32.bin",
+          "sha256": "db182aa591574a126e34f00dc9249bfa70ce2e97caf4da19de6429dcfe145ff7",
+          "shape": [
+            2
+          ]
+        }
+      }
     }
   ],
-  "max_seq_len": 1024,
+  "max_seq_len": 512,
   "model": {
     "activation": "silu",
+    "agent_intent_labels": 18,
     "agent_policy_heads": false,
     "attention_bias": false,
     "attn_dropout": 0.0,
@@ -9565,7 +9514,6 @@
     "kind": "agentkernel-bpe",
     "pad_token_id": 0,
     "path": "tokenizer/tokenizer.json",
-    "source_kind": "agentkernel_bytelevel_bpe_v1",
     "unk_token_id": 3,
     "vocab_size": 1466
   }

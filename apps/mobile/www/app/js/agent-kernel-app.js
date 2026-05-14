@@ -23,6 +23,7 @@ const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
 const VLLM_MODEL = String(URL_PARAMS.get('vllmModel') || 'Qwen/Qwen3.5-9B').trim();
 const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
+const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') === '1';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
 const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
@@ -223,6 +224,7 @@ const state = {
   paperEmbeddingModel: null,
   neuralMemoryPack: null,
   neuralEmbeddingRequests: new Map(),
+  intentClassificationRequests: new Map(),
   utilityGenerationRequests: new Map(),
   paperContextRows: [],
   retrievalRows: [],
@@ -268,6 +270,9 @@ const state = {
   processActive: false,
   liveStatusNode: null,
   activeTurn: null,
+  currentSourceSlots: [],
+  currentTextSlots: {},
+  lastAgentIntent: null,
   appIntegrity: null,
   availableExtensions: [],
   theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
@@ -1773,7 +1778,7 @@ async function ensureDefaultResearchPack() {
 
 function ensureWorker() {
   if (state.worker) return state.worker;
-  state.worker = new Worker('./js/llm-worker.js?v=20260502-adaptive-spec', { type: 'module' });
+  state.worker = new Worker('./js/llm-worker.js?v=20260514-intent-head', { type: 'module' });
   state.worker.addEventListener('message', onWorkerMessage);
   return state.worker;
 }
@@ -1900,6 +1905,16 @@ function onWorkerMessage(event) {
       state.neuralEmbeddingRequests.delete(data.requestId);
       request.resolve(Float32Array.from(data.embedding || []));
     }
+  } else if (data.type === 'intent') {
+    const request = state.intentClassificationRequests.get(data.requestId);
+    if (request) {
+      state.intentClassificationRequests.delete(data.requestId);
+      request.resolve({
+        intent: String(data.intent || ''),
+        confidence: Number(data.confidence || 0),
+        ranked: Array.isArray(data.ranked) ? data.ranked : [],
+      });
+    }
   } else if (data.type === 'cancelled') {
     log('cancelled slow generation; runtime stayed loaded');
     if (state.modelReady) updateRuntimeDetail('Runtime is still loaded and ready for the next chat.');
@@ -1919,6 +1934,10 @@ function onWorkerMessage(event) {
     }
     for (const [requestId, request] of state.neuralEmbeddingRequests.entries()) {
       state.neuralEmbeddingRequests.delete(requestId);
+      request.reject(new Error(data.message || 'model error'));
+    }
+    for (const [requestId, request] of state.intentClassificationRequests.entries()) {
+      state.intentClassificationRequests.delete(requestId);
       request.reject(new Error(data.message || 'model error'));
     }
     const error = new Error(data.message || 'model error');
@@ -1959,6 +1978,28 @@ function generateUtilityText(prompt, options = {}) {
     generationId,
     prompt,
     options,
+  });
+  return promise;
+}
+
+function classifyAgentIntent(prompt, options = {}) {
+  if (!String(state.loadedModelId || '').startsWith('modelstack:')) return Promise.resolve(null);
+  const requestId = `intent-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const worker = ensureWorker();
+  const promise = new Promise((resolve, reject) => {
+    state.intentClassificationRequests.set(requestId, { resolve, reject });
+    window.setTimeout(() => {
+      const request = state.intentClassificationRequests.get(requestId);
+      if (!request) return;
+      state.intentClassificationRequests.delete(requestId);
+      request.resolve(null);
+    }, Math.max(600, Math.min(4000, Number(options.timeoutMs || 1800))));
+  });
+  worker.postMessage({
+    type: 'intent',
+    requestId,
+    text: String(prompt || ''),
+    maxEncoderTokens: Math.max(128, Math.min(1024, Number(options.maxEncoderTokens || 768))),
   });
   return promise;
 }
@@ -3180,6 +3221,7 @@ function buildPromptFallback(userText, contextRows) {
     : `${modeToken()} <AK_RESPOND>`;
   const selectedCount = contextRows.filter((row) => String(row.source || '').includes('selected_paper')).length;
   const readingNotes = evidenceReadingNotes(userText, contextRows);
+  const dataContext = pocketPalDataSourceContext(userText);
   return [
     tokenHeader,
     `<AK_LOOP> <AK_STATE> mode=${state.mode} selected_context=${selectedCount ? 1 : 0} retrieval=${contextRows.length ? 'ranked' : 'none'}`,
@@ -3200,11 +3242,18 @@ function buildPromptFallback(userText, contextRows) {
     '<AK_PROFILE> Active PocketPal agent:',
     pocketPalAgentContext(),
     '',
+    '<AK_PROFILE> PocketPal installed tools:',
+    pocketPalToolContext(),
+    '',
     '<AK_PROFILE> PocketPal local memory:',
     pocketPalMemoryContext(),
     '',
     '<AK_CONTEXT> User data pointers:',
-    pocketPalDataSourceContext(userText),
+    dataContext,
+    '',
+    pocketPalTextSlotBlock(userText, dataContext),
+    '',
+    pocketPalSourceSlotBlock(userText, dataContext),
     '',
     '<AK_HISTORY> Recent conversation:',
     historyContext(),
@@ -3355,6 +3404,7 @@ function buildPrompt(userText, contextRows) {
       ));
       if (packet.prompt) {
         const selectedContext = selectedContextTarget(userText);
+        const dataContext = pocketPalDataSourceContext(userText);
         const readingAppendix = [
           '',
           '<AK_HISTORY> Recent conversation:',
@@ -3367,11 +3417,18 @@ function buildPrompt(userText, contextRows) {
           pocketPalAgentContext(),
           activeAgentInstruction(),
           '',
+          '<AK_PROFILE> PocketPal installed tools:',
+          pocketPalToolContext(),
+          '',
           '<AK_PROFILE> PocketPal local memory:',
           pocketPalMemoryContext(),
           '',
           '<AK_CONTEXT> User data pointers:',
-          pocketPalDataSourceContext(userText),
+          dataContext,
+          '',
+          pocketPalTextSlotBlock(userText, dataContext),
+          '',
+          pocketPalSourceSlotBlock(userText, dataContext),
           '',
           '<AK_READING_NOTES> Semantic reading notes:',
           evidenceReadingNotes(userText, contextRows),
@@ -3390,15 +3447,60 @@ function buildPrompt(userText, contextRows) {
 function recordAssistantTurn(text) {
   if (!state.coreReady || !state.core) return null;
   try {
+    const replyText = repairPocketPalDecisionJson(text || '') || text || '';
     const raw = state.core.finish_model_reply
-      ? state.core.finish_model_reply(text || '')
-      : state.core.finish_turn(text || '');
+      ? state.core.finish_model_reply(replyText)
+      : state.core.finish_turn(replyText);
     const packet = JSON.parse(raw);
     state.lastDecisionPacket = packet.decision_packet || null;
     return packet;
   } catch (error) {
     log(`WASM turn record failed: ${error.message || String(error)}`);
     return null;
+  }
+}
+
+function extractJsonStringField(text, key) {
+  const raw = String(text || '');
+  const keyIndex = raw.search(new RegExp(`"${key}"\\s*:`));
+  if (keyIndex < 0) return '';
+  const colonIndex = raw.indexOf(':', keyIndex);
+  if (colonIndex < 0) return '';
+  let index = colonIndex + 1;
+  while (index < raw.length && /\s/.test(raw[index])) index += 1;
+  if (raw[index] !== '"') return '';
+  index += 1;
+  let value = '';
+  let escaped = false;
+  for (; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (escaped) {
+      value += char === 'n' ? '\n' : char === 't' ? '\t' : char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') return value;
+    value += char;
+  }
+  return '';
+}
+
+function repairPocketPalDecisionJson(text) {
+  const raw = String(text || '').trim();
+  if (!raw.includes('"action"') || !raw.includes('"content"')) return '';
+  try {
+    JSON.parse(raw);
+    return '';
+  } catch (_error) {
+    const action = extractJsonStringField(raw, 'action');
+    const content = extractJsonStringField(raw, 'content');
+    const allowed = new Set(['respond', 'ask_user', 'extension_request', 'save_memory']);
+    if (!allowed.has(action) || !content) return '';
+    return JSON.stringify({ action, content, proposal_metadata: { task_type: 'repaired_decision' } });
   }
 }
 
@@ -3422,7 +3524,7 @@ function decisionExtensionMetadata(packet) {
   return {
     extensionId: String(metadata.extension_id || metadata.extensionId || nested.id || nested.extension_id || '').trim(),
     capability: String(metadata.capability || metadata.capability_id || nested.capability || nested.capability_id || '').trim(),
-    query: String(metadata.query || metadata.search_query || metadata.request || '').trim(),
+    query: expandPocketPalTextSlots(String(metadata.query || metadata.search_query || metadata.request || '').trim()),
   };
 }
 
@@ -3634,6 +3736,110 @@ function pocketPalDataSourceContext(query = '', limit = 8) {
   }).join('\n');
 }
 
+function compactSourceSlotText(value, limit = 900) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit).trim();
+}
+
+function compilePocketPalSourceSlots(userText, { dataContext = '', maxSlots = 8 } = {}) {
+  const slots = [];
+  const add = (kind, text) => {
+    const value = compactSourceSlotText(text);
+    if (!value || slots.some((slot) => slot.text === value)) return;
+    if (slots.length >= Math.max(1, Math.min(24, Number(maxSlots) || 8))) return;
+    const index = slots.length + 1;
+    slots.push({ id: `U${index}`, token: `<AK_COPY_USER_SOURCE_${index}>`, kind, text: value });
+  };
+  const user = compactSourceSlotText(userText);
+  add('user_text', user);
+  for (const match of user.matchAll(/["']([^"']{3,220})["']/g)) add('quoted_user_text', match[1]);
+  for (const chunk of user.split(/\s*(?:;|\n| and | but | because |,)\s*/g)) {
+    if (chunk.trim().length >= 8 && chunk.trim().length <= 220) add('user_span', chunk);
+  }
+  const data = compactSourceSlotText(dataContext);
+  if (data && data.toLowerCase() !== 'no saved user data sources.') add('user_data', data);
+  return slots;
+}
+
+function pocketPalSourceSlotBlock(userText, dataContext = '') {
+  if (!SOURCE_SLOT_TOKENS_ENABLED) {
+    state.currentSourceSlots = [];
+    return '';
+  }
+  const slots = compilePocketPalSourceSlots(userText, { dataContext, maxSlots: 8 });
+  state.currentSourceSlots = slots;
+  if (!slots.length) return '<AK_SOURCE_SLOTS> none';
+  return [
+    '<AK_SOURCE_SLOTS>',
+    'Use source copy tokens when exact user-provided names, dates, values, links, or wording must be preserved.',
+    ...slots.map((slot) => `${slot.token} ${slot.kind}: ${slot.text}`),
+  ].join('\n');
+}
+
+function inferPocketPalTextSlots(userText = '', dataContext = '') {
+  const text = compactSourceSlotText(userText, 900);
+  if (!text) return {};
+  const slots = { SOURCE_TEXT: text };
+  const data = compactSourceSlotText(dataContext, 900);
+  if (data && data.toLowerCase() !== 'no saved user data sources.') slots.DATA_CONTEXT = data;
+  const patterns = [
+    /^(?:hey\s+)?(?<name>[a-z][\w.-]*)\s+i\s+need\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
+    /^ask\s+(?<name>[a-z][\w.-]*)\s+for\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
+    /^tell\s+(?<name>[a-z][\w.-]*)\s+we\s+need\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+since\s+(?<reason>.+)$/i,
+    /^can\s+you\s+ask\s+(?<name>[a-z][\w.-]*)\s+to\s+send\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.groups) continue;
+    slots.NAME = capitalizeSlotValue(match.groups.name);
+    slots.ITEM = compactSourceSlotText(match.groups.item, 180);
+    slots.DEADLINE = compactSourceSlotText(match.groups.deadline, 120);
+    slots.REASON = capitalizeSlotValue(match.groups.reason);
+    break;
+  }
+  return slots;
+}
+
+function capitalizeSlotValue(value = '') {
+  const text = compactSourceSlotText(value, 240);
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : text;
+}
+
+function pocketPalTextSlotBlock(userText = '', dataContext = '') {
+  const slots = inferPocketPalTextSlots(userText, dataContext);
+  state.currentTextSlots = slots;
+  const keys = Object.keys(slots).filter((key) => slots[key]);
+  if (!keys.length) return '<AK_PROFILE> User text slots: none';
+  return [
+    '<AK_PROFILE> User text slots:',
+    ...keys.map((key) => `<AK_SLOT> <AK_SLOT_NAME>=${key} <AK_SLOT_VALUE>=${slots[key]}`),
+    `Available placeholders for this turn: ${keys.map((key) => `[[${key}]]`).join(', ')}.`,
+    'Use only the available placeholders listed above. Do not invent unavailable placeholders such as [[NAME]], [[ITEM]], [[DEADLINE]], or [[REASON]] unless they are listed for this turn.',
+  ].join('\n');
+}
+
+function expandPocketPalTextSlots(text, slots = state.currentTextSlots || {}) {
+  let value = String(text || '');
+  if (Object.prototype.hasOwnProperty.call(slots || {}, 'DATA_CONTEXT')) {
+    value = value.replace(/\[\[DATA_CONTEXT\]\]+[\s\S]*$/g, '[[DATA_CONTEXT]]');
+  }
+  for (const [name, replacement] of Object.entries(slots || {})) {
+    value = value.split(`[[${name}]]`).join(String(replacement || ''));
+  }
+  return value;
+}
+
+function expandPocketPalSourcePointers(text, slots = state.currentSourceSlots || []) {
+  let value = String(text || '');
+  for (const slot of slots || []) {
+    value = value.split(slot.token).join(slot.text);
+    const escapedId = String(slot.id || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (escapedId) {
+      value = value.replace(new RegExp(`<AK_COPY_USER_SOURCE_${escapedId.slice(1)}[>\\]]?[\\s\\S]*$`, 'g'), slot.text);
+    }
+  }
+  return value;
+}
+
 function activePocketPalAgent() {
   return state.pocketPalAgents.find((agent) => agent.id === state.activeAgentId) || null;
 }
@@ -3686,7 +3892,7 @@ function activeAgentRuntimePreamble() {
     `Retrieval policy: ${agent.retrievalPolicy || 'auto'}`,
     `Tool policy: ${agent.toolPolicy || 'ask_before_extensions'}`,
     `Action policy: ${agent.actionPolicy || 'respond_or_ask'}`,
-    'The active agent instruction is the primary task contract for this turn. Apply it directly to the user request. Do not substitute a research assistant behavior unless the agent instruction or the user explicitly asks for research.',
+    'The active agent instruction is the primary task contract for this turn. Apply it directly to the user request. Do not answer as the base assistant when an active agent is selected unless the active agent instruction asks for normal assistant chat. Do not substitute a research assistant behavior unless the agent instruction or the user explicitly asks for research.',
     '</AK_AGENT_ACTIVE>',
   ].join('\n');
 }
@@ -3708,12 +3914,25 @@ function pocketPalAgentContext() {
   ].join('\n');
 }
 
+function pocketPalToolContext() {
+  return [
+    '<AK_EXTENSION> installed id=web_search <AK_CAPABILITY> web.search approval_policy=always_ask',
+    `<AK_MAX_SOURCES>=${Math.max(1, Math.min(5, Number(state.webSearch.maxSources || 5)))}`,
+    'When the active agent instruction or user request needs current, recent, online, or web-backed information, return action=extension_request with proposal_metadata.extension_id=web_search, capability=web.search, query, max_sources, and requires_user_approval=true. Do not invent web results before the extension runs.',
+  ].join('\n');
+}
+
 function activeAgentAllowsAction(action) {
   const agent = activePocketPalAgent();
   if (!agent) return true;
   const policy = String(agent.actionPolicy || 'respond_or_ask').trim();
   if (action === 'save_memory') return policy === 'allow_memory' || policy === 'full_local_agent';
-  if (action === 'extension_request') return policy === 'allow_extension_requests' || policy === 'full_local_agent';
+  if (action === 'extension_request') {
+    const toolPolicy = String(agent.toolPolicy || 'ask_before_extensions').trim();
+    return policy === 'allow_extension_requests'
+      || policy === 'full_local_agent'
+      || (policy === 'respond_or_ask' && (toolPolicy === 'ask_before_extensions' || toolPolicy === 'installed_only'));
+  }
   return true;
 }
 
@@ -4280,6 +4499,9 @@ function groundedFallbackAnswer(userText, rows, reason = '') {
 function maybeGroundedFallback(text, rows, userText = '') {
   if (!String(state.loadedModelId || '').startsWith('modelstack:')) return text;
   const normalized = String(text || '').trim();
+  if (!rows?.length && hasDecoderQualityIssue(normalized, rows, userText)) {
+    return directChatFallback(userText);
+  }
   if (!shouldPreferEvidenceComposer(normalized, rows, userText)) return normalized;
   const grounded = groundedFallbackAnswer(userText, rows, 'decoder output failed quality gate');
   return grounded || 'The local decoder did not produce a usable answer for this turn.';
@@ -4465,7 +4687,7 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
   setControlsBusy(false);
   const rows = turn?.contextRows || state.pendingContextRows || [];
   const userText = turn?.userText || '';
-  const responseText = fallback
+  let responseText = fallback
     ? [
         'The local decoder did not produce a decoded answer for this turn.',
         rows.length
@@ -4474,6 +4696,8 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
         reason ? `Runtime detail: ${reason}` : '',
       ].filter(Boolean).join('\n\n')
     : maybeGroundedFallback(text, rows, userText);
+  responseText = expandPocketPalTextSlots(responseText, turn?.textSlots || {});
+  responseText = expandPocketPalSourcePointers(responseText, turn?.sourceSlots || []);
   setProcessStep('generate', fallback ? 'error' : 'done', fallback ? 'Decoder timed out before answer' : `${formatCount(String(text || '').length)} characters generated`);
   const packet = recordAssistantTurn(responseText);
   const displayText = bindEvidenceAttribution(displayTextFromDecision(packet, responseText), rows);
@@ -4497,6 +4721,8 @@ function armGenerationFallback(userText, contextRows, generationId) {
     generationId,
     finalized: false,
     fallbackTimer: null,
+    textSlots: state.currentTextSlots || {},
+    sourceSlots: state.currentSourceSlots || [],
   };
   if (selectedModel.startsWith('modelstack:')) {
     state.activeTurn = turn;
@@ -4955,6 +5181,17 @@ async function submitPrompt(event) {
     setProcessStep('compile', 'active', `Building ${state.mode.replace('_', ' ')} context packet`);
     const compiledPrompt = buildPrompt(text, contextRows);
     setProcessStep('compile', 'done', `${formatCount(compiledPrompt.length)} prompt characters`);
+    try {
+      const intentSignal = await classifyAgentIntent(compiledPrompt, { maxEncoderTokens: 768, timeoutMs: 2200 });
+      if (intentSignal?.intent) {
+        state.lastAgentIntent = intentSignal;
+        const confidence = Math.round(Number(intentSignal.confidence || 0) * 100);
+        setProcessStep('plan', 'done', `intent=${intentSignal.intent} (${confidence}%)`);
+        log(`agent intent: ${intentSignal.intent} (${confidence}%)`);
+      }
+    } catch (error) {
+      log(`agent intent unavailable: ${error.message || String(error)}`);
+    }
     setProcessStep('generate', 'active', `Generating up to ${formatCount(targetMaxTokens())} tokens`);
     const generationId = ++state.generationRunId;
     armGenerationFallback(text, contextRows, generationId);

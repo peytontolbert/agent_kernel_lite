@@ -120,6 +120,27 @@ class LocalBpeTokenizer:
         "<AK_CITE>",
         "<AK_RENDER>",
         "<AK_JSON>",
+        "<AK_PROFILE>",
+        "<AK_SLOT>",
+        "<AK_SLOT_NAME>",
+        "<AK_SLOT_VALUE>",
+        "<AK_PREFERENCE>",
+        "<AK_GOAL>",
+        "<AK_DOMAIN>",
+        "<AK_TONE>",
+        "<AK_CONSTRAINT>",
+        "<AK_PRIVACY>",
+        "<AK_REMEMBER>",
+        "<AK_UPDATE_SLOT>",
+        "<AK_DELETE_SLOT>",
+        "<AK_EXTENSION>",
+        "<AK_CAPABILITY>",
+        "<AK_APPROVAL>",
+        "<AK_SAVE_MEMORY>",
+        "<AK_ASK_USER>",
+        "<AK_SOURCE_TYPE>",
+        "<AK_EXTENSION_RESULT>",
+        "<AK_INSTALLED>",
         "<AK_DECISION>",
         "<AK_NEED_MEMORY>",
         "<AK_MEMORY_TYPE>",
@@ -168,6 +189,8 @@ class LocalBpeTokenizer:
         "<AK_SOURCE_INSPECT>",
         "<AK_PATCH_BUILD>",
         "<AK_SAFE_STOP>",
+        "<AK_SOURCE_SLOTS>",
+        *[f"<AK_COPY_USER_SOURCE_{index}>" for index in range(1, 25)],
     ]
 
     def __init__(self, tokenizer) -> None:
@@ -548,6 +571,15 @@ def _encode_encdec_row(
         except (TypeError, ValueError):
             return torch.tensor(float("nan"), dtype=torch.float32)
 
+    def intent_label_id() -> torch.Tensor:
+        raw = row.get("intent_label_id", row.get("intent_id", None))
+        if raw is None or raw == "":
+            return torch.tensor(-1, dtype=torch.long)
+        try:
+            return torch.tensor(int(raw), dtype=torch.long)
+        except (TypeError, ValueError):
+            return torch.tensor(-1, dtype=torch.long)
+
     return {
         "enc_input_ids": torch.tensor(enc["input_ids"], dtype=torch.long),
         "enc_attention_mask": torch.tensor(enc["attention_mask"], dtype=torch.long),
@@ -570,6 +602,7 @@ def _encode_encdec_row(
         "answer_confidence_target": target_value("answer_confidence_target"),
         "needs_verification_target": target_value("needs_verification_target"),
         "paper_action_validity_target": target_value("paper_action_validity_target"),
+        "intent_label_id": intent_label_id(),
     }
 
 
@@ -591,6 +624,7 @@ class EncDecParquetIterableDataset(IterableDataset):
         "answer_confidence_target",
         "needs_verification_target",
         "paper_action_validity_target",
+        "intent_label_id",
     ]
 
     def __init__(
@@ -1059,6 +1093,61 @@ def _agent_policy_head_loss(model: torch.nn.Module, batch: dict[str, torch.Tenso
     return torch.stack(losses).mean()
 
 
+def _agent_intent_head_loss(model: torch.nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    if not hasattr(model, "agent_intent_logits"):
+        return next(model.parameters()).new_tensor(0.0)
+    logits = model.agent_intent_logits(batch["enc_input_ids"], batch["enc_attention_mask"])
+    if logits is None:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch.get("intent_label_id")
+    if labels is None:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = labels.to(device=logits.device, dtype=torch.long)
+    mask = (labels >= 0) & (labels < int(logits.shape[-1]))
+    if int(mask.sum().detach().cpu().item()) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    losses = F.cross_entropy(logits[mask].float(), labels[mask], reduction="none")
+    weights = batch.get("loss_weight")
+    if weights is None:
+        return losses.mean()
+    weights = weights.to(device=losses.device, dtype=losses.dtype)[mask].clamp_min(0.0)
+    return (losses * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _intent_contrastive_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    temperature: float,
+) -> torch.Tensor:
+    labels = batch.get("intent_label_id")
+    if labels is None:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = labels.to(device=batch["enc_input_ids"].device, dtype=torch.long)
+    valid = labels >= 0
+    if int(valid.sum().detach().cpu().item()) <= 1:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = labels[valid]
+    if int(torch.unique(labels).shape[0]) <= 1:
+        return next(model.parameters()).new_tensor(0.0)
+    hidden = model.encode(batch["enc_input_ids"][valid], batch["enc_attention_mask"][valid])
+    pooled = F.normalize(_mean_pool(hidden, batch["enc_attention_mask"][valid]).float(), dim=-1)
+    logits = pooled @ pooled.transpose(0, 1)
+    logits = logits / max(float(temperature), 1e-6)
+    eye = torch.eye(logits.shape[0], device=logits.device, dtype=torch.bool)
+    same_label = labels.unsqueeze(0) == labels.unsqueeze(1)
+    positives = same_label & ~eye
+    anchor_mask = positives.any(dim=1)
+    if int(anchor_mask.sum().detach().cpu().item()) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    logits = logits - logits.detach().amax(dim=1, keepdim=True)
+    exp_logits = torch.exp(logits).masked_fill(eye, 0.0)
+    positive_sum = (exp_logits * positives.to(dtype=exp_logits.dtype)).sum(dim=1)
+    denominator = exp_logits.sum(dim=1).clamp_min(1e-12)
+    losses = -torch.log((positive_sum / denominator).clamp_min(1e-12))
+    return losses[anchor_mask].mean()
+
+
 def _weighted_loss(
     model: torch.nn.Module,
     batch: dict[str, torch.Tensor],
@@ -1079,6 +1168,10 @@ def _weighted_loss(
     teacher_distill_weight: float = 0.0,
     teacher_distill_temperature: float = 1.0,
     policy_head_loss_weight: float = 0.0,
+    intent_head_loss_weight: float = 0.0,
+    intent_contrastive_weight: float = 0.0,
+    intent_contrastive_temperature: float = 0.10,
+    encoder_rep_distill_weight: float = 0.0,
 ) -> torch.Tensor:
     logits = None
     needs_decoder_logits = float(decoder_loss_weight) > 0.0 or (
@@ -1125,6 +1218,14 @@ def _weighted_loss(
         weights = batch["loss_weight"].to(device=per_example_kl.device, dtype=per_example_kl.dtype).clamp_min(0.0)
         distill_loss = (per_example_kl * weights).sum() / weights.sum().clamp_min(1e-6)
         distill_loss = distill_loss * (temperature * temperature)
+    encoder_rep_distill_loss = next(model.parameters()).new_tensor(0.0)
+    if teacher_model is not None and float(encoder_rep_distill_weight) > 0.0:
+        student_hidden = model.encode(batch["enc_input_ids"], batch["enc_attention_mask"])
+        student_pooled = _mean_pool(student_hidden, batch["enc_attention_mask"]).float()
+        with torch.no_grad():
+            teacher_hidden = teacher_model.encode(batch["enc_input_ids"], batch["enc_attention_mask"])
+            teacher_pooled = _mean_pool(teacher_hidden, batch["enc_attention_mask"]).float()
+        encoder_rep_distill_loss = F.mse_loss(student_pooled, teacher_pooled)
     retrieval_loss = next(model.parameters()).new_tensor(0.0)
     if float(retrieval_contrastive_weight) > 0.0:
         retrieval_loss = _retrieval_contrastive_loss(
@@ -1176,15 +1277,28 @@ def _weighted_loss(
     policy_loss = next(model.parameters()).new_tensor(0.0)
     if float(policy_head_loss_weight) > 0.0:
         policy_loss = _agent_policy_head_loss(model, batch)
+    intent_head_loss = next(model.parameters()).new_tensor(0.0)
+    if float(intent_head_loss_weight) > 0.0:
+        intent_head_loss = _agent_intent_head_loss(model, batch)
+    intent_loss = next(model.parameters()).new_tensor(0.0)
+    if float(intent_contrastive_weight) > 0.0:
+        intent_loss = _intent_contrastive_loss(
+            model,
+            batch,
+            temperature=float(intent_contrastive_temperature),
+        )
     return (
         float(decoder_loss_weight) * seq_loss
         + float(teacher_distill_weight) * distill_loss
+        + float(encoder_rep_distill_weight) * encoder_rep_distill_loss
         + float(retrieval_contrastive_weight) * retrieval_loss
         + float(retrieval_ternary_aware_weight) * ternary_loss
         + float(retrieval_ternary_teacher_distill_weight) * ternary_teacher_loss
         + float(retrieval_ternary_reconstruction_weight) * ternary_reconstruction_loss
         + float(retrieval_hard_negative_weight) * hard_negative_loss
         + float(policy_head_loss_weight) * policy_loss
+        + float(intent_head_loss_weight) * intent_head_loss
+        + float(intent_contrastive_weight) * intent_loss
     )
 
 
@@ -1208,6 +1322,11 @@ def _evaluate(
     retrieval_hard_negative_weight: float = 0.0,
     retrieval_hard_negative_ternary: bool = True,
     policy_head_loss_weight: float = 0.0,
+    intent_head_loss_weight: float = 0.0,
+    intent_contrastive_weight: float = 0.0,
+    intent_contrastive_temperature: float = 0.10,
+    encoder_rep_distill_weight: float = 0.0,
+    teacher_model: torch.nn.Module | None = None,
 ) -> dict[str, Any]:
     if len(dataset) <= 0:
         return {"eval_examples": 0, "eval_batches": 0, "eval_loss": None}
@@ -1243,6 +1362,11 @@ def _evaluate(
                 retrieval_hard_negative_weight=float(retrieval_hard_negative_weight),
                 retrieval_hard_negative_ternary=bool(retrieval_hard_negative_ternary),
                 policy_head_loss_weight=float(policy_head_loss_weight),
+                intent_head_loss_weight=float(intent_head_loss_weight),
+                intent_contrastive_weight=float(intent_contrastive_weight),
+                intent_contrastive_temperature=float(intent_contrastive_temperature),
+                encoder_rep_distill_weight=float(encoder_rep_distill_weight),
+                teacher_model=teacher_model,
             )
             losses.append(float(loss.detach().cpu().item()))
             seen_examples += int(batch["labels"].shape[0])
@@ -1321,6 +1445,38 @@ def _freeze_token_embedding_parameters(model: torch.nn.Module) -> int:
     return frozen
 
 
+def _freeze_decoder_parameters(model: torch.nn.Module) -> int:
+    frozen = 0
+    seen: set[int] = set()
+    for name, param in model.named_parameters():
+        if (
+            name.startswith("dec_embed.")
+            or name.startswith("dec_pos_embed.")
+            or name.startswith("decoder.")
+            or name.startswith("dec_norm.")
+            or name.startswith("lm_head.")
+        ):
+            identity = id(param)
+            if identity not in seen:
+                frozen += int(param.numel())
+                seen.add(identity)
+            param.requires_grad_(False)
+    return frozen
+
+
+def _freeze_encoder_layers_through(model: torch.nn.Module, last_layer_index: int) -> int:
+    frozen = 0
+    prefixes = tuple(f"encoder.{index}." for index in range(max(-1, int(last_layer_index)) + 1))
+    if not prefixes:
+        return 0
+    for name, param in model.named_parameters():
+        if name.startswith(prefixes):
+            if param.requires_grad:
+                frozen += int(param.numel())
+            param.requires_grad_(False)
+    return frozen
+
+
 def _freeze_trainable_bitnet_linear_weights(model: torch.nn.Module) -> int:
     from compress.quantization import TrainableBitNetLinear
 
@@ -1379,6 +1535,53 @@ def _checkpoint_path(output_dir: Path, step: int) -> Path:
     return output_dir / "checkpoints" / f"step_{int(step):08d}.pt"
 
 
+def _tokenizer_token_id(tokenizer: Any | None, token: str) -> int | None:
+    if tokenizer is None:
+        return None
+    if hasattr(tokenizer, "token_to_id"):
+        value = tokenizer.token_to_id(token)
+    elif hasattr(tokenizer, "tokenizer") and hasattr(tokenizer.tokenizer, "token_to_id"):
+        value = tokenizer.tokenizer.token_to_id(token)
+    else:
+        try:
+            value = tokenizer.convert_tokens_to_ids(token)
+        except Exception:
+            value = None
+    if value is None:
+        return None
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _initialize_expanded_agentkernel_rows(
+    weight: torch.Tensor,
+    *,
+    old_vocab_size: int,
+    tokenizer: Any | None,
+) -> None:
+    """Seed newly added structural tokens from existing structural rows."""
+    if tokenizer is None:
+        return
+    row_sources: dict[str, str] = {"<AK_SOURCE_SLOTS>": "<AK_CONTEXT>"}
+    for index in range(1, 25):
+        row_sources[f"<AK_COPY_USER_SOURCE_{index}>"] = "<AK_SLOT_VALUE>"
+    for token, source in row_sources.items():
+        target_id = _tokenizer_token_id(tokenizer, token)
+        source_id = _tokenizer_token_id(tokenizer, source)
+        if target_id is None or source_id is None:
+            continue
+        if target_id < old_vocab_size or target_id >= int(weight.shape[0]):
+            continue
+        if source_id >= old_vocab_size or source_id >= int(weight.shape[0]):
+            continue
+        weight[target_id, :].copy_(weight[source_id, :])
+
+
 def _latest_checkpoint(output_dir: Path) -> Path | None:
     checkpoint_dir = output_dir / "checkpoints"
     if not checkpoint_dir.exists():
@@ -1421,8 +1624,28 @@ def _load_training_checkpoint(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     vocab_mismatch: str,
+    tokenizer: Any | None = None,
 ) -> tuple[int, list[float], list[dict[str, Any]]]:
-    payload = torch.load(path, map_location=device)
+    if path.is_dir():
+        from tensor.io_safetensors import safetensor_load
+
+        payload: dict[str, Any] = {
+            "step": 0,
+            "model_state_dict": safetensor_load(str(path / "model.safetensors")),
+            "losses": [],
+            "eval_history": [],
+        }
+    elif path.name.endswith(".safetensors"):
+        from tensor.io_safetensors import safetensor_load
+
+        payload = {
+            "step": 0,
+            "model_state_dict": safetensor_load(str(path)),
+            "losses": [],
+            "eval_history": [],
+        }
+    else:
+        payload = torch.load(path, map_location=device)
     state = payload["model_state_dict"]
     allowed_new_keys = {"enc_pos_embed.weight"}
     if str(vocab_mismatch).strip().lower() == "expand":
@@ -1442,6 +1665,7 @@ def _load_training_checkpoint(
                     )
                 expanded = target.detach().clone()
                 expanded[: tensor.shape[0], :].copy_(tensor.to(dtype=expanded.dtype, device=expanded.device))
+                _initialize_expanded_agentkernel_rows(expanded, old_vocab_size=int(tensor.shape[0]), tokenizer=tokenizer)
                 patched[key] = expanded
                 continue
             raise RuntimeError(
@@ -1456,6 +1680,7 @@ def _load_training_checkpoint(
             and not key.startswith("retrieval_query_head.")
             and not key.startswith("retrieval_doc_head.")
             and not key.startswith("agent_policy_heads.")
+            and not key.startswith("agent_intent_head.")
         ]
         if unexpected or missing:
             raise RuntimeError(f"partial checkpoint load mismatch: missing={missing} unexpected={unexpected}")
@@ -1469,6 +1694,7 @@ def _load_training_checkpoint(
             and not key.startswith("retrieval_query_head.")
             and not key.startswith("retrieval_doc_head.")
             and not key.startswith("agent_policy_heads.")
+            and not key.startswith("agent_intent_head.")
         ]
         unexpected = list(unexpected)
         if missing or unexpected:
@@ -1515,6 +1741,22 @@ def _save_manifest(
             ]
         )
     dataset_objective = str(dataset_manifest.get("objective", "")).strip()
+    source_counts = dict(dataset_manifest.get("source_counts", {}) or {})
+    task_type_counts = dict(dataset_manifest.get("task_type_counts", {}) or {})
+    if "pocketpal_user_slots" in source_counts:
+        replaces_surfaces.extend(
+            [
+                "user_slot_conditioned_generation",
+                "profile_slot_update_policy",
+                "local_privacy_boundary_policy",
+                "local_memory_write_policy",
+                "installed_extension_routing_policy",
+                "missing_slot_question_policy",
+                "generic_user_context_grounded_reply",
+            ]
+        )
+    if any(str(key).startswith("slot_") for key in task_type_counts):
+        replaces_surfaces.extend(["parameterized_user_configuration"])
     if "controller_trace" in dataset_objective:
         replaces_surfaces.extend(
             [
@@ -1523,6 +1765,8 @@ def _save_manifest(
                 "source_inspection_policy",
             ]
         )
+    if int(getattr(config, "agent_intent_labels", 0) or 0) > 1:
+        replaces_surfaces.append("agent_intent_policy")
     manifest = {
         "artifact_kind": "agentkernel_lite_encdec_bundle",
         "model_family": "agentkernel_lite_encdec_v1",
@@ -1630,11 +1874,19 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     retrieval_head_dim = int(getattr(args, "retrieval_head_dim", 0) or 0)
     config.retrieval_head_dim = retrieval_head_dim if retrieval_head_dim > 0 else None
     config.agent_policy_heads = bool(getattr(args, "agent_policy_heads", 0))
+    intent_label_count = int(getattr(args, "agent_intent_labels", 0) or 0)
+    if intent_label_count <= 0:
+        intent_labels = dataset_manifest.get("intent_labels", {}) or {}
+        if isinstance(intent_labels, dict) and intent_labels:
+            intent_label_count = max(int(value) for value in intent_labels.values()) + 1
+    config.agent_intent_labels = max(0, int(intent_label_count))
     model = EncoderDecoderLM(config, tie_embeddings=True, vocab_size=vocab_size)
     _materialize_lazy_modules(model)
     parameter_count = _parameter_count(model)
     frozen_encoder_parameters = 0
     frozen_token_embedding_parameters = 0
+    frozen_decoder_parameters = 0
+    frozen_encoder_layer_parameters = 0
     tokenizer_kind = "byte" if bool(args.byte_tokenizer) else str(args.tokenizer_kind)
     tokenizer_name = str(args.tokenizer_name) if tokenizer_kind == "hf" else tokenizer_kind
 
@@ -1672,6 +1924,11 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "retrieval_hard_negative_ternary": bool(args.retrieval_hard_negative_ternary),
         "agent_policy_heads": bool(args.agent_policy_heads),
         "policy_head_loss_weight": float(args.policy_head_loss_weight),
+        "agent_intent_labels": int(config.agent_intent_labels),
+        "intent_head_loss_weight": float(args.intent_head_loss_weight),
+        "intent_contrastive_weight": float(args.intent_contrastive_weight),
+        "intent_contrastive_temperature": float(args.intent_contrastive_temperature),
+        "encoder_rep_distill_weight": float(args.encoder_rep_distill_weight),
         "decoder_loss_weight": float(args.decoder_loss_weight),
         "teacher_distill_weight": float(args.teacher_distill_weight),
         "teacher_distill_temperature": float(args.teacher_distill_temperature),
@@ -1680,6 +1937,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "resid_dropout": float(args.resid_dropout),
         "freeze_encoder": bool(args.freeze_encoder),
         "freeze_token_embeddings": bool(args.freeze_token_embeddings),
+        "freeze_decoder": bool(args.freeze_decoder),
+        "freeze_encoder_layers_through": int(args.freeze_encoder_layers_through),
         "freeze_bitnet_linear_weights": bool(args.freeze_bitnet_linear_weights),
         "max_retrieval_query_tokens": int(args.max_retrieval_query_tokens),
         "max_retrieval_doc_tokens": int(args.max_retrieval_doc_tokens),
@@ -1760,6 +2019,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             optimizer=None,
             device=device,
             vocab_mismatch=str(args.checkpoint_vocab_mismatch),
+            tokenizer=tokenizer,
         )
         print(json.dumps({"event": "initialized", "checkpoint": str(init_checkpoint_path)}, sort_keys=True))
     if bool(args.freeze_encoder):
@@ -1786,10 +2046,36 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 sort_keys=True,
             )
         )
+    if bool(args.freeze_decoder):
+        frozen_decoder_parameters = _freeze_decoder_parameters(model)
+        print(
+            json.dumps(
+                {
+                    "event": "decoder_frozen",
+                    "frozen_parameters": int(frozen_decoder_parameters),
+                    "trainable_parameters": int(_trainable_parameter_count(model)),
+                },
+                sort_keys=True,
+            )
+        )
+    if int(args.freeze_encoder_layers_through) >= 0:
+        frozen_encoder_layer_parameters = _freeze_encoder_layers_through(model, int(args.freeze_encoder_layers_through))
+        print(
+            json.dumps(
+                {
+                    "event": "encoder_layers_frozen",
+                    "frozen_parameters": int(frozen_encoder_layer_parameters),
+                    "through_layer": int(args.freeze_encoder_layers_through),
+                    "trainable_parameters": int(_trainable_parameter_count(model)),
+                },
+                sort_keys=True,
+            )
+        )
     teacher_model = None
     if (
         float(getattr(args, "teacher_distill_weight", 0.0) or 0.0) > 0.0
         or float(getattr(args, "retrieval_ternary_teacher_distill_weight", 0.0) or 0.0) > 0.0
+        or float(getattr(args, "encoder_rep_distill_weight", 0.0) or 0.0) > 0.0
     ):
         # Capture the dense initialized model before BitNet QAT replaces linear
         # layers. For init-from-checkpoint runs this is the trained dense teacher;
@@ -1804,6 +2090,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "event": "teacher_distill_enabled",
                     "weight": float(args.teacher_distill_weight),
                     "temperature": float(args.teacher_distill_temperature),
+                    "encoder_rep_distill_weight": float(args.encoder_rep_distill_weight),
                     "retrieval_ternary_teacher_distill_weight": float(args.retrieval_ternary_teacher_distill_weight),
                     "retrieval_ternary_teacher_temperature": float(args.retrieval_ternary_teacher_temperature),
                 },
@@ -1875,6 +2162,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             optimizer=optimizer,
             device=device,
             vocab_mismatch=str(args.checkpoint_vocab_mismatch),
+            tokenizer=tokenizer,
         )
         print(json.dumps({"event": "resumed", "checkpoint": str(resume_path), "step": start_step}, sort_keys=True))
     iterator = iter(loader)
@@ -1905,6 +2193,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             teacher_distill_weight=float(args.teacher_distill_weight),
             teacher_distill_temperature=float(args.teacher_distill_temperature),
             policy_head_loss_weight=float(args.policy_head_loss_weight),
+            intent_head_loss_weight=float(args.intent_head_loss_weight),
+            intent_contrastive_weight=float(args.intent_contrastive_weight),
+            intent_contrastive_temperature=float(args.intent_contrastive_temperature),
+            encoder_rep_distill_weight=float(args.encoder_rep_distill_weight),
         )
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -1935,6 +2227,11 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 retrieval_hard_negative_weight=float(args.retrieval_hard_negative_weight),
                 retrieval_hard_negative_ternary=bool(args.retrieval_hard_negative_ternary),
                 policy_head_loss_weight=float(args.policy_head_loss_weight),
+                intent_head_loss_weight=float(args.intent_head_loss_weight),
+                intent_contrastive_weight=float(args.intent_contrastive_weight),
+                intent_contrastive_temperature=float(args.intent_contrastive_temperature),
+                encoder_rep_distill_weight=float(args.encoder_rep_distill_weight),
+                teacher_model=teacher_model,
             )
             eval_result = {"step": step, **eval_result}
             eval_history.append(eval_result)
@@ -2018,8 +2315,12 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "initialized_from": "" if init_checkpoint_path is None else str(init_checkpoint_path),
         "freeze_encoder": bool(args.freeze_encoder),
         "freeze_token_embeddings": bool(args.freeze_token_embeddings),
+        "freeze_decoder": bool(args.freeze_decoder),
         "frozen_encoder_parameters": int(frozen_encoder_parameters),
         "frozen_token_embedding_parameters": int(frozen_token_embedding_parameters),
+        "frozen_decoder_parameters": int(frozen_decoder_parameters),
+        "freeze_encoder_layers_through": int(args.freeze_encoder_layers_through),
+        "frozen_encoder_layer_parameters": int(frozen_encoder_layer_parameters),
         "freeze_bitnet_linear_weights": bool(args.freeze_bitnet_linear_weights),
         "frozen_bitnet_linear_weight_parameters": int(frozen_bitnet_linear_weight_parameters),
         "trainable_parameter_count_before_export": int(trainable_parameter_count_before_export),
@@ -2071,6 +2372,11 @@ def main() -> None:
     parser.add_argument("--retrieval-hard-negative-ternary", type=int, choices=(0, 1), default=1)
     parser.add_argument("--agent-policy-heads", type=int, choices=(0, 1), default=0)
     parser.add_argument("--policy-head-loss-weight", type=float, default=0.0)
+    parser.add_argument("--agent-intent-labels", type=int, default=0)
+    parser.add_argument("--intent-head-loss-weight", type=float, default=0.0)
+    parser.add_argument("--intent-contrastive-weight", type=float, default=0.0)
+    parser.add_argument("--intent-contrastive-temperature", type=float, default=0.10)
+    parser.add_argument("--encoder-rep-distill-weight", type=float, default=0.0)
     parser.add_argument("--decoder-loss-weight", type=float, default=1.0)
     parser.add_argument("--teacher-distill-weight", type=float, default=0.0)
     parser.add_argument("--teacher-distill-temperature", type=float, default=1.0)
@@ -2080,6 +2386,8 @@ def main() -> None:
     parser.add_argument("--parquet-task-type-include", default="")
     parser.add_argument("--freeze-encoder", type=int, choices=(0, 1), default=0)
     parser.add_argument("--freeze-token-embeddings", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--freeze-decoder", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--freeze-encoder-layers-through", type=int, default=-1)
     parser.add_argument("--encoder-position-embeddings", type=int, choices=(0, 1), default=0)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--eval-batch-size", type=int, default=0)
