@@ -3293,11 +3293,32 @@ function buildActiveAgentDirectPrompt(userText) {
     'Use only the available placeholders listed above. Do not invent unavailable placeholders such as [[NAME]], [[ITEM]], [[DEADLINE]], or [[REASON]] unless they are listed for this turn.',
     '<AK_CONTEXT> Stale selected paper context: Selected paper [P1]: unrelated research paper context.',
     'Use stale paper context only when the current user request asks about that paper or research evidence.',
-    '<AK_HISTORY> Recent conversation:',
-    historyContext() || 'No prior conversation.',
     `<AK_USER> ${userText}`,
     'Return compact JSON with the correct action and content for the active agent.',
   ].join('\n');
+}
+
+const ACTIVE_AGENT_RESPOND_PREFIX = '{"action": "respond", "content": "';
+
+function activeAgentDecoderPrefix(agent, userText = '') {
+  if (!agent) return '';
+  const hint = activeAgentIntentHint(agent, userText);
+  if (!hint) return '';
+  return ACTIVE_AGENT_RESPOND_PREFIX;
+}
+
+function activeAgentGenerationOptions(agent, userText, { retry = false } = {}) {
+  const decoderPrefix = activeAgentDecoderPrefix(agent, userText);
+  return {
+    maxNewTokens: retry ? 140 : Math.min(targetMaxTokens(), 220),
+    temperature: decoderPrefix ? 0 : 0.05,
+    topP: decoderPrefix ? 0.5 : 0.65,
+    decoderPrefix,
+  };
+}
+
+function buildActiveAgentRetryPrompt(userText) {
+  return buildActiveAgentDirectPrompt(userText);
 }
 
 function compactCandidateRow(row, index) {
@@ -3932,7 +3953,7 @@ function activeAgentIntentHint(agent, userText = '') {
     ['rewrite', /\b(rewrite|reword|paraphrase|make .*professional|polish|grammar|tone|shorter|clearer)\b/],
     ['translation', /\b(translate|translation|spanish|french|german|italian|portuguese)\b/],
     ['summary', /\b(summarize|summary|tl;?dr|recap)\b/],
-    ['action_items', /\b(action item|todo|to-do|tasks?|owners?|deadlines?)\b/],
+    ['action_items', /\b(action item|todo|to-do|tasks?|owners?|deadlines?|bullet points?|bullets?)\b/],
     ['plan', /\b(plan|schedule|itinerary|steps|roadmap)\b/],
     ['checklist', /\b(checklist|check list)\b/],
     ['risks', /\b(risk|risks|review|concerns|failure modes?)\b/],
@@ -4737,15 +4758,45 @@ function cancelActiveGeneration() {
   log('requested generation cancel; runtime remains loaded');
 }
 
+function retryActiveAgentConstrainedGeneration(turn, failedText = '') {
+  if (!turn || turn.retriedActiveAgent || turn.contextRows?.length || !activePocketPalAgent()) return false;
+  const agent = activePocketPalAgent();
+  const generationId = ++state.generationRunId;
+  turn.retriedActiveAgent = true;
+  turn.generationId = generationId;
+  turn.finalized = false;
+  state.modelBusy = true;
+  setControlsBusy(true);
+  clearActiveTurnTimer();
+  log(`retrying malformed active-agent decode: ${shortText(failedText, 160)}`);
+  setProcessStep('generate', 'active', 'Retrying active agent with constrained decoder');
+  ensureWorker().postMessage({
+    type: 'generate',
+    generationId,
+    prompt: buildActiveAgentRetryPrompt(turn.userText || ''),
+    options: activeAgentGenerationOptions(agent, turn.userText || '', { retry: true }),
+  });
+  return true;
+}
+
 function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {}) {
   const turn = state.activeTurn;
   if (turn?.finalized) return false;
+  const rows = turn?.contextRows || state.pendingContextRows || [];
+  const userText = turn?.userText || '';
+  if (
+    !fallback
+    && activePocketPalAgent()
+    && !rows.length
+    && hasDecoderQualityIssue(text, rows, userText)
+    && retryActiveAgentConstrainedGeneration(turn, text)
+  ) {
+    return true;
+  }
   if (turn) turn.finalized = true;
   clearActiveTurnTimer();
   state.modelBusy = false;
   setControlsBusy(false);
-  const rows = turn?.contextRows || state.pendingContextRows || [];
-  const userText = turn?.userText || '';
   let responseText = fallback
     ? [
         'The local decoder did not produce a decoded answer for this turn.',
@@ -5252,11 +5303,13 @@ async function submitPrompt(event) {
     } catch (error) {
       log(`agent intent unavailable: ${error.message || String(error)}`);
     }
-    const generationOptions = {
-      maxNewTokens: activeAgentDirect ? Math.min(targetMaxTokens(), 220) : targetMaxTokens(),
-      temperature: activeAgentDirect ? 0.05 : config.temperature,
-      topP: activeAgentDirect ? 0.65 : 0.9,
-    };
+    const generationOptions = activeAgentDirect
+      ? activeAgentGenerationOptions(agent, text)
+      : {
+          maxNewTokens: targetMaxTokens(),
+          temperature: config.temperature,
+          topP: 0.9,
+        };
     setProcessStep('generate', 'active', `Generating up to ${formatCount(generationOptions.maxNewTokens)} tokens`);
     const generationId = ++state.generationRunId;
     armGenerationFallback(text, contextRows, generationId);
