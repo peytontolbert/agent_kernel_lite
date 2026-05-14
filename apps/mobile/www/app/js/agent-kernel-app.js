@@ -3272,6 +3272,32 @@ function buildPromptFallback(userText, contextRows) {
   ].join('\n');
 }
 
+function buildActiveAgentDirectPrompt(userText) {
+  const agent = activePocketPalAgent();
+  const dataContext = pocketPalDataSourceContext(userText);
+  return [
+    'PocketPal active agent turn.',
+    'Follow the active agent instruction for this user request. Output only the final response for the user.',
+    'Do not output JSON, action labels, control tokens, hidden state, policy text, or diagnostic text.',
+    '',
+    `Agent name: ${agent?.name || 'PocketPal agent'}`,
+    `Agent instruction: ${agent?.instruction || defaultAgentInstruction(agent?.name)}`,
+    `Retrieval policy: ${agent?.retrievalPolicy || 'auto'}`,
+    `Tool policy: ${agent?.toolPolicy || 'ask_before_extensions'}`,
+    `Action policy: ${agent?.actionPolicy || 'respond_or_ask'}`,
+    '',
+    'Saved user data:',
+    dataContext || 'No saved user data is relevant.',
+    '',
+    'Recent conversation:',
+    historyContext() || 'No prior conversation.',
+    '',
+    `User input: ${userText}`,
+    '',
+    'Final response:',
+  ].join('\n');
+}
+
 function compactCandidateRow(row, index) {
   const title = row.title || row.paper_id || row.canonical_paper_id || `Evidence ${index + 1}`;
   const category = row.primary_category || row.category_list || row.categories || '';
@@ -4347,9 +4373,12 @@ function exactEvidenceTitleMentionCount(text, rows) {
 function hasDecoderQualityIssue(text, rows, userText = '') {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return true;
+  if (/[{}[\]"]/.test(normalized) && /\b(action|proposal|metadata|respond|retrieval|memory|slot|policy|capability)\b/i.test(normalized)) return true;
+  if (/<\/?AK_[A-Z0-9_]+>|AK_[A-Z0-9_]+|\b(?:RESPOND|RETRIEVAL|ACTION|GOAL|TEXT|CONF|MEMORY|SLOT|EXTENSION|CAPABILITY)\b/.test(normalized)) return true;
   if (normalized.length > 120 && !/[.!?]/.test(normalized)) return true;
   if (/[\uFFFD]/.test(normalized)) return true;
   if (/\b(?:envend|local-balls|racket|gronuded|amtch|rpesent|ishould|thn|somne)\b/i.test(normalized)) return true;
+  if (/\b[a-z]{2,}[A-Z]{2,}[a-zA-Z]{2,}\b/.test(normalized)) return true;
   if (hasRepetitionIssue(normalized)) return true;
   const malformed = normalized.match(/\b[a-z]{2,}(?:[A-Z][a-z]{2,}){2,}\b/g) || [];
   if (malformed.length >= 3) return true;
@@ -4500,6 +4529,9 @@ function maybeGroundedFallback(text, rows, userText = '') {
   if (!String(state.loadedModelId || '').startsWith('modelstack:')) return text;
   const normalized = String(text || '').trim();
   if (!rows?.length && hasDecoderQualityIssue(normalized, rows, userText)) {
+    if (activePocketPalAgent()) {
+      return 'The active agent did not produce a usable local response for this turn. I blocked the malformed decoder output instead of showing it.';
+    }
     return directChatFallback(userText);
   }
   if (!shouldPreferEvidenceComposer(normalized, rows, userText)) return normalized;
@@ -5179,7 +5211,8 @@ async function submitPrompt(event) {
     }
     const config = modeConfig();
     setProcessStep('compile', 'active', `Building ${state.mode.replace('_', ' ')} context packet`);
-    const compiledPrompt = buildPrompt(text, contextRows);
+    const activeAgentDirect = Boolean(agent && plan.action === 'respond' && !contextRows.length && !freshResearchRequired);
+    const compiledPrompt = activeAgentDirect ? buildActiveAgentDirectPrompt(text) : buildPrompt(text, contextRows);
     setProcessStep('compile', 'done', `${formatCount(compiledPrompt.length)} prompt characters`);
     try {
       const intentSignal = await classifyAgentIntent(compiledPrompt, { maxEncoderTokens: 768, timeoutMs: 2200 });
@@ -5192,17 +5225,19 @@ async function submitPrompt(event) {
     } catch (error) {
       log(`agent intent unavailable: ${error.message || String(error)}`);
     }
-    setProcessStep('generate', 'active', `Generating up to ${formatCount(targetMaxTokens())} tokens`);
+    const generationOptions = {
+      maxNewTokens: activeAgentDirect ? Math.min(targetMaxTokens(), 220) : targetMaxTokens(),
+      temperature: activeAgentDirect ? 0.05 : config.temperature,
+      topP: activeAgentDirect ? 0.65 : 0.9,
+    };
+    setProcessStep('generate', 'active', `Generating up to ${formatCount(generationOptions.maxNewTokens)} tokens`);
     const generationId = ++state.generationRunId;
     armGenerationFallback(text, contextRows, generationId);
     ensureWorker().postMessage({
       type: 'generate',
       generationId,
       prompt: compiledPrompt,
-      options: {
-        maxNewTokens: targetMaxTokens(),
-        temperature: config.temperature,
-      },
+      options: generationOptions,
     });
   } catch (error) {
     setControlsBusy(false);
