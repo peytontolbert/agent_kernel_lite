@@ -233,6 +233,122 @@ function topK(logits, k, tokenizer) {
   }));
 }
 
+function repeatsTail(generatedIds, tokenId, maxTail = 3) {
+  let count = 0;
+  for (let i = generatedIds.length - 1; i >= 0; i -= 1) {
+    if (Number(generatedIds[i]) !== Number(tokenId)) break;
+    count += 1;
+    if (count >= maxTail) return true;
+  }
+  return false;
+}
+
+function wouldRepeatNgram(generatedIds, tokenId, ngramSize = 4) {
+  if (ngramSize <= 1 || generatedIds.length < ngramSize - 1) return false;
+  const prefix = generatedIds.slice(generatedIds.length - ngramSize + 1);
+  for (let i = 0; i <= generatedIds.length - ngramSize; i += 1) {
+    let matches = true;
+    for (let j = 0; j < prefix.length; j += 1) {
+      if (Number(generatedIds[i + j]) !== Number(prefix[j])) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches && Number(generatedIds[i + prefix.length]) === Number(tokenId)) return true;
+  }
+  return false;
+}
+
+function repetitionAdjustedLogit(value, tokenId, generatedIds, penalty = 1.16) {
+  if (!generatedIds.includes(Number(tokenId))) return value;
+  return value >= 0 ? value / penalty : value * penalty;
+}
+
+function selectConstrainedToken(logits, generatedIds, tokenizer, options = {}) {
+  const vocabSize = logits.length;
+  const repetitionPenalty = Math.max(1, Math.min(2, Number(options.repetitionPenalty ?? 1.16)));
+  const blocked = new Set([Number(tokenizer.padTokenId ?? 0), Number(tokenizer.bosTokenId ?? 1), Number(tokenizer.unkTokenId ?? 3)]);
+  for (const id of tokenizer.specialIds || []) {
+    if (Number(id) !== Number(tokenizer.eosTokenId || 2)) blocked.add(Number(id));
+  }
+  let bestId = Number(tokenizer.eosTokenId || 2);
+  let bestValue = -Infinity;
+  for (let i = 0; i < vocabSize; i += 1) {
+    if (blocked.has(i)) continue;
+    if (repeatsTail(generatedIds, i, 3)) continue;
+    if (wouldRepeatNgram(generatedIds, i, 4)) continue;
+    const raw = Number(logits[i]);
+    if (!Number.isFinite(raw)) continue;
+    const value = repetitionAdjustedLogit(raw, i, generatedIds, repetitionPenalty);
+    if (value > bestValue) {
+      bestValue = value;
+      bestId = i;
+    }
+  }
+  return bestId;
+}
+
+async function constrainedFullForwardGeneration(runtime, encIds, tokenizer, input) {
+  const generated = Array.from(input.decoderPrefixIds || [], Number);
+  const bos = Number(tokenizer.bosTokenId || 1);
+  const eos = Number(tokenizer.eosTokenId || 2);
+  const vocabSize = Number(runtime.graph?.vocab_size || runtime.manifest?.model?.vocab_size || 0);
+  const selected = [];
+  const maxNewTokens = Number(input.generationSteps || 80);
+  const session = input.generationMode === "full_forward" ? null : (typeof runtime.createGenerationSession === "function"
+    ? runtime.createGenerationSession(encIds)
+    : null);
+  if (session?.prepare) {
+    await session.prepare();
+    let pendingLogits = null;
+    let nextInputId = bos;
+    if (generated.length && typeof session.nextMany === "function") {
+      const prefixInputIds = [bos, ...generated];
+      const prefixLogits = await session.nextMany(prefixInputIds);
+      pendingLogits = prefixLogits.slice(
+        (prefixInputIds.length - 1) * vocabSize,
+        prefixInputIds.length * vocabSize,
+      );
+      nextInputId = Number(generated[generated.length - 1]);
+    }
+    for (let step = 0; step < maxNewTokens; step += 1) {
+      const row = pendingLogits || await session.next(nextInputId);
+      pendingLogits = null;
+      const tokenId = selectConstrainedToken(row, generated, tokenizer, {
+        repetitionPenalty: Number(input.repetitionPenalty || 1.16),
+      });
+      selected.push({ id: tokenId, piece: tokenizer.piece(tokenId), text: tokenizer.decode([tokenId]) });
+      if (tokenId === eos) break;
+      generated.push(tokenId);
+      nextInputId = tokenId;
+    }
+    return {
+      ids: generated,
+      selected,
+      text: tokenizer.decode(generated),
+      mode: "cached_session",
+    };
+  }
+  for (let step = 0; step < maxNewTokens; step += 1) {
+    const decIds = [bos, ...generated];
+    const full = await runtime.forward(encIds, decIds);
+    const offset = (decIds.length - 1) * vocabSize;
+    const row = full.slice(offset, offset + vocabSize);
+    const tokenId = selectConstrainedToken(row, generated, tokenizer, {
+      repetitionPenalty: Number(input.repetitionPenalty || 1.16),
+    });
+    selected.push({ id: tokenId, piece: tokenizer.piece(tokenId), text: tokenizer.decode([tokenId]) });
+    if (tokenId === eos) break;
+    generated.push(tokenId);
+  }
+  return {
+    ids: generated,
+    selected,
+    text: tokenizer.decode(generated),
+    mode: "full_forward",
+  };
+}
+
 async function cachedLogits(runtime, encIds, prefix) {
   const session = runtime.createGenerationSession(encIds);
   let logits = null;
@@ -277,6 +393,7 @@ for (const prefix of input.prefixes) {
     cachedLogits: Array.from(cachedLast),
   });
 }
+const constrainedGeneration = await constrainedFullForwardGeneration(runtime, input.encIds, tokenizer, input);
 await writeFile(outputPath, JSON.stringify({
   tokenizer: {
     jsEncIds,
@@ -285,6 +402,7 @@ await writeFile(outputPath, JSON.stringify({
     decodedPrompt: tokenizer.decode(jsEncIds),
   },
   steps,
+  constrainedGeneration,
 }, null, 2));
 """
 
@@ -517,6 +635,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-encoder-tokens", type=int, default=256)
     parser.add_argument("--steps", type=int, default=4)
+    parser.add_argument("--generation-steps", type=int, default=0)
+    parser.add_argument("--generation-mode", choices=("cached_session", "full_forward"), default="cached_session")
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--layer-concurrency", type=int, default=2)
     parser.add_argument("--spin-seed", type=int, default=0)
@@ -666,9 +786,13 @@ def main() -> int:
                         "runtimeUrl": path_to_file_url(runtime_js),
                         "prompt": prompt,
                         "encIds": enc_ids,
+                        "decoderPrefixIds": decoder_prefix_ids,
                         "prefixes": prefixes,
                         "topK": int(args.top_k),
                         "maxEncoderTokens": int(args.max_encoder_tokens),
+                        "generationSteps": int(args.generation_steps or args.steps),
+                        "generationMode": str(args.generation_mode),
+                        "repetitionPenalty": float(args.repetition_penalty),
                         "layerConcurrency": int(args.layer_concurrency),
                     },
                     indent=2,
@@ -744,6 +868,7 @@ def main() -> int:
         "source_fp_vs_browser_full_top1_mismatches": source_browser_full_mismatches,
         "source_fp_vs_browser_cached_top1_mismatches": source_browser_cached_mismatches,
         "step_count": len(py_steps),
+        "browser_constrained_text": str(browser.get("constrainedGeneration", {}).get("text", "")),
     }
 
     output_path = Path(args.json_out).expanduser().resolve() if str(args.json_out).strip() else None
@@ -755,6 +880,9 @@ def main() -> int:
 
     print(f"parity_json={output_path}")
     print(json.dumps(result["summary"], indent=2, sort_keys=True))
+    constrained_text = str(browser.get("constrainedGeneration", {}).get("text", ""))
+    if constrained_text:
+        print(f"browser_constrained_text={constrained_text}")
     for step in result["python_steps"]:
         py_top = (step.get("pythonBitnetTopK") or step.get("pythonSourceTopK") or [{}])[0]
         browser_full = (step.get("browserFullTopK") or [{}])[0]

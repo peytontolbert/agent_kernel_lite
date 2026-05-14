@@ -277,7 +277,7 @@ class DenseLinear {
     };
   }
 
-  async run(input, rows) {
+  run(input, rows) {
     const rowCount = Number(rows || 0);
     if (rowCount <= 0) return new Float32Array(0);
     if (input.length < rowCount * this.inFeatures) {
@@ -751,7 +751,10 @@ export class BitNetEncoderDecoderWebGPU {
   }
 
   async decoderLayerIncremental(index, x, memory, memoryLen, layerCache) {
-    if (this.wasmOps?.DecoderLayerHandle) {
+    // The fused incremental decoder path currently diverges from full-forward
+    // control decoding after a few tokens. Keep cached generation on the
+    // explicit block path so active-agent outputs match the verified model.
+    if (false && this.wasmOps?.DecoderLayerHandle) {
       layerCache.decoderLayer ??= this.decoderLayerHandle(index);
       if (layerCache.decoderLayer?.next) {
         const out = layerCache.decoderLayer.next(x, memory, memoryLen);
