@@ -1,5 +1,5 @@
 const TRANSFORMERS_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
-const MODEL_STACK_BITNET_RUNTIME_URL = new URL('../vendor/model-stack-bitnet/encdec_runtime.js?v=20260514-intent-head', import.meta.url).href;
+const MODEL_STACK_BITNET_RUNTIME_URL = new URL('../vendor/model-stack-bitnet/encdec_runtime.js?v=20260514-v84-active-agent', import.meta.url).href;
 const MODEL_STACK_BITNET_WGSL_URL = new URL('../vendor/model-stack-bitnet/bitnet_linear.wgsl', import.meta.url).href;
 const AGENT_INTENT_LABELS = [
   'plan',
@@ -584,7 +584,7 @@ async function loadModelStack({ modelId, device }) {
   modelStackDevice = '';
   modelStackRuntimeDtype = '';
   post('status', { message: 'loading model manifest' });
-  const manifest = await fetch(manifestUrl, { mode: 'cors' }).then((response) => {
+  const manifest = await fetch(manifestUrl, { mode: 'cors', cache: 'no-store' }).then((response) => {
     if (!response.ok) throw new Error(`model-stack manifest failed: ${response.status}`);
     return response.json();
   });

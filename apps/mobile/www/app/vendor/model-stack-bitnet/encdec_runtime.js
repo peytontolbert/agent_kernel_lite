@@ -14,7 +14,7 @@ async function fetchWithRetry(url, options = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { cache: "no-store" });
       if (response.ok) return response;
       if (response.status < 500 && response.status !== 408 && response.status !== 429) {
         throw new Error(`failed to fetch ${url}: ${response.status}`);
