@@ -3275,6 +3275,7 @@ function buildPromptFallback(userText, contextRows) {
 function buildActiveAgentDirectPrompt(userText) {
   const agent = activePocketPalAgent();
   const dataContext = pocketPalDataSourceContext(userText);
+  const hint = activeAgentIntentHint(agent, userText);
   return [
     '<AK_CHAT> <AK_RESPOND> PocketPal user-configured agent example.',
     '<AK_AGENT_ACTIVE>',
@@ -3285,7 +3286,7 @@ function buildActiveAgentDirectPrompt(userText) {
     `Action policy: ${agent?.actionPolicy || 'respond_or_ask'}`,
     'The active agent instruction is the primary task contract for this turn.',
     '</AK_AGENT_ACTIVE>',
-    activeAgentIntentHint(agent, userText),
+    hint,
     `<AK_CONTEXT> Saved user data: ${dataContext || 'none'}`,
     '<AK_PROFILE> User text slots:',
     `<AK_SLOT> <AK_SLOT_NAME>=SOURCE_TEXT <AK_SLOT_VALUE>=${userText}`,
@@ -3309,10 +3310,11 @@ function activeAgentDecoderPrefix(agent, userText = '') {
 
 function activeAgentGenerationOptions(agent, userText, { retry = false } = {}) {
   const decoderPrefix = activeAgentDecoderPrefix(agent, userText);
+  const deterministic = Boolean(decoderPrefix);
   return {
     maxNewTokens: retry ? 140 : Math.min(targetMaxTokens(), 220),
-    temperature: decoderPrefix ? 0 : 0.05,
-    topP: decoderPrefix ? 0.5 : 0.65,
+    temperature: deterministic ? 0 : 0.05,
+    topP: deterministic ? 0.5 : 0.65,
     decoderPrefix,
   };
 }

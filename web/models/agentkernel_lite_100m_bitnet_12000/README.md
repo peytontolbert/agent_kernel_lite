@@ -1,13 +1,27 @@
-# Agent Kernel Lite 100M BitNet Browser Bundle
+---
+library_name: model-stack
+tags:
+- agentkernel-lite
+- bitnet
+- webgpu
+- encoder-decoder
+---
 
-Source artifact: `artifacts/pocketpal_controller_100m_v68_weighted_title_repair_from_v67`.
+# AgentKernel Lite Encoder-Decoder Browser BitNet
 
-This bundle builds on the stable v54/v62 decoder behavior, keeps the v65/v66 generation-safe controller path, and applies v68 weighted intent-head repair using the stage18 title/confusion curriculum. The training script now weights intent-head cross entropy by each row's `loss_weight`, so repair examples actually influence the controller.
+Self-contained browser BitNet export for the AgentKernel Lite chat model.
 
-Validation:
-- Required generation gates: 10/10 pass (`tmp/pocketpal_gate_v68_weighted_title_repair_required.json`)
-- Intent head, stage15 balanced eval: 98.70% (`tmp/pocketpal_intent_head_v68_on_stage15_balanced_eval.json`)
-- Intent head, stage16 hard-negative eval: 90.41% (`tmp/pocketpal_intent_head_v68_hard_negative_eval.json`)
-- Intent head, stage18 title/confusion-repair eval: 94.26% (`tmp/pocketpal_intent_head_v68_stage18_eval.json`)
+- Source bundle: `/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v81_v71_strong_intent_head`
+- Parameters before BitNet packing: `102268946`
+- Final eval loss: `0.6075197122991085`
+- Browser entrypoint: `manifest.json`
+- Runtime: Model Stack browser BitNet WebGPU encoder-decoder with packed BitNet WASM fallback
+- Tokenizer: AgentKernel byte-level BPE attached under `tokenizer/`
 
-The intent head is an assistive controller signal. It is much stronger than v66, but routing should still use confidence thresholds and conservative fallbacks until random-mode generation improves.
+Web app route after uploading this directory to Hugging Face:
+
+```text
+?modelStackManifest=https://huggingface.co/<org>/<repo>/resolve/main/manifest.json
+```
+
+Serving notes: WebGPU is used when available; Safari or other no-WebGPU browsers use the packed BitNet WASM fallback. Large model files are fetched by the browser and cached by the app.

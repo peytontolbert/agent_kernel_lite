@@ -1,4 +1,5 @@
 {
+  "dense_tensor_count": 42,
   "format": "browser-bitnet",
   "layer_count": 110,
   "manifest": "manifest.json",
@@ -10,5 +11,16 @@
     "webgpu_js": "runtime/bitnet_webgpu.js",
     "wgsl": "runtime/bitnet_linear.wgsl"
   },
-  "sha256": "b4c03ec318e3c65fab93cbc78fd789886000e3e9252600156f832f34c5b6b9e4"
+  "sha256": "4af60f01ed510097db7ed1b2c92ce2514274ad926bd08c8a091a28c9283ac804",
+  "tokenizer": {
+    "bos_token_id": 1,
+    "config_path": "tokenizer/tokenizer_config.json",
+    "eos_token_id": 2,
+    "kind": "agentkernel-bpe",
+    "pad_token_id": 0,
+    "path": "tokenizer/tokenizer.json",
+    "source_kind": "agentkernel_bytelevel_bpe_v1",
+    "unk_token_id": 3,
+    "vocab_size": 1466
+  }
 }
