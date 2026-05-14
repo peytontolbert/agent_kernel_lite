@@ -3553,6 +3553,29 @@ function repairPocketPalDecisionJson(text) {
   }
 }
 
+function modelDecisionFromText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const repaired = repairPocketPalDecisionJson(raw) || raw;
+  try {
+    const packet = JSON.parse(repaired);
+    const decision = packet?.decision_packet?.decision || packet?.decision || packet;
+    if (!decision || typeof decision !== 'object') return null;
+    const action = String(decision.action || '').trim();
+    const content = String(decision.content || '').trim();
+    if (!action || !content) return null;
+    return { action, content, proposal_metadata: decision.proposal_metadata || {} };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isUsableActiveAgentDecisionText(text) {
+  const decision = modelDecisionFromText(text);
+  if (!decision) return false;
+  return new Set(['respond', 'ask_user', 'extension_request', 'save_memory']).has(decision.action);
+}
+
 function decisionFromPacket(packet) {
   return packet?.decision_packet?.decision || packet?.decision || null;
 }
@@ -4576,9 +4599,10 @@ function groundedFallbackAnswer(userText, rows, reason = '') {
 function maybeGroundedFallback(text, rows, userText = '') {
   if (!String(state.loadedModelId || '').startsWith('modelstack:')) return text;
   const normalized = String(text || '').trim();
+  if (!rows?.length && activePocketPalAgent() && isUsableActiveAgentDecisionText(normalized)) return normalized;
   if (!rows?.length && hasDecoderQualityIssue(normalized, rows, userText)) {
     if (activePocketPalAgent()) {
-      return 'The active agent did not produce a usable local response for this turn. I blocked the malformed decoder output instead of showing it.';
+      return 'I could not produce a stable local response for the active agent on this turn.';
     }
     return directChatFallback(userText);
   }
@@ -4788,6 +4812,7 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
     !fallback
     && activePocketPalAgent()
     && !rows.length
+    && !isUsableActiveAgentDecisionText(text)
     && hasDecoderQualityIssue(text, rows, userText)
     && retryActiveAgentConstrainedGeneration(turn, text)
   ) {
