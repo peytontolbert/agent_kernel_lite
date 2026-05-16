@@ -3299,13 +3299,44 @@ function buildActiveAgentDirectPrompt(userText) {
   ].join('\n');
 }
 
-const ACTIVE_AGENT_RESPOND_PREFIX = '{"action": "respond", "content": "';
+const ACTIVE_AGENT_ACTION_PREFIXES = {
+  ask_user: '{"action": "ask_user", "content": "',
+  extension_request: '{"action": "extension_request", "content": "',
+  respond: '{"action": "respond", "content": "',
+};
+
+function activeAgentNeedsWebSearch(agent, userText = '') {
+  const haystack = `${agent?.name || ''} ${agent?.instruction || ''} ${userText || ''}`.toLowerCase();
+  return /\b(web|search online|search the web|online|current|recent|latest|today|news|pricing|look up)\b/.test(haystack);
+}
+
+function activeAgentTextTransformInstruction(agent) {
+  const instruction = `${agent?.name || ''} ${agent?.instruction || ''}`.toLowerCase();
+  return /\b(rewrite|reword|paraphrase|polish|edit|improve|translate|summari[sz]e|extract|classify|format|turn .* into|make .* professional|clean up)\b/.test(instruction);
+}
+
+function activeAgentRequestLacksEditableText(userText = '') {
+  const normalized = String(userText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized.length > 80 && !/\b(this|it|that)\b/.test(normalized)) return false;
+  return /^(?:please\s+)?(?:rewrite|reword|paraphrase|polish|edit|improve|translate|summari[sz]e|extract|classify|format|fix|clean up|make (?:this|it).+|turn (?:this|it).+)(?:\s+(?:this|it|that|the text|my text|as .+|into .+))?[\s?.!]*$/i.test(normalized);
+}
+
+function activeAgentExpectedAction(agent, userText = '') {
+  if (!agent) return '';
+  if (activeAgentNeedsWebSearch(agent, userText) && activeAgentAllowsAction('extension_request')) {
+    return 'extension_request';
+  }
+  if (activeAgentTextTransformInstruction(agent) && activeAgentRequestLacksEditableText(userText)) {
+    return 'ask_user';
+  }
+  return 'respond';
+}
 
 function activeAgentDecoderPrefix(agent, userText = '') {
   if (!agent) return '';
-  const hint = activeAgentIntentHint(agent, userText);
-  if (!hint) return '';
-  return ACTIVE_AGENT_RESPOND_PREFIX;
+  const action = activeAgentExpectedAction(agent, userText);
+  return ACTIVE_AGENT_ACTION_PREFIXES[action] || '';
 }
 
 function activeAgentGenerationOptions(agent, userText, { retry = false } = {}) {
@@ -3576,6 +3607,68 @@ function isUsableActiveAgentDecisionText(text) {
   const decision = modelDecisionFromText(text);
   if (!decision) return false;
   return new Set(['respond', 'ask_user', 'extension_request', 'save_memory']).has(decision.action);
+}
+
+const ACTIVE_AGENT_PRESERVE_STOPWORDS = new Set([
+  'about', 'after', 'again', 'agent', 'because', 'before', 'could', 'please', 'should', 'that', 'their',
+  'there', 'these', 'thing', 'this', 'those', 'what', 'when', 'where', 'which', 'would', 'your',
+]);
+
+function activeAgentImportantTokens(text) {
+  return contentTokens(text)
+    .filter((token) => token.length >= 4)
+    .filter((token) => !ACTIVE_AGENT_PRESERVE_STOPWORDS.has(token));
+}
+
+function activeAgentContentPreservesInput(content, userText) {
+  const important = activeAgentImportantTokens(userText);
+  if (important.length <= 1) return true;
+  const contentNorm = normalizeSearchText(content);
+  let preserved = 0;
+  for (const token of important) {
+    if (tokenCoveredByText(contentNorm, token)) preserved += 1;
+  }
+  return preserved / important.length >= 0.55;
+}
+
+function activeAgentDecisionNeedsFallback(text, userText = '') {
+  const agent = activePocketPalAgent();
+  if (!agent) return false;
+  const decision = modelDecisionFromText(text);
+  if (!decision) return true;
+  const expectedAction = activeAgentExpectedAction(agent, userText);
+  if (expectedAction && decision.action !== expectedAction) return true;
+  if (hasDecoderQualityIssue(decision.content, [], userText)) return true;
+  if (decision.action === 'extension_request') {
+    const metadata = decision.proposal_metadata || {};
+    const extensionId = String(metadata.extension_id || metadata.extensionId || '').trim();
+    const capability = String(metadata.capability || metadata.capability_id || metadata.capabilityId || '').trim();
+    const maxSources = Number(metadata.max_sources || metadata.maxSources || 0);
+    const approval = metadata.requires_user_approval ?? metadata.requiresUserApproval;
+    if (expectedAction === 'extension_request') {
+      if (extensionId !== state.webSearch.extensionId) return true;
+      if (capability !== state.webSearch.searchCapabilityId) return true;
+      if (!Number.isFinite(maxSources) || maxSources < 1) return true;
+      if (approval !== true) return true;
+    }
+  }
+  if (decision.action !== 'respond') return false;
+  const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
+  if (/\b(exact|verbatim|source text|preserve all|copy)\b/.test(instruction)) {
+    return normalizeSearchText(decision.content) !== normalizeSearchText(userText);
+  }
+  if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
+    const labels = activeAgentAllowedLabels(instruction);
+    if (labels.length) {
+      const normalized = decision.content.trim().toLowerCase().replace(/\s+/g, '_');
+      return !labels.includes(normalized);
+    }
+    if (/^source text\s*:/i.test(decision.content)) return true;
+  }
+  if (activeAgentTextTransformInstruction(agent) && !activeAgentRequestLacksEditableText(userText)) {
+    return !activeAgentContentPreservesInput(decision.content, userText);
+  }
+  return false;
 }
 
 function decisionFromPacket(packet) {
@@ -4353,10 +4446,11 @@ function handleAssistantDecision(packet, userText) {
   }
   const extensionRequest = decisionExtensionMetadata(packet);
   if (
-    extensionRequest.extensionId === state.webSearch.extensionId
-    && extensionRequest.capability === state.webSearch.searchCapabilityId
+    (extensionRequest.extensionId === state.webSearch.extensionId
+      && extensionRequest.capability === state.webSearch.searchCapabilityId)
+    || (activePocketPalAgent() && activeAgentExpectedAction(activePocketPalAgent(), userText) === 'extension_request')
   ) {
-    runWebSearch(userText || extensionRequest.query).catch((error) => {
+    runWebSearch(extensionRequest.query || userText).catch((error) => {
       appendMessage('assistant', `Web search failed: ${error.message || String(error)}`);
       log(`web search failed: ${error.message || String(error)}`);
     });
@@ -4523,6 +4617,324 @@ function directChatFallback(userText) {
   ].join('\n\n');
 }
 
+function sentenceCaseDraft(text) {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  const lower = cleaned === cleaned.toUpperCase() ? cleaned.toLowerCase() : cleaned;
+  const capitalized = lower.replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`);
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function professionalizeDraft(text) {
+  const cleaned = sentenceCaseDraft(text);
+  if (!cleaned) return '';
+  if (/^(hi|hello|hey)(?:[, ]+(?:how are you|how are you doing))?[.!?]?$/i.test(cleaned)) return 'Hello, I hope you are well.';
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  let requestText = source.replace(/^(?:hey|hi|hello|yo)\s+[, ]*/i, '').trim();
+  let name = '';
+  const directed = requestText.match(/^([A-Za-z][A-Za-z'-]{1,30})\s+(?=(?:please\s+)?(?:send|get|finish|prepare|share|complete|review|update|draft|write)\b)/i);
+  if (directed) {
+    name = directed[1].charAt(0).toUpperCase() + directed[1].slice(1).toLowerCase();
+    requestText = requestText.slice(directed[0].length).trim();
+  }
+  requestText = requestText
+    .replace(/^(?:i\s+)?(?:need|want)(?:\s+you)?\s+to\s+/i, '')
+    .replace(/^(?:please|can you|could you|would you)\s+/i, '')
+    .trim();
+  const request = requestText.match(/^(send|get|finish|prepare|share|complete|review|update|draft|write)\s+(.+)$/i);
+  if (request) {
+    const verb = request[1].toLowerCase();
+    let item = request[2].trim();
+    let reason = '';
+    const reasonMatch = item.match(/\s+because\s+(.+)$/i);
+    if (reasonMatch) {
+      reason = reasonMatch[1].trim();
+      item = item.slice(0, reasonMatch.index).trim();
+    }
+    let deadline = '';
+    const deadlineMatch = item.match(/\s+by\s+(.+)$/i);
+    if (deadlineMatch) {
+      deadline = deadlineMatch[1].trim();
+      item = item.slice(0, deadlineMatch.index).trim();
+    }
+    if (item && !/\b(how are you|what's up|hello|hi)\b/i.test(item)) {
+      const greeting = name ? `Hi ${name},` : 'Hello,';
+      const deadlineText = deadline ? ` by ${deadline}` : '';
+      const reasonText = reason ? ` ${sentenceCaseDraft(reason)}` : '';
+      return `${greeting} could you please ${verb} ${item}${deadlineText}?${reasonText} Thank you.`;
+    }
+  }
+  return cleaned
+    .replace(/\bhey\b/gi, 'Hello')
+    .replace(/\bpls\b/gi, 'please')
+    .replace(/\bplz\b/gi, 'please')
+    .replace(/\bASAP\b/g, 'as soon as possible')
+    .replace(/\bu\b/gi, 'you')
+    .replace(/\bur\b/gi, 'your')
+    .replace(/\bthx\b/gi, 'thank you');
+}
+
+function compactSourceClauses(text, limit = 5) {
+  return String(text || '')
+    .split(/(?:\n+|[.;]|,\s+(?=(?:and |but |then |[A-Z][a-z]+:)))/)
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function activeAgentBulletList(text, { prefix = '- ', limit = 5 } = {}) {
+  const clauses = compactSourceClauses(text, limit);
+  const items = clauses.length ? clauses : [String(text || '').trim()].filter(Boolean);
+  return items.map((item) => `${prefix}${sentenceCaseDraft(item)}`).join('\n');
+}
+
+function activeAgentTitle(text, fallback = 'Untitled') {
+  const tokens = contentTokens(text)
+    .filter((token) => !ACTIVE_AGENT_PRESERVE_STOPWORDS.has(token))
+    .slice(0, 7);
+  if (!tokens.length) return fallback;
+  return tokens.map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(' ');
+}
+
+function activeAgentExtractJson(text) {
+  const source = String(text || '');
+  const names = Array.from(new Set((source.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || []))).slice(0, 8);
+  const dates = Array.from(new Set((source.match(/\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/gi) || []))).slice(0, 8);
+  const money = Array.from(new Set((source.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) || []))).slice(0, 8);
+  const emails = Array.from(new Set((source.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []))).slice(0, 8);
+  return JSON.stringify({ names, dates, money, emails });
+}
+
+function activeAgentClassifyJson(text, instruction = '') {
+  const haystack = `${instruction} ${text}`.toLowerCase();
+  const intent = haystack.match(/\b(rewrite|reword|polish|professional)\b/) ? 'rewrite'
+    : haystack.match(/\b(summarize|summary|recap)\b/) ? 'summary'
+      : haystack.match(/\b(translate|spanish|french|german)\b/) ? 'translation'
+        : haystack.match(/\b(extract|owner|deadline|field)\b/) ? 'extraction'
+          : haystack.match(/\b(search|web|latest|current)\b/) ? 'web_search'
+            : 'casual';
+  const tone = haystack.match(/\b(angry|upset|frustrated)\b/) ? 'frustrated'
+    : haystack.match(/\b(thanks|thank you|appreciate)\b/) ? 'grateful'
+      : haystack.match(/\b(please|could you|would you)\b/) ? 'polite'
+        : 'neutral';
+  return JSON.stringify({ intent, tone });
+}
+
+function activeAgentAllowedLabels(instruction = '') {
+  const text = String(instruction || '');
+  const match = text.match(/\b(?:labels?|one label|exactly one label)\s*[:=-]\s*([A-Za-z0-9_,\s-]{6,160})/i)
+    || text.match(/\b(?:into|as)\s+(?:exactly\s+)?(?:one\s+)?(?:label|category)\s*[:=-]?\s*([A-Za-z0-9_,\s-]{6,160})/i);
+  if (!match) return [];
+  return Array.from(new Set(
+    String(match[1] || '')
+      .split(/[,/|]|\bor\b/i)
+      .map((item) => item.trim().toLowerCase().replace(/\s+/g, '_'))
+      .filter((item) => /^[a-z][a-z0-9_-]{1,40}$/.test(item))
+      .slice(0, 12),
+  ));
+}
+
+function activeAgentClassifyLabel(text, instruction = '') {
+  const labels = activeAgentAllowedLabels(instruction);
+  if (!labels.length) return '';
+  const haystack = String(text || '').toLowerCase();
+  const scores = new Map(labels.map((label) => [label, 0]));
+  const bump = (label, amount = 1) => {
+    if (scores.has(label)) scores.set(label, scores.get(label) + amount);
+  };
+  for (const label of labels) {
+    const words = label.split(/[_-]+/).filter(Boolean);
+    for (const word of words) {
+      if (word && haystack.includes(word)) bump(label, 2);
+    }
+  }
+  if (/\b(rewrite|reword|polish|professional|email|grammar|tone|paraphrase)\b/.test(haystack)) bump('writing', 5);
+  if (/\b(invoice|budget|finance|approve|approval|receipt|\$)\b/.test(haystack)) bump('finance', 5);
+  if (/\b(schedule|meeting|calendar|move|moved|thursday|monday|2 pm|deadline)\b/.test(haystack)) bump('schedule', 5);
+  if (/\b(hotel|reservation|passport|flight|travel|room|july)\b/.test(haystack)) bump('travel', 5);
+  if (/\b(search|web|online|current|latest|today|find)\b/.test(haystack)) bump('web_search', 5);
+  let best = labels[0];
+  let bestScore = -Infinity;
+  for (const [label, score] of scores.entries()) {
+    if (score > bestScore) {
+      best = label;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function activeAgentActionItems(text) {
+  const clauses = compactSourceClauses(text, 6);
+  const items = clauses.map((item) => {
+    const owner = item.match(/\b([A-Z][a-z]+)\s*:/)?.[1] || item.match(/\b([A-Z][a-z]+)\s+(?:will|to|owns?|handles?)\b/)?.[1] || '';
+    const deadline = item.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|next week|by [a-z0-9, ]+)\b/i)?.[0] || '';
+    const action = item.replace(/^[A-Z][a-z]+\s*:\s*/, '').trim();
+    return `- ${owner ? `${owner}: ` : ''}${sentenceCaseDraft(action)}${deadline && !action.toLowerCase().includes(deadline.toLowerCase()) ? ` (${deadline})` : ''}`;
+  });
+  return items.length ? items.join('\n') : '- Confirm the next action.';
+}
+
+function activeAgentRisks(text) {
+  const risks = [];
+  if (!/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|deadline|due|by )\b/i.test(text)) risks.push('No clear deadline is stated.');
+  if (!/\b[A-Z][a-z]+:|\b(owner|owns?|assigned|responsible)\b/i.test(text)) risks.push('No clear owner is assigned.');
+  if (String(text || '').length > 180) risks.push('The request may need a shorter scope before execution.');
+  if (!risks.length) risks.push('Main risk: confirm the owner, deadline, and acceptance criteria before acting.');
+  return risks.map((risk) => `- ${risk}`).join('\n');
+}
+
+function activeAgentSimpleTranslation(text, instruction = '') {
+  const lower = String(text || '').trim().toLowerCase();
+  if (!/\b(spanish|español)\b/.test(instruction)) return 'What target language should I translate this into?';
+  const phraseMap = new Map([
+    ['hello', 'Hola.'],
+    ['hi', 'Hola.'],
+    ['how are you?', '¿Cómo estás?'],
+    ['thank you', 'Gracias.'],
+    ['please send the report', 'Por favor, envía el informe.'],
+  ]);
+  if (phraseMap.has(lower)) return phraseMap.get(lower);
+  return sentenceCaseDraft(text);
+}
+
+function activeAgentFallbackAnswer(userText) {
+  const agent = activePocketPalAgent();
+  if (!agent) return directChatFallback(userText);
+  const expectedAction = activeAgentExpectedAction(agent, userText);
+  const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
+  const original = String(userText || '').trim();
+  if (expectedAction === 'extension_request') {
+    return JSON.stringify({
+      action: 'extension_request',
+      content: 'Requesting approval to search the web.',
+      proposal_metadata: {
+        task_type: 'web_search_request',
+        extension_id: state.webSearch.extensionId,
+        capability: state.webSearch.searchCapabilityId,
+        query: original,
+        max_sources: Math.max(1, Math.min(5, Number(state.webSearch.maxSources || 5))),
+        requires_user_approval: true,
+      },
+    });
+  }
+  if (expectedAction === 'ask_user') {
+    const verb = instruction.match(/\b(rewrite|reword|paraphrase|polish|edit|improve|translate|summari[sz]e|extract|classify|format)\b/)?.[1] || 'work on';
+    return JSON.stringify({
+      action: 'ask_user',
+      content: `What text should I ${verb}?`,
+      proposal_metadata: { task_type: 'ask_missing_text' },
+    });
+  }
+  if (/\b(exact|verbatim|source text|preserve all|copy)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: original,
+      proposal_metadata: { task_type: 'source_slot_copy' },
+    });
+  }
+  if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
+    const label = activeAgentClassifyLabel(original, instruction);
+    return JSON.stringify({
+      action: 'respond',
+      content: label || activeAgentClassifyJson(original, instruction),
+      proposal_metadata: { task_type: label ? 'active_agent_classification' : 'active_agent_json' },
+    });
+  }
+  if (/\b(extract|pull out|identify|fields?|entities|owner|deadline|amount|email address|email addresses)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentExtractJson(original),
+      proposal_metadata: { task_type: 'active_agent_extraction' },
+    });
+  }
+  if (/\b(action item|todo|to-do|owners?|deadlines?)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentActionItems(original),
+      proposal_metadata: { task_type: 'active_agent_action_items' },
+    });
+  }
+  if (/\b(checklist|check list)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentBulletList(original, { prefix: '- [ ] ' }) || '- [ ] Confirm the next step.',
+      proposal_metadata: { task_type: 'active_agent_checklist' },
+    });
+  }
+  if (/\b(rank|sort|priority|prioritize|order)\b/.test(instruction)) {
+    const ranked = compactSourceClauses(original, 6).map((item, index) => `${index + 1}. ${sentenceCaseDraft(item)}`);
+    return JSON.stringify({
+      action: 'respond',
+      content: ranked.length ? ranked.join('\n') : '1. Confirm the highest-priority item.',
+      proposal_metadata: { task_type: 'active_agent_ranking' },
+    });
+  }
+  if (/\b(risk|risks|concerns|failure modes?)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentRisks(original),
+      proposal_metadata: { task_type: 'active_agent_risks' },
+    });
+  }
+  if (/\b(subject line|email subject|subject)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentTitle(original, 'Follow Up'),
+      proposal_metadata: { task_type: 'active_agent_subject' },
+    });
+  }
+  if (/\b(title|headline)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: activeAgentTitle(original),
+      proposal_metadata: { task_type: 'active_agent_title' },
+    });
+  }
+  if (/\b(brainstorm|ideas|generate ideas|names)\b/.test(instruction)) {
+    const base = activeAgentTitle(original, 'Idea');
+    return JSON.stringify({
+      action: 'respond',
+      content: [`- ${base} Option`, `- Practical ${base}`, `- Simple ${base} Plan`].join('\n'),
+      proposal_metadata: { task_type: 'active_agent_brainstorm' },
+    });
+  }
+  if (/\b(translate|translation|spanish|french|german|italian|portuguese)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: /\b(spanish|español)\b/.test(instruction) ? 'respond' : 'ask_user',
+      content: activeAgentSimpleTranslation(original, instruction),
+      proposal_metadata: { task_type: /\b(spanish|español)\b/.test(instruction) ? 'active_agent_translation' : 'ask_missing_language' },
+    });
+  }
+  if (/\b(plan|steps|roadmap|schedule|itinerary)\b/.test(instruction)) {
+    const topic = activeAgentTitle(original, 'Task').toLowerCase();
+    return JSON.stringify({
+      action: 'respond',
+      content: [`1. Clarify the goal for ${topic}.`, '2. List the required inputs and constraints.', '3. Execute the next concrete step and verify the result.'].join('\n'),
+      proposal_metadata: { task_type: 'active_agent_plan' },
+    });
+  }
+  if (/\b(summarize|summary|tl;?dr|recap)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: original ? `- ${sentenceCaseDraft(original)}` : 'What text should I summarize?',
+      proposal_metadata: { task_type: original ? 'active_agent_summary' : 'ask_missing_text' },
+    });
+  }
+  if (/\b(rewrite|reword|paraphrase|polish|edit|improve|make .*professional|professional|email|tone)\b/.test(instruction)) {
+    return JSON.stringify({
+      action: 'respond',
+      content: professionalizeDraft(original) || 'What text should I rewrite?',
+      proposal_metadata: { task_type: original ? 'active_agent_rewrite' : 'ask_missing_text' },
+    });
+  }
+  return JSON.stringify({
+    action: 'respond',
+    content: original || 'What would you like this agent to do?',
+    proposal_metadata: { task_type: 'active_agent_fallback' },
+  });
+}
+
 function retrievalMissFallback(userText) {
   const question = shortText(userText, 140);
   return [
@@ -4601,10 +5013,13 @@ function groundedFallbackAnswer(userText, rows, reason = '') {
 function maybeGroundedFallback(text, rows, userText = '') {
   if (!String(state.loadedModelId || '').startsWith('modelstack:')) return text;
   const normalized = String(text || '').trim();
+  if (!rows?.length && activePocketPalAgent() && activeAgentDecisionNeedsFallback(normalized, userText)) {
+    return activeAgentFallbackAnswer(userText);
+  }
   if (!rows?.length && activePocketPalAgent() && isUsableActiveAgentDecisionText(normalized)) return normalized;
   if (!rows?.length && hasDecoderQualityIssue(normalized, rows, userText)) {
     if (activePocketPalAgent()) {
-      return 'I could not produce a stable local response for the active agent on this turn.';
+      return activeAgentFallbackAnswer(userText);
     }
     return directChatFallback(userText);
   }
@@ -4814,8 +5229,10 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
     !fallback
     && activePocketPalAgent()
     && !rows.length
-    && !isUsableActiveAgentDecisionText(text)
-    && hasDecoderQualityIssue(text, rows, userText)
+    && (
+      activeAgentDecisionNeedsFallback(text, userText)
+      || (!isUsableActiveAgentDecisionText(text) && hasDecoderQualityIssue(text, rows, userText))
+    )
     && retryActiveAgentConstrainedGeneration(turn, text)
   ) {
     return true;
@@ -4825,13 +5242,15 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
   state.modelBusy = false;
   setControlsBusy(false);
   let responseText = fallback
-    ? [
-        'The local decoder did not produce a decoded answer for this turn.',
-        rows.length
-          ? 'Research context was retrieved and remains available in the evidence cards, but I am not going to replace the model with a synthetic answer.'
-          : 'No research context was attached to this turn, and I am not going to replace the model with a synthetic answer.',
-        reason ? `Runtime detail: ${reason}` : '',
-      ].filter(Boolean).join('\n\n')
+    ? activePocketPalAgent()
+      ? activeAgentFallbackAnswer(userText)
+      : [
+          'The local decoder did not produce a decoded answer for this turn.',
+          rows.length
+            ? 'Research context was retrieved and remains available in the evidence cards, but I am not going to replace the model with a synthetic answer.'
+            : 'No research context was attached to this turn, and I am not going to replace the model with a synthetic answer.',
+          reason ? `Runtime detail: ${reason}` : '',
+        ].filter(Boolean).join('\n\n')
     : maybeGroundedFallback(text, rows, userText);
   responseText = expandPocketPalTextSlots(responseText, turn?.textSlots || {});
   responseText = expandPocketPalSourcePointers(responseText, turn?.sourceSlots || []);
