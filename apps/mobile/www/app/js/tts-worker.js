@@ -5,8 +5,8 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v6';
-const SPEAK_PRESET = 'custom-wasm-cond64-duration-auto';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v7';
+const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 938;
 const REFERENCE_TEXT_BYTES = new TextEncoder().encode(REFERENCE_TEXT).length;
@@ -67,10 +67,11 @@ async function speak(message) {
   const runtime = await loadRuntime();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, 64, 2, 96);
-  const steps = clampInt(message.steps, 1, 1, 4);
+  const steps = clampInt(message.steps, 8, 1, 32);
+  const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
   const chunks = splitTextForSpeech(text);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `custom-wasm-cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-step${steps}`;
+  const preset = `custom-wasm-cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
 
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
@@ -90,7 +91,7 @@ async function speak(message) {
       textIds,
       duration,
       steps,
-      cfgStrength: 0.0,
+      cfgStrength,
     });
 
     postMessage({ type: 'status', detail: `Decoding waveform ${index + 1}/${chunks.length}` });
@@ -222,6 +223,16 @@ function clampInt(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number.parseFloat(String(value ?? ''));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function formatPresetNumber(value) {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function encodeWav(samples, sampleRate) {
