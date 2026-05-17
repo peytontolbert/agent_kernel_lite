@@ -199,6 +199,29 @@ export class Q4TensorBundleWASM {
     );
   }
 
+  runF5DiTBlock(block, input, timeEmbedding, seqLen, dim, heads, headDim, eps = 1e-6) {
+    if (!this.wasm?.f5_dit_block_f32 || !this.wasm?.Q4LinearHandle) {
+      throw new Error("f5_dit_block_f32 is not available in the WASM runtime");
+    }
+    const prefix = `transformer.transformer_blocks.${block}`;
+    return this.wasm.f5_dit_block_f32(
+      this.q4LinearHandle(`${prefix}.attn_norm.linear.weight`, `${prefix}.attn_norm.linear.bias`),
+      this.q4LinearHandle(`${prefix}.attn.to_q.weight`, `${prefix}.attn.to_q.bias`),
+      this.q4LinearHandle(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`),
+      this.q4LinearHandle(`${prefix}.attn.to_v.weight`, `${prefix}.attn.to_v.bias`),
+      this.q4LinearHandle(`${prefix}.attn.to_out.0.weight`, `${prefix}.attn.to_out.0.bias`),
+      this.q4LinearHandle(`${prefix}.ff.ff.0.0.weight`, `${prefix}.ff.ff.0.0.bias`),
+      this.q4LinearHandle(`${prefix}.ff.ff.2.weight`, `${prefix}.ff.ff.2.bias`),
+      input instanceof Float32Array ? input : new Float32Array(input),
+      timeEmbedding instanceof Float32Array ? timeEmbedding : new Float32Array(timeEmbedding),
+      seqLen,
+      dim,
+      heads,
+      headDim,
+      eps,
+    );
+  }
+
   runAttention(q, k, v, qLen, kvLen, heads, headDim, causal = false, pastLen = 0) {
     if (!this.wasm?.attention_f32) {
       throw new Error("attention_f32 is not available in the WASM runtime");

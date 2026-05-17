@@ -181,6 +181,9 @@ export class F5TTSQ4DiTRuntime {
   }
 
   ditBlock(block, input, t, seqLen) {
+    if (this.bundle.runF5DiTBlock) {
+      return this.bundle.runF5DiTBlock(block, input, t, seqLen, this.dim, this.heads, this.headDim, EPS);
+    }
     const prefix = `transformer.transformer_blocks.${block}`;
     const mod = this.linear(`${prefix}.attn_norm.linear.weight`, `${prefix}.attn_norm.linear.bias`, siluCopy(t), 1);
     const shiftMsa = mod.subarray(0, this.dim);

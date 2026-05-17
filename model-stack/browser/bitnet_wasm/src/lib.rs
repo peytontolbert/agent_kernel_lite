@@ -1840,6 +1840,95 @@ pub fn q4_mlp_f32(
 }
 
 #[wasm_bindgen]
+pub fn f5_dit_block_f32(
+    attn_norm: &Q4LinearHandle,
+    to_q: &Q4LinearHandle,
+    to_k: &Q4LinearHandle,
+    to_v: &Q4LinearHandle,
+    to_out: &Q4LinearHandle,
+    ff_in: &Q4LinearHandle,
+    ff_out: &Q4LinearHandle,
+    input: &[f32],
+    time_embedding: &[f32],
+    seq_len: usize,
+    dim: usize,
+    heads: usize,
+    head_dim: usize,
+    eps: f32,
+) -> Result<Vec<f32>, JsValue> {
+    if seq_len == 0 || dim == 0 || heads == 0 || head_dim == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() != seq_len * dim || heads * head_dim != dim {
+        return Err(JsValue::from_str("f5_dit_block_f32 input shape mismatch"));
+    }
+    let mut t = time_embedding.to_vec();
+    for value in &mut t {
+        *value = silu_scalar(*value);
+    }
+    let modulation = attn_norm.run_impl(&t, 1)?;
+    if modulation.len() < dim * 6 {
+        return Err(JsValue::from_str("f5_dit_block_f32 modulation shape mismatch"));
+    }
+    let shift_msa = &modulation[0..dim];
+    let scale_msa = &modulation[dim..dim * 2];
+    let gate_msa = &modulation[dim * 2..dim * 3];
+    let shift_mlp = &modulation[dim * 3..dim * 4];
+    let scale_mlp = &modulation[dim * 4..dim * 5];
+    let gate_mlp = &modulation[dim * 5..dim * 6];
+
+    let norm = layer_norm_affine_f32(input, shift_msa, scale_msa, seq_len, dim, eps)?;
+    let mut qkv = q4_linear3_f32(to_q, to_k, to_v, &norm, seq_len)?;
+    let part = seq_len * dim;
+    {
+        let (q, rest) = qkv.split_at_mut(part);
+        let (k, _) = rest.split_at_mut(part);
+        apply_rotary_f5(q, k, seq_len, heads, head_dim)?;
+    }
+    let attn = attention_impl(&qkv[0..part], &qkv[part..part * 2], &qkv[part * 2..part * 3], seq_len, seq_len, heads, head_dim, false, 0)?;
+    let attn = to_out.run_impl(&attn, seq_len)?;
+    let x = gated_add_rows_f32(input, &attn, gate_msa, seq_len, dim)?;
+
+    let norm = layer_norm_affine_f32(&x, shift_mlp, scale_mlp, seq_len, dim, eps)?;
+    let ff = q4_mlp_f32(ff_in, ff_out, &norm, seq_len, "gelu")?;
+    gated_add_rows_f32(&x, &ff, gate_mlp, seq_len, dim)
+}
+
+fn apply_rotary_f5(
+    q: &mut [f32],
+    k: &mut [f32],
+    seq_len: usize,
+    heads: usize,
+    head_dim: usize,
+) -> Result<(), JsValue> {
+    let dim = heads * head_dim;
+    if q.len() < seq_len * dim || k.len() < seq_len * dim || head_dim % 2 != 0 {
+        return Err(JsValue::from_str("apply_rotary_f5 input shape mismatch"));
+    }
+    let half = head_dim / 2;
+    for pos in 0..seq_len {
+        for head in 0..heads {
+            let base = pos * dim + head * head_dim;
+            for idx in 0..half {
+                let angle = pos as f32 / 10000.0f32.powf((2 * idx) as f32 / head_dim as f32);
+                let c = angle.cos();
+                let s = angle.sin();
+                rotate_pair(q, base + idx, base + idx + half, c, s);
+                rotate_pair(k, base + idx, base + idx + half, c, s);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rotate_pair(values: &mut [f32], left: usize, right: usize, c: f32, s: f32) {
+    let a = values[left];
+    let b = values[right];
+    values[left] = a * c - b * s;
+    values[right] = b * c + a * s;
+}
+
+#[wasm_bindgen]
 pub fn activate_f32(input: &[f32], activation: &str) -> Vec<f32> {
     activate_impl(input, activation)
 }

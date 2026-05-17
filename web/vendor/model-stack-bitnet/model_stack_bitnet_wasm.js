@@ -558,6 +558,44 @@ export function bitnet_sample_token_f32(lm_head, hidden, generated_ids, blocked_
 }
 
 /**
+ * @param {Q4LinearHandle} attn_norm
+ * @param {Q4LinearHandle} to_q
+ * @param {Q4LinearHandle} to_k
+ * @param {Q4LinearHandle} to_v
+ * @param {Q4LinearHandle} to_out
+ * @param {Q4LinearHandle} ff_in
+ * @param {Q4LinearHandle} ff_out
+ * @param {Float32Array} input
+ * @param {Float32Array} time_embedding
+ * @param {number} seq_len
+ * @param {number} dim
+ * @param {number} heads
+ * @param {number} head_dim
+ * @param {number} eps
+ * @returns {Float32Array}
+ */
+export function f5_dit_block_f32(attn_norm, to_q, to_k, to_v, to_out, ff_in, ff_out, input, time_embedding, seq_len, dim, heads, head_dim, eps) {
+    _assertClass(attn_norm, Q4LinearHandle);
+    _assertClass(to_q, Q4LinearHandle);
+    _assertClass(to_k, Q4LinearHandle);
+    _assertClass(to_v, Q4LinearHandle);
+    _assertClass(to_out, Q4LinearHandle);
+    _assertClass(ff_in, Q4LinearHandle);
+    _assertClass(ff_out, Q4LinearHandle);
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(time_embedding, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.f5_dit_block_f32(attn_norm.__wbg_ptr, to_q.__wbg_ptr, to_k.__wbg_ptr, to_v.__wbg_ptr, to_out.__wbg_ptr, ff_in.__wbg_ptr, ff_out.__wbg_ptr, ptr0, len0, ptr1, len1, seq_len, dim, heads, head_dim, eps);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * @param {Float32Array} input
  * @param {number} rows
  * @param {number} cols
