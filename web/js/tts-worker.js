@@ -89,15 +89,38 @@ async function speak(message) {
 }
 
 async function fetchArrayBuffer(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
-  return response.arrayBuffer();
+  try {
+    const response = await fetch(url);
+    if (response.ok || response.status === 0) return response.arrayBuffer();
+    throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    return xhrArrayBuffer(url).catch(() => {
+      throw new Error(`failed to fetch ${url}: ${error.message || String(error)}`);
+    });
+  }
 }
 
 async function fetchText(url) {
   const response = await fetch(url);
-  if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
+  if (!response.ok && response.status !== 0) throw new Error(`failed to fetch ${url}: ${response.status}`);
   return response.text();
+}
+
+function xhrArrayBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('GET', url, true);
+    request.responseType = 'arraybuffer';
+    request.onload = () => {
+      if ((request.status >= 200 && request.status < 300) || request.status === 0) {
+        resolve(request.response);
+      } else {
+        reject(new Error(`XHR ${request.status}`));
+      }
+    };
+    request.onerror = () => reject(new Error('XHR network error'));
+    request.send();
+  });
 }
 
 function buildVocabMap(vocabText) {
