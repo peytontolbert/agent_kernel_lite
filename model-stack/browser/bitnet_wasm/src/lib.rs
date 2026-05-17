@@ -1169,6 +1169,102 @@ pub fn gated_add_rows_f32(
 }
 
 #[wasm_bindgen]
+pub fn q4_depthwise_conv1d_f32(
+    input: &[f32],
+    packed_weight: &[u8],
+    row_scales_f16: &[u16],
+    bias_values: &[f32],
+    seq_len: usize,
+    channels: usize,
+    kernel: usize,
+    padding: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if seq_len == 0 || channels == 0 || kernel == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() < seq_len * channels {
+        return Err(JsValue::from_str("q4_depthwise_conv1d_f32 input shape mismatch"));
+    }
+    let value_count = channels * kernel;
+    if packed_weight.len() < value_count.div_ceil(2) || row_scales_f16.len() < channels {
+        return Err(JsValue::from_str("q4_depthwise_conv1d_f32 weight shape mismatch"));
+    }
+    let mut output = vec![0.0f32; seq_len * channels];
+    for pos in 0..seq_len {
+        for ch in 0..channels {
+            let mut sum = bias_values.get(ch).copied().unwrap_or(0.0);
+            let scale = f16_to_f32(row_scales_f16[ch]);
+            for k in 0..kernel {
+                let src_pos = pos as isize + k as isize - padding as isize;
+                if src_pos < 0 || src_pos >= seq_len as isize {
+                    continue;
+                }
+                let weight_index = ch * kernel + k;
+                let packed = packed_weight[weight_index >> 1];
+                let nibble = if weight_index & 1 == 0 { packed & 0x0f } else { packed >> 4 };
+                let q = nibble as i8;
+                let q = if q >= 8 { q - 16 } else { q } as f32;
+                sum += input[src_pos as usize * channels + ch] * q * scale;
+            }
+            output[pos * channels + ch] = sum;
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
+pub fn q4_grouped_conv1d_f32(
+    input: &[f32],
+    packed_weight: &[u8],
+    row_scales_f16: &[u16],
+    bias_values: &[f32],
+    seq_len: usize,
+    channels: usize,
+    kernel: usize,
+    padding: usize,
+    groups: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if seq_len == 0 || channels == 0 || kernel == 0 || groups == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() < seq_len * channels || channels % groups != 0 {
+        return Err(JsValue::from_str("q4_grouped_conv1d_f32 input shape mismatch"));
+    }
+    let in_per_group = channels / groups;
+    let row_size = in_per_group * kernel;
+    let value_count = channels * row_size;
+    if packed_weight.len() < value_count.div_ceil(2) || row_scales_f16.len() < channels {
+        return Err(JsValue::from_str("q4_grouped_conv1d_f32 weight shape mismatch"));
+    }
+    let mut output = vec![0.0f32; seq_len * channels];
+    for pos in 0..seq_len {
+        for out_ch in 0..channels {
+            let group = out_ch / in_per_group;
+            let in_start = group * in_per_group;
+            let scale = f16_to_f32(row_scales_f16[out_ch]);
+            let mut sum = bias_values.get(out_ch).copied().unwrap_or(0.0);
+            for k in 0..kernel {
+                let src_pos = pos as isize + k as isize - padding as isize;
+                if src_pos < 0 || src_pos >= seq_len as isize {
+                    continue;
+                }
+                for local_in in 0..in_per_group {
+                    let col = k * in_per_group + local_in;
+                    let weight_index = out_ch * row_size + col;
+                    let packed = packed_weight[weight_index >> 1];
+                    let nibble = if weight_index & 1 == 0 { packed & 0x0f } else { packed >> 4 };
+                    let q = nibble as i8;
+                    let q = if q >= 8 { q - 16 } else { q } as f32;
+                    sum += input[src_pos as usize * channels + in_start + local_in] * q * scale;
+                }
+            }
+            output[pos * channels + out_ch] = sum;
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
 pub fn attention_f32(
     q: &[f32],
     k: &[f32],
@@ -1594,6 +1690,91 @@ pub fn q4_symmetric_linear_f32(
         }
     }
     Ok(output)
+}
+
+#[wasm_bindgen]
+pub struct Q4LinearHandle {
+    packed_weight: Vec<u8>,
+    row_scales: Vec<f32>,
+    bias_values: Vec<f32>,
+    in_dim: usize,
+    out_dim: usize,
+    packed_cols: usize,
+}
+
+#[wasm_bindgen]
+impl Q4LinearHandle {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        packed_weight: &[u8],
+        row_scales_f16: &[u16],
+        bias_values: &[f32],
+        in_dim: usize,
+        out_dim: usize,
+    ) -> Result<Q4LinearHandle, JsValue> {
+        if in_dim == 0 || out_dim == 0 {
+            return Err(JsValue::from_str("Q4LinearHandle dimensions must be non-zero"));
+        }
+        let packed_cols = in_dim.div_ceil(2);
+        if packed_weight.len() < out_dim * packed_cols {
+            return Err(JsValue::from_str("Q4LinearHandle packed_weight is shorter than layout requires"));
+        }
+        if row_scales_f16.len() < out_dim {
+            return Err(JsValue::from_str("Q4LinearHandle row_scales_f16 length is shorter than out_dim"));
+        }
+        let row_scales = row_scales_f16
+            .iter()
+            .take(out_dim)
+            .map(|bits| f16_to_f32(*bits))
+            .collect();
+        Ok(Q4LinearHandle {
+            packed_weight: packed_weight[..out_dim * packed_cols].to_vec(),
+            row_scales,
+            bias_values: bias_values.to_vec(),
+            in_dim,
+            out_dim,
+            packed_cols,
+        })
+    }
+
+    pub fn forward(&self, input: &[f32], rows: usize) -> Result<Vec<f32>, JsValue> {
+        if rows == 0 {
+            return Ok(Vec::new());
+        }
+        if input.len() != rows * self.in_dim {
+            return Err(JsValue::from_str("Q4LinearHandle input length does not match rows * in_dim"));
+        }
+        let mut output = vec![0.0f32; rows * self.out_dim];
+        let even_in_dim = self.in_dim & !1;
+        for out_idx in 0..self.out_dim {
+            let weight_row = &self.packed_weight[out_idx * self.packed_cols..(out_idx + 1) * self.packed_cols];
+            let scale = self.row_scales[out_idx];
+            let bias = self.bias_values.get(out_idx).copied().unwrap_or(0.0);
+            for row in 0..rows {
+                let input_row = &input[row * self.in_dim..(row + 1) * self.in_dim];
+                let mut acc = 0.0f32;
+                let mut col = 0usize;
+                let mut packed_col = 0usize;
+                while col < even_in_dim {
+                    let packed = weight_row[packed_col];
+                    let lo = (packed & 0x0f) as i8;
+                    let hi = (packed >> 4) as i8;
+                    let lo = if lo >= 8 { lo - 16 } else { lo } as f32;
+                    let hi = if hi >= 8 { hi - 16 } else { hi } as f32;
+                    acc += input_row[col] * lo + input_row[col + 1] * hi;
+                    col += 2;
+                    packed_col += 1;
+                }
+                if col < self.in_dim {
+                    let lo = (weight_row[packed_col] & 0x0f) as i8;
+                    let lo = if lo >= 8 { lo - 16 } else { lo } as f32;
+                    acc += input_row[col] * lo;
+                }
+                output[row * self.out_dim + out_idx] = acc * scale + bias;
+            }
+        }
+        Ok(output)
+    }
 }
 
 #[wasm_bindgen]

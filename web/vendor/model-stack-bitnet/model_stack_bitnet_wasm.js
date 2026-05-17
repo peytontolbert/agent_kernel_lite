@@ -281,6 +281,58 @@ export class DecoderLayerHandle {
 }
 if (Symbol.dispose) DecoderLayerHandle.prototype[Symbol.dispose] = DecoderLayerHandle.prototype.free;
 
+export class Q4LinearHandle {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        Q4LinearHandleFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_q4linearhandle_free(ptr, 0);
+    }
+    /**
+     * @param {Float32Array} input
+     * @param {number} rows
+     * @returns {Float32Array}
+     */
+    forward(input, rows) {
+        const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.q4linearhandle_forward(this.__wbg_ptr, ptr0, len0, rows);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v2;
+    }
+    /**
+     * @param {Uint8Array} packed_weight
+     * @param {Uint16Array} row_scales_f16
+     * @param {Float32Array} bias_values
+     * @param {number} in_dim
+     * @param {number} out_dim
+     */
+    constructor(packed_weight, row_scales_f16, bias_values, in_dim, out_dim) {
+        const ptr0 = passArray8ToWasm0(packed_weight, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray16ToWasm0(row_scales_f16, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayF32ToWasm0(bias_values, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.q4linearhandle_new(ptr0, len0, ptr1, len1, ptr2, len2, in_dim, out_dim);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        Q4LinearHandleFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) Q4LinearHandle.prototype[Symbol.dispose] = Q4LinearHandle.prototype.free;
+
 export class TokenSample {
     static __wrap(ptr) {
         const obj = Object.create(TokenSample.prototype);
@@ -605,6 +657,65 @@ export function layer_norm_f32(input, weight, bias, rows, cols, eps) {
  * @param {Uint8Array} packed_weight
  * @param {Uint16Array} row_scales_f16
  * @param {Float32Array} bias_values
+ * @param {number} seq_len
+ * @param {number} channels
+ * @param {number} kernel
+ * @param {number} padding
+ * @returns {Float32Array}
+ */
+export function q4_depthwise_conv1d_f32(input, packed_weight, row_scales_f16, bias_values, seq_len, channels, kernel, padding) {
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(packed_weight, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray16ToWasm0(row_scales_f16, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArrayF32ToWasm0(bias_values, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.q4_depthwise_conv1d_f32(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, seq_len, channels, kernel, padding);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v5;
+}
+
+/**
+ * @param {Float32Array} input
+ * @param {Uint8Array} packed_weight
+ * @param {Uint16Array} row_scales_f16
+ * @param {Float32Array} bias_values
+ * @param {number} seq_len
+ * @param {number} channels
+ * @param {number} kernel
+ * @param {number} padding
+ * @param {number} groups
+ * @returns {Float32Array}
+ */
+export function q4_grouped_conv1d_f32(input, packed_weight, row_scales_f16, bias_values, seq_len, channels, kernel, padding, groups) {
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(packed_weight, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray16ToWasm0(row_scales_f16, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArrayF32ToWasm0(bias_values, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.q4_grouped_conv1d_f32(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, seq_len, channels, kernel, padding, groups);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v5;
+}
+
+/**
+ * @param {Float32Array} input
+ * @param {Uint8Array} packed_weight
+ * @param {Uint16Array} row_scales_f16
+ * @param {Float32Array} bias_values
  * @param {number} rows
  * @param {number} in_dim
  * @param {number} out_dim
@@ -663,6 +774,9 @@ const BitnetLinearHandleFinalization = (typeof FinalizationRegistry === 'undefin
 const DecoderLayerHandleFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decoderlayerhandle_free(ptr, 1));
+const Q4LinearHandleFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_q4linearhandle_free(ptr, 1));
 const TokenSampleFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tokensample_free(ptr, 1));

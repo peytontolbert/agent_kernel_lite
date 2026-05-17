@@ -56,6 +56,7 @@ export class Q4TensorBundleWASM {
     this.denseBuffer = bundle.denseBuffer;
     this.wasm = bundle.wasm;
     this.q4TensorCache = new Map();
+    this.q4LinearHandleCache = new Map();
     this.denseTensorCache = new Map();
     this.denseF32TensorCache = new Map();
   }
@@ -133,6 +134,19 @@ export class Q4TensorBundleWASM {
   }
 
   runQ4Linear(name, input, rows = 1, biasName = "") {
+    if (this.wasm?.Q4LinearHandle) {
+      let handle = this.q4LinearHandleCache.get(`${name}:${biasName || ""}`);
+      if (!handle) {
+        const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
+        const shape = entry.shape;
+        const outDim = Number(shape[0]);
+        const inDim = Number(shape.slice(1).reduce((acc, value) => acc * Number(value), 1));
+        const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+        handle = new this.wasm.Q4LinearHandle(packedWeight, rowScalesF16, bias, inDim, outDim);
+        this.q4LinearHandleCache.set(`${name}:${biasName || ""}`, handle);
+      }
+      return handle.forward(input instanceof Float32Array ? input : new Float32Array(input), rows);
+    }
     const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
     const shape = entry.shape;
     const outDim = Number(shape[0]);
@@ -190,6 +204,43 @@ export class Q4TensorBundleWASM {
       gate instanceof Float32Array ? gate : new Float32Array(gate),
       rows,
       cols,
+    );
+  }
+
+  runQ4DepthwiseConv1d(weightName, biasName, input, seqLen, channels, kernel, padding) {
+    if (!this.wasm?.q4_depthwise_conv1d_f32) {
+      throw new Error("q4_depthwise_conv1d_f32 is not available in the WASM runtime");
+    }
+    const { packedWeight, rowScalesF16 } = this.q4Tensor(weightName);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    return this.wasm.q4_depthwise_conv1d_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      packedWeight,
+      rowScalesF16,
+      bias,
+      seqLen,
+      channels,
+      kernel,
+      padding,
+    );
+  }
+
+  runQ4GroupedConv1d(weightName, biasName, input, seqLen, channels, kernel, padding, groups) {
+    if (!this.wasm?.q4_grouped_conv1d_f32) {
+      throw new Error("q4_grouped_conv1d_f32 is not available in the WASM runtime");
+    }
+    const { packedWeight, rowScalesF16 } = this.q4Tensor(weightName);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    return this.wasm.q4_grouped_conv1d_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      packedWeight,
+      rowScalesF16,
+      bias,
+      seqLen,
+      channels,
+      kernel,
+      padding,
+      groups,
     );
   }
 }
