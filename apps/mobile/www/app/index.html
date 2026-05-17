@@ -349,6 +349,11 @@
       color: var(--text);
     }
 
+    #voicePreviewAudio {
+      width: 100%;
+      margin-top: 8px;
+    }
+
     .extensions-panel {
       margin-top: 12px;
       border: 1px solid var(--line);
@@ -557,6 +562,20 @@
       text-transform: uppercase;
       letter-spacing: 0.08em;
       margin-bottom: 8px;
+    }
+    .message-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin: -2px 0 6px;
+    }
+    .message-tts-button {
+      min-height: 28px;
+      border-color: var(--line);
+      background: var(--button-2);
+      color: var(--soft);
+      padding: 4px 8px;
+      font-size: 12px;
     }
     .message.user .role { color: #99f6e4; }
     .message .body {
@@ -1679,6 +1698,11 @@
         <p id="imageModeDetail">Chat runtime</p>
         <button id="imageModeButton" class="image-toggle-button" type="button" aria-pressed="false">Image Off</button>
       </div>
+      <div class="image-toggle-row">
+        <p id="voiceModeDetail">Peyton voice preview</p>
+        <button id="voiceSpeakButton" class="image-toggle-button" type="button">Speak</button>
+      </div>
+      <audio id="voicePreviewAudio" controls hidden></audio>
 
       <details class="extensions-panel" id="extensionsPanel">
         <summary>Extensions</summary>
@@ -1824,6 +1848,6 @@
     </form>
   </main>
 
-  <script type="module" src="./js/agent-kernel-app.js?v=20260504-flux-image-dev-v1"></script>
+  <script type="module" src="./js/agent-kernel-app.js?v=20260517-peyton-q4-v3"></script>
 </body>
 </html>

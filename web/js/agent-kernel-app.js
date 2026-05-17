@@ -36,6 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v16-peyton-voice';
+const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-v3';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -267,6 +268,7 @@ const state = {
     loadResolve: null,
     loadReject: null,
     audioUrl: '',
+    detail: '',
   },
   webSearch: {
     extensionId: 'web_search',
@@ -1305,14 +1307,14 @@ function syncVoiceControls() {
     els.voiceModeDetail.textContent = state.voice.busy
       ? 'Generating Peyton voice'
       : state.voice.ready
-        ? 'Peyton voice ready'
+        ? state.voice.detail || 'Peyton voice ready'
         : 'Peyton voice preview';
   }
 }
 
 function ensureVoiceWorker() {
   if (state.voice.worker) return state.voice.worker;
-  state.voice.worker = new Worker('./js/tts-worker.js?v=20260517-peyton-q4-v0', { type: 'module' });
+  state.voice.worker = new Worker(`./js/tts-worker.js?v=${VOICE_RUNTIME_VERSION}`, { type: 'module' });
   state.voice.worker.addEventListener('message', onVoiceWorkerMessage);
   state.voice.worker.addEventListener('error', (event) => {
     state.voice.busy = false;
@@ -1344,7 +1346,6 @@ function settleVoiceRuntime(error) {
   state.voice.loadPromise = null;
   state.voice.loadResolve = null;
   state.voice.loadReject = null;
-  state.voice.loadResolve = null;
   if (error) reject?.(error);
   else resolve?.();
 }
@@ -1366,6 +1367,7 @@ async function speakPeytonVoiceText(text) {
     ensureVoiceWorker().postMessage({
       type: 'speak',
       text: promptText,
+      runtimeVersion: VOICE_RUNTIME_VERSION,
       condSeqLen: 8,
       genFrames: 24,
       steps: 1,
@@ -1388,8 +1390,10 @@ function onVoiceWorkerMessage(event) {
   }
   if (data.type === 'ready') {
     state.voice.ready = true;
+    state.voice.detail = data.detail || '';
     settleVoiceRuntime();
-    log('Peyton voice ready');
+    log(`Peyton voice ready${data.detail ? `: ${data.detail}` : ''}`);
+    if (els.voiceModeDetail) els.voiceModeDetail.textContent = data.detail || 'Peyton voice ready';
     syncVoiceControls();
     return;
   }
@@ -1405,7 +1409,7 @@ function onVoiceWorkerMessage(event) {
       els.voicePreviewAudio.play().catch(() => {});
     }
     appendVoiceMessage(data, state.voice.audioUrl);
-    log(`Peyton voice rendered ${formatCount(data.samples)} samples`);
+    log(`Peyton voice rendered ${formatCount(data.samples)} samples${data.preset ? ` (${data.preset})` : ''}`);
     syncVoiceControls();
     syncModelControls();
     return;
@@ -5640,7 +5644,9 @@ function appendVoiceMessage(result, audioUrl) {
   meta.className = 'image-meta';
   meta.textContent = [
     'F5TTS Q4',
-    'Vocos FP16',
+    'Vocos Q4',
+    result.preset || '',
+    result.runtimeVersion || '',
     result.samples ? `${formatCount(result.samples)} samples` : '',
     result.bytes ? formatBytes(result.bytes) : '',
   ].filter(Boolean).join(' | ');

@@ -28,16 +28,16 @@ async function ensureQ4Wasm() {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok && response.status !== 0) {
     throw new Error(`failed to fetch ${url}: ${response.status}`);
   }
   return response.json();
 }
 
 async function fetchBuffer(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok && response.status !== 0) {
     throw new Error(`failed to fetch ${url}: ${response.status}`);
   }
   return response.arrayBuffer();
