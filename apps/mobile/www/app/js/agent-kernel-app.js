@@ -35,8 +35,8 @@ const POCKETPAL_SLOTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-slots-v1';
 const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sources-v1';
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
-const CACHE_NAME = 'agent-kernel-lite-v16-peyton-voice';
-const VOICE_RUNTIME_VERSION = '20260517-peyton-native-coreml-v0';
+const CACHE_NAME = 'agent-kernel-lite-v17-peyton-wasm-voice';
+const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-wasm-v6';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1363,17 +1363,13 @@ async function speakPeytonVoiceText(text) {
   syncVoiceControls();
   syncModelControls();
   try {
-    if (CAPACITOR_NATIVE) {
-      const nativeResult = await speakNativePeytonVoiceText(promptText);
-      if (nativeResult) return;
-    }
     await loadVoiceRuntime();
     log(`Peyton voice prompt: ${shortText(promptText, 80)}`);
     ensureVoiceWorker().postMessage({
       type: 'speak',
       text: promptText,
       runtimeVersion: VOICE_RUNTIME_VERSION,
-      condSeqLen: 12,
+      condSeqLen: 64,
       steps: 1,
     });
   } catch (error) {
@@ -1383,33 +1379,6 @@ async function speakPeytonVoiceText(text) {
     syncVoiceControls();
     syncModelControls();
   }
-}
-
-async function speakNativePeytonVoiceText(promptText) {
-  const nativeModule = await import('./native-peyton-tts.js');
-  const plugin = nativeModule.nativePeytonPlugin();
-  if (!plugin) return null;
-  if (!state.voice.nativeRuntime) state.voice.nativeRuntime = new nativeModule.NativePeytonTTSRuntime(plugin);
-  const result = await state.voice.nativeRuntime.speak(promptText, (detail) => {
-    log(`Peyton voice: ${detail}`);
-    if (els.voiceModeDetail) els.voiceModeDetail.textContent = detail;
-  });
-  state.voice.busy = false;
-  state.voice.ready = true;
-  state.voice.detail = `${result.runtimeVersion} | ${result.preset}`;
-  const blob = new Blob([result.wav], { type: 'audio/wav' });
-  if (state.voice.audioUrl) URL.revokeObjectURL(state.voice.audioUrl);
-  state.voice.audioUrl = URL.createObjectURL(blob);
-  if (els.voicePreviewAudio) {
-    els.voicePreviewAudio.hidden = false;
-    els.voicePreviewAudio.src = state.voice.audioUrl;
-    els.voicePreviewAudio.play().catch(() => {});
-  }
-  appendVoiceMessage(result, state.voice.audioUrl);
-  log(`Peyton native voice rendered ${formatCount(result.samples)} samples (${result.preset})`);
-  syncVoiceControls();
-  syncModelControls();
-  return result;
 }
 
 function onVoiceWorkerMessage(event) {

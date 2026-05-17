@@ -15,13 +15,8 @@ const sourceModel = resolve(sourceWeb, 'models', bundledModelName);
 const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
 const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
-const iosNativeModels = resolve(mobileRoot, 'ios', 'App', 'App', 'NativeModels');
-const localNativeTts = resolve(repoRoot, 'native-models', 'f5tts_peyton_coreml_int4_dev');
-const packagedNativeTts = resolve(packagedAssets, 'peyton_native_tts_coreml');
 const voiceAssetUrl = process.env.AGENT_KERNEL_LITE_VOICE_Q4_URL
   || 'https://github.com/peytontolbert/agent_kernel_lite/releases/download/voice-q4-v0/agent-kernel-lite-peyton-voice-q4-v0.tar';
-const nativeTtsAssetUrl = process.env.AGENT_KERNEL_LITE_NATIVE_TTS_URL
-  || 'https://github.com/peytontolbert/agent_kernel_lite/releases/download/native-tts-coreml-v0/agent-kernel-lite-peyton-native-tts-coreml-v0.tar';
 
 async function exists(path) {
   try {
@@ -64,26 +59,6 @@ if (await exists(packagedVoice)) {
   console.warn('Peyton voice assets were not bundled; AGENT_KERNEL_LITE_VOICE_Q4_URL is empty.');
 }
 
-await rm(iosNativeModels, { recursive: true, force: true });
-await mkdir(iosNativeModels, { recursive: true });
-if (await exists(resolve(localNativeTts, 'F5TTS_Peyton_DiT_seq64.mlpackage'))) {
-  await cp(resolve(localNativeTts, 'F5TTS_Peyton_DiT_seq64.mlpackage'), resolve(iosNativeModels, 'F5TTS_Peyton_DiT_seq64.mlpackage'), { recursive: true });
-  await cp(resolve(localNativeTts, 'F5TTS_Peyton_DiT_seq64.json'), resolve(iosNativeModels, 'F5TTS_Peyton_DiT_seq64.json'));
-} else if (await exists(packagedNativeTts)) {
-  await cp(packagedNativeTts, iosNativeModels, { recursive: true });
-} else if (nativeTtsAssetUrl) {
-  const tmpTar = resolve(packagedAssets, 'peyton_native_tts_coreml.tar');
-  await mkdir(packagedAssets, { recursive: true });
-  const response = await fetch(nativeTtsAssetUrl, { redirect: 'follow' });
-  if (!response.ok || !response.body) {
-    throw new Error(`Failed to download Peyton native TTS assets: HTTP ${response.status}`);
-  }
-  await pipeline(response.body, createWriteStream(tmpTar));
-  await untar(tmpTar, iosNativeModels);
-} else {
-  console.warn('Peyton native TTS Core ML assets were not bundled; AGENT_KERNEL_LITE_NATIVE_TTS_URL is empty.');
-}
-
 if (await exists(packagedPapers)) {
   await mkdir(resolve(bundledApp, 'packed-data'), { recursive: true });
   await cp(packagedPapers, resolve(bundledApp, 'packed-data', 'papers_50000.json'));
@@ -111,9 +86,7 @@ await writeFile(
       reference_wav: './app/voice/peyton/sample_0.wav',
       vocab: './app/voice/peyton/F5TTS_Base_vocab.txt',
     },
-    bundled_native_tts: (await exists(resolve(iosNativeModels, 'F5TTS_Peyton_DiT_seq64.mlpackage', 'Manifest.json')))
-      ? './ios/App/App/NativeModels/F5TTS_Peyton_DiT_seq64.mlpackage'
-      : null,
+    bundled_native_tts: null,
     bundled_paper_pack: (await exists(packagedPapers)) ? './app/packed-data/papers_50000.json' : null,
     remote_asset_policy: 'Native builds bundle the default model and 50k paper pack. Hugging Face remains the upstream source for refreshed or larger packs.',
   }, null, 2) + '\n',

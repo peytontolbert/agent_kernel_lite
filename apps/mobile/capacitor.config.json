@@ -19,7 +19,5 @@
       "*.bing.com"
     ]
   },
-  "packageClassList": [
-    "App.PeytonTTSPlugin"
-  ]
+  "packageClassList": []
 }

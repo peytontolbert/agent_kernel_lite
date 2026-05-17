@@ -5,8 +5,12 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-v5';
-const SPEAK_PRESET = 'cond12-auto-step1';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v6';
+const SPEAK_PRESET = 'custom-wasm-cond64-duration-auto';
+const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
+const REFERENCE_MEL_FRAMES = 938;
+const REFERENCE_TEXT_BYTES = new TextEncoder().encode(REFERENCE_TEXT).length;
+const MAX_DURATION_FRAMES = 384;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
@@ -62,11 +66,11 @@ async function loadRuntime() {
 async function speak(message) {
   const runtime = await loadRuntime();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
-  const condSeqLen = clampInt(message.condSeqLen, 12, 2, 32);
+  const condSeqLen = clampInt(message.condSeqLen, 64, 2, 96);
   const steps = clampInt(message.steps, 1, 1, 4);
   const chunks = splitTextForSpeech(text);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'auto'}-step${steps}`;
+  const preset = `custom-wasm-cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-step${steps}`;
 
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
@@ -75,9 +79,9 @@ async function speak(message) {
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 32, 96);
+    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 96, MAX_DURATION_FRAMES - condSeqLen);
     const duration = condSeqLen + genFrames;
-    const textIds = tokenize(chunk, runtime.vocabMap, duration);
+    const textIds = tokenize(`${REFERENCE_TEXT} ${chunk}`, runtime.vocabMap, duration);
 
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
     const mel = runtime.f5.sampleMel({
@@ -174,18 +178,19 @@ function splitTextForSpeech(text) {
   const sentences = normalized.match(/[^.!?]+[.!?]*/g) || [normalized];
   const chunks = [];
   let current = '';
+  const maxChars = maxChunkChars();
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (!trimmed) continue;
-    if ((current.length + trimmed.length + 1) <= 90) {
+    if ((current.length + trimmed.length + 1) <= maxChars) {
       current = current ? `${current} ${trimmed}` : trimmed;
       continue;
     }
     if (current) chunks.push(current);
-    if (trimmed.length <= 90) {
+    if (trimmed.length <= maxChars) {
       current = trimmed;
     } else {
-      for (let start = 0; start < trimmed.length; start += 90) chunks.push(trimmed.slice(start, start + 90).trim());
+      for (let start = 0; start < trimmed.length; start += maxChars) chunks.push(trimmed.slice(start, start + maxChars).trim());
       current = '';
     }
   }
@@ -194,9 +199,13 @@ function splitTextForSpeech(text) {
 }
 
 function estimateTargetFrames(text) {
-  const chars = Array.from(String(text || '').trim()).length;
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(96, Math.ceil(chars * 5.2 + words * 4 + 24));
+  const bytes = new TextEncoder().encode(String(text || '').trim()).length;
+  return Math.ceil((REFERENCE_MEL_FRAMES / REFERENCE_TEXT_BYTES) * bytes);
+}
+
+function maxChunkChars() {
+  const maxGenFrames = MAX_DURATION_FRAMES - 64;
+  return Math.max(24, Math.floor(maxGenFrames / (REFERENCE_MEL_FRAMES / REFERENCE_TEXT_BYTES)));
 }
 
 function concatFloat32(parts, totalLength) {
