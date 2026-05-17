@@ -59,6 +59,7 @@ export class Q4TensorBundleWASM {
     this.q4LinearHandleCache = new Map();
     this.denseTensorCache = new Map();
     this.denseF32TensorCache = new Map();
+    this.f5SessionCache = null;
   }
 
   static async fromManifestUrl(manifestUrl) {
@@ -219,6 +220,64 @@ export class Q4TensorBundleWASM {
       heads,
       headDim,
       eps,
+    );
+  }
+
+  f5Session() {
+    if (this.f5SessionCache) {
+      return this.f5SessionCache;
+    }
+    if (!this.wasm?.F5Q4DiTSession) {
+      return null;
+    }
+    const session = new this.wasm.F5Q4DiTSession();
+    for (const name of Object.keys(this.q4Index)) {
+      const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
+      const shape = entry.shape.map(Number);
+      const outDim = shape[0];
+      const inDim = shape.slice(1).reduce((acc, value) => acc * value, 1);
+      const biasName = name.endsWith(".weight") ? `${name.slice(0, -".weight".length)}.bias` : "";
+      const bias = biasName && this.denseIndex[biasName] ? this.denseF32Tensor(biasName) : new Float32Array(0);
+      session.add_q4_tensor(name, packedWeight, rowScalesF16, bias, inDim, outDim);
+    }
+    for (const [name, entry] of Object.entries(this.denseIndex)) {
+      if (entry.dtype === "float16" || entry.dtype === "float32") {
+        session.add_dense_f32(name, this.denseF32Tensor(name));
+      }
+    }
+    this.f5SessionCache = session;
+    return session;
+  }
+
+  runF5Forward({ x, cond, textIds, time = 0.5, dropAudioCond = false, dropText = false }) {
+    const session = this.f5Session();
+    if (!session) {
+      throw new Error("F5Q4DiTSession is not available in the WASM runtime");
+    }
+    return session.forward(
+      x instanceof Float32Array ? x : new Float32Array(x),
+      cond instanceof Float32Array ? cond : new Float32Array(cond),
+      textIds instanceof Int32Array ? textIds : new Int32Array(textIds),
+      time,
+      Boolean(dropAudioCond),
+      Boolean(dropText),
+    );
+  }
+
+  runF5SampleMel({ condMel, condSeqLen, textIds, duration, steps, cfgStrength, swaySamplingCoef = -1.0, seed = 1337 }) {
+    const session = this.f5Session();
+    if (!session) {
+      throw new Error("F5Q4DiTSession is not available in the WASM runtime");
+    }
+    return session.sample_mel(
+      condMel instanceof Float32Array ? condMel : new Float32Array(condMel),
+      condSeqLen,
+      textIds instanceof Int32Array ? textIds : new Int32Array(textIds),
+      duration,
+      steps,
+      cfgStrength,
+      swaySamplingCoef,
+      seed,
     );
   }
 

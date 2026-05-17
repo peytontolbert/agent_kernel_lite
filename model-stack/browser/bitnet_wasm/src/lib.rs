@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 const HEADER_LEN: usize = 13;
@@ -1926,6 +1927,447 @@ fn rotate_pair(values: &mut [f32], left: usize, right: usize, c: f32, s: f32) {
     let b = values[right];
     values[left] = a * c - b * s;
     values[right] = b * c + a * s;
+}
+
+#[wasm_bindgen]
+pub struct F5Q4DiTSession {
+    q4: HashMap<String, Q4LinearHandle>,
+    q4_raw: HashMap<String, Q4RawTensor>,
+    dense: HashMap<String, Vec<f32>>,
+    dim: usize,
+    text_dim: usize,
+    mel_dim: usize,
+    heads: usize,
+    head_dim: usize,
+    depth: usize,
+}
+
+#[wasm_bindgen]
+impl F5Q4DiTSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> F5Q4DiTSession {
+        F5Q4DiTSession {
+            q4: HashMap::new(),
+            q4_raw: HashMap::new(),
+            dense: HashMap::new(),
+            dim: 1024,
+            text_dim: 512,
+            mel_dim: 100,
+            heads: 16,
+            head_dim: 64,
+            depth: 22,
+        }
+    }
+
+    pub fn add_q4_tensor(
+        &mut self,
+        name: &str,
+        packed_weight: &[u8],
+        row_scales_f16: &[u16],
+        bias_values: &[f32],
+        in_dim: usize,
+        out_dim: usize,
+    ) -> Result<(), JsValue> {
+        self.q4_raw.insert(name.to_string(), Q4RawTensor::new(packed_weight, row_scales_f16, bias_values, in_dim, out_dim)?);
+        if packed_weight.len() >= out_dim * in_dim.div_ceil(2) {
+            let handle = Q4LinearHandle::new(packed_weight, row_scales_f16, bias_values, in_dim, out_dim)?;
+            self.q4.insert(name.to_string(), handle);
+        }
+        Ok(())
+    }
+
+    pub fn add_dense_f32(&mut self, name: &str, values: &[f32]) {
+        self.dense.insert(name.to_string(), values.to_vec());
+    }
+
+    pub fn forward(
+        &self,
+        x: &[f32],
+        cond: &[f32],
+        text_ids: &[i32],
+        time: f32,
+        drop_audio_cond: bool,
+        drop_text: bool,
+    ) -> Result<Vec<f32>, JsValue> {
+        self.forward_impl(x, cond, text_ids, time, drop_audio_cond, drop_text)
+    }
+
+    pub fn sample_mel(
+        &self,
+        cond_mel: &[f32],
+        cond_seq_len: usize,
+        text_ids: &[i32],
+        duration: usize,
+        steps: usize,
+        cfg_strength: f32,
+        sway_sampling_coef: f32,
+        seed: u32,
+    ) -> Result<Vec<f32>, JsValue> {
+        if duration < cond_seq_len || cond_mel.len() != cond_seq_len * self.mel_dim {
+            return Err(JsValue::from_str("F5Q4DiTSession sample_mel shape mismatch"));
+        }
+        let mut cond = vec![0.0f32; duration * self.mel_dim];
+        cond[..cond_mel.len()].copy_from_slice(cond_mel);
+        let mut y = gaussian_vec(duration * self.mel_dim, seed);
+        let times = make_f5_time_grid(steps, sway_sampling_coef);
+        for step in 0..steps {
+            let t = times[step];
+            let dt = times[step + 1] - times[step];
+            let pred = self.forward_impl(&y, &cond, text_ids, t, false, false)?;
+            if cfg_strength.abs() >= 1e-5 {
+                let null_pred = self.forward_impl(&y, &cond, text_ids, t, true, true)?;
+                for idx in 0..y.len() {
+                    let flow = pred[idx] + (pred[idx] - null_pred[idx]) * cfg_strength;
+                    y[idx] += dt * flow;
+                }
+            } else {
+                for idx in 0..y.len() {
+                    y[idx] += dt * pred[idx];
+                }
+            }
+        }
+        y[..cond_seq_len * self.mel_dim].copy_from_slice(&cond[..cond_seq_len * self.mel_dim]);
+        Ok(y)
+    }
+}
+
+impl F5Q4DiTSession {
+    fn q4(&self, name: &str) -> Result<&Q4LinearHandle, JsValue> {
+        self.q4.get(name).ok_or_else(|| JsValue::from_str(&format!("F5 q4 tensor not found: {}", name)))
+    }
+
+    fn q4_raw(&self, name: &str) -> Result<&Q4RawTensor, JsValue> {
+        self.q4_raw.get(name).ok_or_else(|| JsValue::from_str(&format!("F5 raw q4 tensor not found: {}", name)))
+    }
+
+    fn dense(&self, name: &str) -> Result<&[f32], JsValue> {
+        self.dense.get(name).map(|v| v.as_slice()).ok_or_else(|| JsValue::from_str(&format!("F5 dense tensor not found: {}", name)))
+    }
+
+    fn linear(&self, name: &str, input: &[f32], rows: usize) -> Result<Vec<f32>, JsValue> {
+        self.q4(name)?.run_impl(input, rows)
+    }
+
+    fn forward_impl(
+        &self,
+        x: &[f32],
+        cond: &[f32],
+        text_ids: &[i32],
+        time: f32,
+        drop_audio_cond: bool,
+        drop_text: bool,
+    ) -> Result<Vec<f32>, JsValue> {
+        if x.len() % self.mel_dim != 0 || cond.len() != x.len() {
+            return Err(JsValue::from_str("F5Q4DiTSession forward shape mismatch"));
+        }
+        let seq_len = x.len() / self.mel_dim;
+        let t = self.time_embedding(time)?;
+        let text = self.text_embedding(text_ids, seq_len, drop_text)?;
+        let mut hidden = self.input_embedding(x, cond, &text, seq_len, drop_audio_cond)?;
+        for block in 0..self.depth {
+            hidden = self.dit_block(block, &hidden, &t, seq_len)?;
+        }
+        hidden = self.final_ada_norm(&hidden, &t, seq_len)?;
+        self.linear("transformer.proj_out.weight", &hidden, seq_len)
+    }
+
+    fn time_embedding(&self, time: f32) -> Result<Vec<f32>, JsValue> {
+        let freq_dim = 256usize;
+        let half = freq_dim / 2;
+        let factor = 10000.0f32.ln() / (half as f32 - 1.0);
+        let mut emb = vec![0.0f32; freq_dim];
+        for idx in 0..half {
+            let value = 1000.0 * time * (idx as f32 * -factor).exp();
+            emb[idx] = value.sin();
+            emb[idx + half] = value.cos();
+        }
+        let mut out = self.linear("transformer.time_embed.time_mlp.0.weight", &emb, 1)?;
+        for value in &mut out {
+            *value = silu_scalar(*value);
+        }
+        self.linear("transformer.time_embed.time_mlp.2.weight", &out, 1)
+    }
+
+    fn text_embedding(&self, text_ids: &[i32], seq_len: usize, drop_text: bool) -> Result<Vec<f32>, JsValue> {
+        let weight = self.dense("transformer.text_embed.text_embed.weight")?;
+        let vocab = weight.len() / self.text_dim;
+        let mut out = vec![0.0f32; seq_len * self.text_dim];
+        for pos in 0..seq_len {
+            let raw_id = text_ids.get(pos).copied().unwrap_or(-1);
+            let token = if drop_text { 0usize } else { (raw_id + 1).max(0) as usize }.min(vocab.saturating_sub(1));
+            let src = token * self.text_dim;
+            out[pos * self.text_dim..(pos + 1) * self.text_dim].copy_from_slice(&weight[src..src + self.text_dim]);
+        }
+        add_text_sinusoidal_pos(&mut out, seq_len, self.text_dim);
+        let mut hidden = out;
+        for block in 0..4 {
+            hidden = self.convnext_text_block(block, &hidden, seq_len)?;
+        }
+        Ok(hidden)
+    }
+
+    fn convnext_text_block(&self, block: usize, input: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
+        let prefix = format!("transformer.text_embed.text_blocks.{}", block);
+        let mut x = self.depthwise_conv1d(&format!("{}.dwconv.weight", prefix), input, seq_len, self.text_dim, 7, 3)?;
+        x = layer_norm_weight_bias(&x, self.dense(&format!("{}.norm.weight", prefix))?, self.dense(&format!("{}.norm.bias", prefix))?, seq_len, self.text_dim, 1e-6)?;
+        x = self.linear(&format!("{}.pwconv1.weight", prefix), &x, seq_len)?;
+        for value in &mut x {
+            *value = gelu_erf_scalar(*value);
+        }
+        apply_grn(&mut x, seq_len, self.text_dim * 2, self.dense(&format!("{}.grn.gamma", prefix))?, self.dense(&format!("{}.grn.beta", prefix))?);
+        x = self.linear(&format!("{}.pwconv2.weight", prefix), &x, seq_len)?;
+        for idx in 0..x.len() {
+            x[idx] += input[idx];
+        }
+        Ok(x)
+    }
+
+    fn input_embedding(&self, x: &[f32], cond: &[f32], text: &[f32], seq_len: usize, drop_audio_cond: bool) -> Result<Vec<f32>, JsValue> {
+        let joined_dim = self.mel_dim * 2 + self.text_dim;
+        let mut joined = vec![0.0f32; seq_len * joined_dim];
+        for row in 0..seq_len {
+            let dst = row * joined_dim;
+            joined[dst..dst + self.mel_dim].copy_from_slice(&x[row * self.mel_dim..(row + 1) * self.mel_dim]);
+            if !drop_audio_cond {
+                joined[dst + self.mel_dim..dst + self.mel_dim * 2].copy_from_slice(&cond[row * self.mel_dim..(row + 1) * self.mel_dim]);
+            }
+            joined[dst + self.mel_dim * 2..dst + joined_dim].copy_from_slice(&text[row * self.text_dim..(row + 1) * self.text_dim]);
+        }
+        let projected = self.linear("transformer.input_embed.proj.weight", &joined, seq_len)?;
+        let mut pos = self.grouped_conv1d("transformer.input_embed.conv_pos_embed.conv1d.0.weight", &projected, seq_len, self.dim, 31, 15, 16)?;
+        for value in &mut pos {
+            *value = mish_scalar(*value);
+        }
+        pos = self.grouped_conv1d("transformer.input_embed.conv_pos_embed.conv1d.2.weight", &pos, seq_len, self.dim, 31, 15, 16)?;
+        for idx in 0..pos.len() {
+            pos[idx] = mish_scalar(pos[idx]) + projected[idx];
+        }
+        Ok(pos)
+    }
+
+    fn dit_block(&self, block: usize, input: &[f32], t: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
+        let prefix = format!("transformer.transformer_blocks.{}", block);
+        f5_dit_block_f32(
+            self.q4(&format!("{}.attn_norm.linear.weight", prefix))?,
+            self.q4(&format!("{}.attn.to_q.weight", prefix))?,
+            self.q4(&format!("{}.attn.to_k.weight", prefix))?,
+            self.q4(&format!("{}.attn.to_v.weight", prefix))?,
+            self.q4(&format!("{}.attn.to_out.0.weight", prefix))?,
+            self.q4(&format!("{}.ff.ff.0.0.weight", prefix))?,
+            self.q4(&format!("{}.ff.ff.2.weight", prefix))?,
+            input,
+            t,
+            seq_len,
+            self.dim,
+            self.heads,
+            self.head_dim,
+            1e-6,
+        )
+    }
+
+    fn final_ada_norm(&self, input: &[f32], t: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
+        let mut t_act = t.to_vec();
+        for value in &mut t_act {
+            *value = silu_scalar(*value);
+        }
+        let modulation = self.linear("transformer.norm_out.linear.weight", &t_act, 1)?;
+        if modulation.len() < self.dim * 2 {
+            return Err(JsValue::from_str("F5 final modulation shape mismatch"));
+        }
+        let scale = &modulation[0..self.dim];
+        let shift = &modulation[self.dim..self.dim * 2];
+        layer_norm_affine_f32(input, shift, scale, seq_len, self.dim, 1e-6)
+    }
+
+    fn depthwise_conv1d(&self, name: &str, input: &[f32], seq_len: usize, channels: usize, kernel: usize, padding: usize) -> Result<Vec<f32>, JsValue> {
+        let handle = self.q4_raw(name)?;
+        let mut output = vec![0.0f32; seq_len * channels];
+        for pos in 0..seq_len {
+            for ch in 0..channels {
+                let mut sum = handle.bias_values.get(ch).copied().unwrap_or(0.0);
+                let scale = handle.row_scales[ch];
+                for k in 0..kernel {
+                    let src_pos = pos as isize + k as isize - padding as isize;
+                    if src_pos < 0 || src_pos >= seq_len as isize {
+                        continue;
+                    }
+                    let q = handle.q4_value(ch, k)? * scale;
+                    sum += input[src_pos as usize * channels + ch] * q;
+                }
+                output[pos * channels + ch] = sum;
+            }
+        }
+        Ok(output)
+    }
+
+    fn grouped_conv1d(&self, name: &str, input: &[f32], seq_len: usize, channels: usize, kernel: usize, padding: usize, groups: usize) -> Result<Vec<f32>, JsValue> {
+        let handle = self.q4_raw(name)?;
+        let group_in = channels / groups;
+        let mut output = vec![0.0f32; seq_len * channels];
+        for pos in 0..seq_len {
+            for out_ch in 0..channels {
+                let group = out_ch / group_in;
+                let in_start = group * group_in;
+                let mut sum = handle.bias_values.get(out_ch).copied().unwrap_or(0.0);
+                let scale = handle.row_scales[out_ch];
+                for local_in in 0..group_in {
+                    for k in 0..kernel {
+                        let src_pos = pos as isize + k as isize - padding as isize;
+                        if src_pos < 0 || src_pos >= seq_len as isize {
+                            continue;
+                        }
+                        let col = local_in * kernel + k;
+                        let q = handle.q4_value(out_ch, col)? * scale;
+                        sum += input[src_pos as usize * channels + in_start + local_in] * q;
+                    }
+                }
+                output[pos * channels + out_ch] = sum;
+            }
+        }
+        Ok(output)
+    }
+}
+
+struct Q4RawTensor {
+    packed_weight: Vec<u8>,
+    row_scales: Vec<f32>,
+    bias_values: Vec<f32>,
+    in_dim: usize,
+    out_dim: usize,
+}
+
+impl Q4RawTensor {
+    fn new(
+        packed_weight: &[u8],
+        row_scales_f16: &[u16],
+        bias_values: &[f32],
+        in_dim: usize,
+        out_dim: usize,
+    ) -> Result<Q4RawTensor, JsValue> {
+        if packed_weight.len() < (out_dim * in_dim).div_ceil(2) || row_scales_f16.len() < out_dim {
+            return Err(JsValue::from_str("Q4RawTensor shape mismatch"));
+        }
+        Ok(Q4RawTensor {
+            packed_weight: packed_weight[..(out_dim * in_dim).div_ceil(2)].to_vec(),
+            row_scales: row_scales_f16.iter().take(out_dim).map(|bits| f16_to_f32(*bits)).collect(),
+            bias_values: bias_values.to_vec(),
+            in_dim,
+            out_dim,
+        })
+    }
+
+    fn q4_value(&self, row: usize, col: usize) -> Result<f32, JsValue> {
+        if row >= self.out_dim || col >= self.in_dim {
+            return Err(JsValue::from_str("Q4RawTensor q4_value out of bounds"));
+        }
+        let index = row * self.in_dim + col;
+        let packed = self.packed_weight[index >> 1];
+        let nibble = if index & 1 == 0 { packed & 0x0f } else { packed >> 4 };
+        let q = nibble as i8;
+        Ok(if q >= 8 { q - 16 } else { q } as f32)
+    }
+}
+
+fn gelu_erf_scalar(value: f32) -> f32 {
+    0.5 * value * (1.0 + erf_approx(value / core::f32::consts::SQRT_2))
+}
+
+fn erf_approx(x: f32) -> f32 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let ax = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * ax);
+    let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-ax * ax).exp();
+    sign * y
+}
+
+fn mish_scalar(value: f32) -> f32 {
+    value * (1.0 + value.exp()).ln().tanh()
+}
+
+fn layer_norm_weight_bias(input: &[f32], weight: &[f32], bias: &[f32], rows: usize, cols: usize, eps: f32) -> Result<Vec<f32>, JsValue> {
+    if input.len() < rows * cols || weight.len() < cols || bias.len() < cols {
+        return Err(JsValue::from_str("layer_norm_weight_bias shape mismatch"));
+    }
+    let mut output = vec![0.0f32; rows * cols];
+    for row in 0..rows {
+        let offset = row * cols;
+        let values = &input[offset..offset + cols];
+        let mean = values.iter().copied().sum::<f32>() / cols as f32;
+        let mut variance = 0.0f32;
+        for value in values {
+            let delta = *value - mean;
+            variance += delta * delta;
+        }
+        let inv = 1.0 / (variance / cols as f32 + eps).sqrt();
+        for col in 0..cols {
+            output[offset + col] = (input[offset + col] - mean) * inv * weight[col] + bias[col];
+        }
+    }
+    Ok(output)
+}
+
+fn add_text_sinusoidal_pos(x: &mut [f32], seq_len: usize, dim: usize) {
+    let half = dim / 2;
+    for pos in 0..seq_len {
+        let base = pos * dim;
+        for idx in 0..half {
+            let inv = 1.0 / 10000.0f32.powf((2 * idx) as f32 / dim as f32);
+            let angle = pos as f32 * inv;
+            x[base + idx] += angle.cos();
+            x[base + idx + half] += angle.sin();
+        }
+    }
+}
+
+fn apply_grn(x: &mut [f32], seq_len: usize, dim: usize, gamma: &[f32], beta: &[f32]) {
+    let mut gx = vec![0.0f32; dim];
+    let mut mean = 0.0f32;
+    for col in 0..dim {
+        let mut sum = 0.0f32;
+        for pos in 0..seq_len {
+            let value = x[pos * dim + col];
+            sum += value * value;
+        }
+        gx[col] = sum.sqrt();
+        mean += gx[col];
+    }
+    mean = mean / dim as f32 + 1e-6;
+    for pos in 0..seq_len {
+        let offset = pos * dim;
+        for col in 0..dim {
+            let value = x[offset + col];
+            x[offset + col] = gamma.get(col).copied().unwrap_or(0.0) * (value * (gx[col] / mean)) + beta.get(col).copied().unwrap_or(0.0) + value;
+        }
+    }
+}
+
+fn make_f5_time_grid(steps: usize, sway_sampling_coef: f32) -> Vec<f32> {
+    let mut times = vec![0.0f32; steps + 1];
+    for idx in 0..=steps {
+        let mut t = idx as f32 / steps as f32;
+        t = t + sway_sampling_coef * (((core::f32::consts::PI / 2.0) * t).cos() - 1.0 + t);
+        times[idx] = t;
+    }
+    times
+}
+
+fn gaussian_vec(length: usize, seed: u32) -> Vec<f32> {
+    let mut out = vec![0.0f32; length];
+    let mut index = 0usize;
+    let mut state = seed;
+    while index < length {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        let u1 = ((state as f64 + 1.0) / 4294967297.0).max(1e-7) as f32;
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        let u2 = ((state as f64 + 1.0) / 4294967297.0) as f32;
+        let mag = (-2.0 * u1.ln()).sqrt();
+        out[index] = mag * (2.0 * core::f32::consts::PI * u2).cos();
+        if index + 1 < length {
+            out[index + 1] = mag * (2.0 * core::f32::consts::PI * u2).sin();
+        }
+        index += 2;
+    }
+    out
 }
 
 #[wasm_bindgen]

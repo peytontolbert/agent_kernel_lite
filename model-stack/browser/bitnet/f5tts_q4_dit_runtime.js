@@ -18,6 +18,9 @@ export class F5TTSQ4DiTRuntime {
   }
 
   forward({ x, cond, textIds, time = 0.5, dropAudioCond = false, dropText = false }) {
+    if (this.bundle.runF5Forward) {
+      return this.bundle.runF5Forward({ x, cond, textIds, time, dropAudioCond, dropText });
+    }
     const seqLen = x.length / this.melDim;
     if (!Number.isInteger(seqLen) || seqLen <= 0) {
       throw new Error("x must be a flat Float32Array with shape [seqLen, 100]");
@@ -53,6 +56,18 @@ export class F5TTSQ4DiTRuntime {
     }
     if (condMel.length !== condSeqLen * this.melDim) {
       throw new Error("condMel length must match condSeqLen * melDim");
+    }
+    if (this.bundle.runF5SampleMel) {
+      return this.bundle.runF5SampleMel({
+        condMel,
+        condSeqLen,
+        textIds,
+        duration,
+        steps,
+        cfgStrength,
+        swaySamplingCoef,
+        seed,
+      });
     }
 
     const cond = new Float32Array(duration * this.melDim);
