@@ -1,6 +1,6 @@
 {
   "schema": "agent_kernel_lite_mobile_app_source",
-  "generated_at": "2026-05-17T14:16:28.253Z",
+  "generated_at": "2026-05-17T16:12:44.070Z",
   "source": "../../web",
   "bundled_app": "./app/",
   "excluded": [
@@ -15,6 +15,7 @@
     "reference_wav": "./app/voice/peyton/sample_0.wav",
     "vocab": "./app/voice/peyton/F5TTS_Base_vocab.txt"
   },
+  "bundled_native_tts": "./ios/App/App/NativeModels/F5TTS_Peyton_DiT_seq64.mlpackage",
   "bundled_paper_pack": "./app/packed-data/papers_50000.json",
   "remote_asset_policy": "Native builds bundle the default model and 50k paper pack. Hugging Face remains the upstream source for refreshed or larger packs."
 }

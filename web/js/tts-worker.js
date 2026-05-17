@@ -5,8 +5,8 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-v4';
-const SPEAK_PRESET = 'cond8-gen24-step1';
+const RUNTIME_VERSION = '20260517-peyton-q4-v5';
+const SPEAK_PRESET = 'cond12-auto-step1';
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
@@ -62,28 +62,41 @@ async function loadRuntime() {
 async function speak(message) {
   const runtime = await loadRuntime();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
-  const condSeqLen = clampInt(message.condSeqLen, 4, 2, 24);
-  const genFrames = clampInt(message.genFrames, 8, 2, 40);
+  const condSeqLen = clampInt(message.condSeqLen, 12, 2, 32);
   const steps = clampInt(message.steps, 1, 1, 4);
-  const duration = condSeqLen + genFrames;
-  const preset = `cond${condSeqLen}-gen${genFrames}-step${steps}`;
+  const chunks = splitTextForSpeech(text);
+  const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
+  const preset = `cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'auto'}-step${steps}`;
 
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
-  const textIds = tokenize(text, runtime.vocabMap, duration);
+  const audioParts = [];
+  let totalSamples = 0;
 
-  postMessage({ type: 'status', detail: 'Generating Q4 F5TTS mel' });
-  const mel = runtime.f5.sampleMel({
-    condMel,
-    condSeqLen,
-    textIds,
-    duration,
-    steps,
-    cfgStrength: 0.0,
-  });
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 32, 96);
+    const duration = condSeqLen + genFrames;
+    const textIds = tokenize(chunk, runtime.vocabMap, duration);
 
-  postMessage({ type: 'status', detail: 'Decoding waveform' });
-  const audio = runtime.vocos.decode(mel);
+    postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
+    const mel = runtime.f5.sampleMel({
+      condMel,
+      condSeqLen,
+      textIds,
+      duration,
+      steps,
+      cfgStrength: 0.0,
+    });
+
+    postMessage({ type: 'status', detail: `Decoding waveform ${index + 1}/${chunks.length}` });
+    const targetMel = mel.subarray(condSeqLen * runtime.f5.melDim);
+    const audio = runtime.vocos.decode(targetMel);
+    audioParts.push(audio);
+    totalSamples += audio.length;
+  }
+
+  const audio = concatFloat32(audioParts, totalSamples);
   const wav = encodeWav(audio, SAMPLE_RATE);
   postMessage({
     type: 'audio',
@@ -93,6 +106,7 @@ async function speak(message) {
     bytes: wav.byteLength,
     preset,
     runtimeVersion: message.runtimeVersion || RUNTIME_VERSION,
+    chunks: chunks.length,
     wav,
   }, [wav]);
 }
@@ -152,6 +166,47 @@ function tokenize(text, vocabMap, maxLen) {
     ids[i] = vocabMap.has(chars[i]) ? vocabMap.get(chars[i]) : -1;
   }
   return ids;
+}
+
+function splitTextForSpeech(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return ['This is Peyton speaking from Agent Kernel Lite.'];
+  const sentences = normalized.match(/[^.!?]+[.!?]*/g) || [normalized];
+  const chunks = [];
+  let current = '';
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (!trimmed) continue;
+    if ((current.length + trimmed.length + 1) <= 90) {
+      current = current ? `${current} ${trimmed}` : trimmed;
+      continue;
+    }
+    if (current) chunks.push(current);
+    if (trimmed.length <= 90) {
+      current = trimmed;
+    } else {
+      for (let start = 0; start < trimmed.length; start += 90) chunks.push(trimmed.slice(start, start + 90).trim());
+      current = '';
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function estimateTargetFrames(text) {
+  const chars = Array.from(String(text || '').trim()).length;
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(96, Math.ceil(chars * 5.2 + words * 4 + 24));
+}
+
+function concatFloat32(parts, totalLength) {
+  const out = new Float32Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }
 
 function clampInt(value, fallback, min, max) {

@@ -18,5 +18,8 @@
       "bing.com",
       "*.bing.com"
     ]
-  }
+  },
+  "packageClassList": [
+    "App.PeytonTTSPlugin"
+  ]
 }

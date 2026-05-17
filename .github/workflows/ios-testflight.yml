@@ -35,6 +35,7 @@ jobs:
           npm run sync:web
           npm run check
           npx cap sync ios
+          node scripts/register-ios-local-plugins.mjs
 
       - name: Write App Store Connect API key
         env:
