@@ -148,6 +148,23 @@ export class Q4TensorBundleWASM {
       outDim,
     );
   }
+
+  runAttention(q, k, v, qLen, kvLen, heads, headDim, causal = false, pastLen = 0) {
+    if (!this.wasm?.attention_f32) {
+      throw new Error("attention_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.attention_f32(
+      q instanceof Float32Array ? q : new Float32Array(q),
+      k instanceof Float32Array ? k : new Float32Array(k),
+      v instanceof Float32Array ? v : new Float32Array(v),
+      qLen,
+      kvLen,
+      heads,
+      headDim,
+      Boolean(causal),
+      pastLen,
+    );
+  }
 }
 
 function f16ToF32(bits) {

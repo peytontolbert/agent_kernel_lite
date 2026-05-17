@@ -1154,8 +1154,12 @@ fn attention_impl(
                 let mut score = if causal && kj > past_len + qi { -1.0e30 } else { 0.0 };
                 if score > -1.0e20 {
                     let k_base = kj * model_dim + head * head_dim;
-                    for dim in 0..head_dim {
-                        score += q[q_base + dim] * k[k_base + dim] * scale;
+                    if head_dim == 64 {
+                        score = dot_scaled_64(&q[q_base..q_base + 64], &k[k_base..k_base + 64], scale);
+                    } else {
+                        for dim in 0..head_dim {
+                            score += q[q_base + dim] * k[k_base + dim] * scale;
+                        }
                     }
                 }
                 scores[kj] = score;
@@ -1170,13 +1174,25 @@ fn attention_impl(
             }
             let denom = denom.max(1.0e-20);
             let out_base = qi * model_dim + head * head_dim;
-            for dim in 0..head_dim {
-                let mut sum = 0.0f32;
+            if head_dim == 64 {
+                output[out_base..out_base + 64].fill(0.0);
                 for kj in 0..kv_len {
                     let v_base = kj * model_dim + head * head_dim;
-                    sum += (scores[kj] / denom) * v[v_base + dim];
+                    add_weighted_64(
+                        &mut output[out_base..out_base + 64],
+                        &v[v_base..v_base + 64],
+                        scores[kj] / denom,
+                    );
                 }
-                output[out_base + dim] = sum;
+            } else {
+                for dim in 0..head_dim {
+                    let mut sum = 0.0f32;
+                    for kj in 0..kv_len {
+                        let v_base = kj * model_dim + head * head_dim;
+                        sum += (scores[kj] / denom) * v[v_base + dim];
+                    }
+                    output[out_base + dim] = sum;
+                }
             }
         }
     }

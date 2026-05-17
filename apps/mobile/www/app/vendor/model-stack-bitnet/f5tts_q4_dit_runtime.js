@@ -197,7 +197,9 @@ export class F5TTSQ4DiTRuntime {
     let k = this.linear(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`, norm, seqLen);
     const v = this.linear(`${prefix}.attn.to_v.weight`, `${prefix}.attn.to_v.bias`, norm, seqLen);
     applyRotary(q, k, seqLen, this.heads, this.headDim);
-    let attn = attention(q, k, v, seqLen, this.heads, this.headDim);
+    let attn = this.bundle.runAttention
+      ? this.bundle.runAttention(q, k, v, seqLen, seqLen, this.heads, this.headDim, false, 0)
+      : attention(q, k, v, seqLen, this.heads, this.headDim);
     attn = this.linear(`${prefix}.attn.to_out.0.weight`, `${prefix}.attn.to_out.0.bias`, attn, seqLen);
 
     const x = input.slice();
