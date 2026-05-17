@@ -25,7 +25,7 @@ const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
 const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') === '1';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
-const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260514-v84-active-agent';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260517-v173c-active-agent';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
@@ -35,7 +35,7 @@ const POCKETPAL_SLOTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-slots-v1';
 const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sources-v1';
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
-const CACHE_NAME = 'agent-kernel-lite-v15';
+const CACHE_NAME = 'agent-kernel-lite-v16-peyton-voice';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -259,6 +259,15 @@ const state = {
     audioCapabilityId: 'translation.audio',
     activeActionId: null,
   },
+  voice: {
+    worker: null,
+    ready: false,
+    busy: false,
+    loadPromise: null,
+    loadResolve: null,
+    loadReject: null,
+    audioUrl: '',
+  },
   webSearch: {
     extensionId: 'web_search',
     searchCapabilityId: 'web.search',
@@ -294,6 +303,9 @@ const els = {
   modulePanels: [...document.querySelectorAll('[data-module-panel]')],
   imageMode: document.getElementById('imageModeButton'),
   imageModeDetail: document.getElementById('imageModeDetail'),
+  voiceSpeak: document.getElementById('voiceSpeakButton'),
+  voiceModeDetail: document.getElementById('voiceModeDetail'),
+  voicePreviewAudio: document.getElementById('voicePreviewAudio'),
   userDataSource: document.getElementById('userDataSourceInput'),
   saveUserDataSource: document.getElementById('saveUserDataSourceButton'),
   clearUserDataSource: document.getElementById('clearUserDataSourceButton'),
@@ -504,6 +516,7 @@ function syncModelControls() {
   const imageMode = Boolean(state.image.enabled);
   const imageBusy = Boolean(state.image.busy);
   const translationBusy = Boolean(state.translation.busy || state.translation.listening);
+  const voiceBusy = Boolean(state.voice.busy);
   const browserOnlyMode = state.mode === 'web_search';
   if (els.loadModel) {
     els.loadModel.disabled = imageMode || loading || state.processActive;
@@ -513,7 +526,7 @@ function syncModelControls() {
     els.unloadModel.disabled = imageMode || loading || state.processActive || !state.worker;
   }
   if (els.send) {
-    els.send.disabled = state.processActive || imageBusy || translationBusy || (imageMode || browserOnlyMode ? false : loading || !loaded);
+    els.send.disabled = state.processActive || imageBusy || translationBusy || voiceBusy || (imageMode || browserOnlyMode ? false : loading || !loaded);
     els.send.textContent = imageMode
       ? imageBusy ? 'Generating...' : 'Generate'
       : state.translation.enabled
@@ -521,6 +534,7 @@ function syncModelControls() {
         : 'Send';
   }
   syncTranslationControls();
+  syncVoiceControls();
 }
 
 function createProcessStepElement(step) {
@@ -1279,6 +1293,132 @@ function setImageMode(enabled) {
     log('image generation mode disabled');
   }
   syncImageModeControls();
+}
+
+function syncVoiceControls() {
+  if (els.voiceSpeak) {
+    els.voiceSpeak.disabled = state.processActive || state.voice.busy;
+    els.voiceSpeak.classList.toggle('active', state.voice.ready);
+    els.voiceSpeak.textContent = state.voice.busy ? 'Speaking...' : state.voice.ready ? 'Speak' : 'Load Voice';
+  }
+  if (els.voiceModeDetail) {
+    els.voiceModeDetail.textContent = state.voice.busy
+      ? 'Generating Peyton voice'
+      : state.voice.ready
+        ? 'Peyton voice ready'
+        : 'Peyton voice preview';
+  }
+}
+
+function ensureVoiceWorker() {
+  if (state.voice.worker) return state.voice.worker;
+  state.voice.worker = new Worker('./js/tts-worker.js?v=20260517-peyton-q4-v0', { type: 'module' });
+  state.voice.worker.addEventListener('message', onVoiceWorkerMessage);
+  state.voice.worker.addEventListener('error', (event) => {
+    state.voice.busy = false;
+    state.voice.ready = false;
+    settleVoiceRuntime(new Error(event.message || 'voice worker error'));
+    appendMessage('assistant', `Peyton voice failed: ${event.message || 'worker error'}`);
+    log(`Peyton voice worker failed: ${event.message || 'worker error'}`);
+    syncVoiceControls();
+    syncModelControls();
+  });
+  return state.voice.worker;
+}
+
+function loadVoiceRuntime() {
+  if (state.voice.ready) return Promise.resolve();
+  if (state.voice.loadPromise) return state.voice.loadPromise;
+  state.voice.loadPromise = new Promise((resolve, reject) => {
+    state.voice.loadResolve = resolve;
+    state.voice.loadReject = reject;
+  });
+  ensureVoiceWorker().postMessage({ type: 'load' });
+  syncVoiceControls();
+  return state.voice.loadPromise;
+}
+
+function settleVoiceRuntime(error) {
+  const resolve = state.voice.loadResolve;
+  const reject = state.voice.loadReject;
+  state.voice.loadPromise = null;
+  state.voice.loadResolve = null;
+  state.voice.loadReject = null;
+  state.voice.loadResolve = null;
+  if (error) reject?.(error);
+  else resolve?.();
+}
+
+async function speakPeytonVoice() {
+  const text = String(els.prompt?.value || '').trim() || 'This is Peyton speaking from Agent Kernel Lite.';
+  await speakPeytonVoiceText(text);
+}
+
+async function speakPeytonVoiceText(text) {
+  if (state.voice.busy) return;
+  const promptText = String(text || '').trim() || 'This is Peyton speaking from Agent Kernel Lite.';
+  state.voice.busy = true;
+  syncVoiceControls();
+  syncModelControls();
+  try {
+    await loadVoiceRuntime();
+    log(`Peyton voice prompt: ${shortText(promptText, 80)}`);
+    ensureVoiceWorker().postMessage({
+      type: 'speak',
+      text: promptText,
+      condSeqLen: 4,
+      genFrames: 8,
+      steps: 1,
+    });
+  } catch (error) {
+    state.voice.busy = false;
+    appendMessage('assistant', `Peyton voice could not load: ${error.message || String(error)}`);
+    log(`Peyton voice load failed: ${error.message || String(error)}`);
+    syncVoiceControls();
+    syncModelControls();
+  }
+}
+
+function onVoiceWorkerMessage(event) {
+  const data = event.data || {};
+  if (data.type === 'status') {
+    log(`Peyton voice: ${data.detail || 'working'}`);
+    if (els.voiceModeDetail) els.voiceModeDetail.textContent = data.detail || 'Peyton voice working';
+    return;
+  }
+  if (data.type === 'ready') {
+    state.voice.ready = true;
+    settleVoiceRuntime();
+    log('Peyton voice ready');
+    syncVoiceControls();
+    return;
+  }
+  if (data.type === 'audio') {
+    state.voice.busy = false;
+    state.voice.ready = true;
+    const blob = new Blob([data.wav], { type: 'audio/wav' });
+    if (state.voice.audioUrl) URL.revokeObjectURL(state.voice.audioUrl);
+    state.voice.audioUrl = URL.createObjectURL(blob);
+    if (els.voicePreviewAudio) {
+      els.voicePreviewAudio.hidden = false;
+      els.voicePreviewAudio.src = state.voice.audioUrl;
+      els.voicePreviewAudio.play().catch(() => {});
+    }
+    appendVoiceMessage(data, state.voice.audioUrl);
+    log(`Peyton voice rendered ${formatCount(data.samples)} samples`);
+    syncVoiceControls();
+    syncModelControls();
+    return;
+  }
+  if (data.type === 'error') {
+    const error = new Error(data.error || 'voice generation error');
+    if (state.voice.loadPromise) settleVoiceRuntime(error);
+    state.voice.busy = false;
+    appendMessage('assistant', `Peyton voice failed: ${error.message}`);
+    log(`Peyton voice failed: ${error.message}`);
+    syncVoiceControls();
+    syncModelControls();
+  }
 }
 
 function onImageWorkerMessage(event) {
@@ -3276,6 +3416,8 @@ function buildActiveAgentDirectPrompt(userText) {
   const agent = activePocketPalAgent();
   const dataContext = pocketPalDataSourceContext(userText);
   const hint = activeAgentIntentHint(agent, userText);
+  const textSlotBlock = pocketPalTextSlotBlock(userText, dataContext);
+  const sourceSlotBlock = pocketPalSourceSlotBlock(userText, dataContext);
   return [
     '<AK_CHAT> <AK_RESPOND> PocketPal user-configured agent example.',
     '<AK_AGENT_ACTIVE>',
@@ -3288,10 +3430,8 @@ function buildActiveAgentDirectPrompt(userText) {
     '</AK_AGENT_ACTIVE>',
     hint,
     `<AK_CONTEXT> Saved user data: ${dataContext || 'none'}`,
-    '<AK_PROFILE> User text slots:',
-    `<AK_SLOT> <AK_SLOT_NAME>=SOURCE_TEXT <AK_SLOT_VALUE>=${userText}`,
-    'Available placeholders for this turn: [[SOURCE_TEXT]].',
-    'Use only the available placeholders listed above. Do not invent unavailable placeholders such as [[NAME]], [[ITEM]], [[DEADLINE]], or [[REASON]] unless they are listed for this turn.',
+    textSlotBlock,
+    sourceSlotBlock,
     '<AK_CONTEXT> Stale selected paper context: Selected paper [P1]: unrelated research paper context.',
     'Use stale paper context only when the current user request asks about that paper or research evidence.',
     `<AK_USER> ${userText}`,
@@ -3631,6 +3771,28 @@ function activeAgentContentPreservesInput(content, userText) {
   return preserved / important.length >= 0.55;
 }
 
+function activeAgentUnavailablePlaceholders(content, slots = {}) {
+  const available = new Set(Object.keys(slots || {}).map((key) => String(key).trim()).filter(Boolean));
+  const unavailable = [];
+  const seen = new Set();
+  const matches = String(content || '').matchAll(/\[\[([A-Z0-9_:-]{2,64})\]\]/g);
+  for (const match of matches) {
+    const key = String(match[1] || '').trim();
+    if (!key || available.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    unavailable.push(key);
+  }
+  return unavailable;
+}
+
+function activeAgentRawSourcePlaceholderEcho(content, instruction = '') {
+  if (!/\b(summarize|summary|recap|tl;?dr|rewrite|reword|paraphrase|polish|edit|improve|translate|translation)\b/i.test(instruction)) {
+    return false;
+  }
+  if (/\b(exact|verbatim|source text|preserve all|copy|echo)\b/i.test(instruction)) return false;
+  return /\[\[SOURCE_TEXT\]\]/.test(String(content || ''));
+}
+
 function activeAgentDecisionNeedsFallback(text, userText = '') {
   const agent = activePocketPalAgent();
   if (!agent) return false;
@@ -3654,6 +3816,9 @@ function activeAgentDecisionNeedsFallback(text, userText = '') {
   }
   if (decision.action !== 'respond') return false;
   const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
+  const slots = state.currentTextSlots || {};
+  if (activeAgentUnavailablePlaceholders(decision.content, slots).length) return true;
+  if (activeAgentRawSourcePlaceholderEcho(decision.content, instruction)) return true;
   if (/\b(exact|verbatim|source text|preserve all|copy)\b/.test(instruction)) {
     return normalizeSearchText(decision.content) !== normalizeSearchText(userText);
   }
@@ -3666,6 +3831,13 @@ function activeAgentDecisionNeedsFallback(text, userText = '') {
     if (/^source text\s*:/i.test(decision.content)) return true;
   }
   if (activeAgentTextTransformInstruction(agent) && !activeAgentRequestLacksEditableText(userText)) {
+    const requiredSlots = ['NAME', 'ITEM', 'DEADLINE', 'REASON'].filter((key) => slots[key]);
+    if (requiredSlots.length) {
+      const normalizedContent = normalizeSearchText(decision.content);
+      for (const key of requiredSlots) {
+        if (!tokenCoveredByText(normalizedContent, String(slots[key]).toLowerCase())) return true;
+      }
+    }
     return !activeAgentContentPreservesInput(decision.content, userText);
   }
   return false;
@@ -3950,6 +4122,7 @@ function inferPocketPalTextSlots(userText = '', dataContext = '') {
   if (data && data.toLowerCase() !== 'no saved user data sources.') slots.DATA_CONTEXT = data;
   const patterns = [
     /^(?:hey\s+)?(?<name>[a-z][\w.-]*)\s+i\s+need\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
+    /^(?:hey|hi|hello|yo)\s+(?<name>[a-z][\w.-]*)\s+(?:please\s+)?(?:send|get|finish|prepare|share|complete|review|update|draft|write)\s+(?:the\s+)?(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
     /^ask\s+(?<name>[a-z][\w.-]*)\s+for\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
     /^tell\s+(?<name>[a-z][\w.-]*)\s+we\s+need\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+since\s+(?<reason>.+)$/i,
     /^can\s+you\s+ask\s+(?<name>[a-z][\w.-]*)\s+to\s+send\s+the\s+(?<item>.+?)\s+by\s+(?<deadline>.+?)\s+because\s+(?<reason>.+)$/i,
@@ -5307,7 +5480,9 @@ function appendMessage(role, text) {
   const body = document.createElement('div');
   body.className = 'body';
   renderMessageBody(body, text, { linkEvidence: role === 'assistant' });
-  node.append(roleNode, body);
+  node.append(roleNode);
+  attachTtsButton(node, text);
+  node.append(body);
   attachPaperButtons(node, state.retrievalRows);
   els.chat.appendChild(node);
   els.chat.scrollTop = els.chat.scrollHeight;
@@ -5360,8 +5535,25 @@ function renderStoredMessage(message) {
   const body = document.createElement('div');
   body.className = 'body';
   renderMessageBody(body, message?.text || '', { linkEvidence: role === 'assistant' });
-  node.append(roleNode, body);
+  node.append(roleNode);
+  attachTtsButton(node, message?.text || '');
+  node.append(body);
   els.chat.appendChild(node);
+}
+
+function attachTtsButton(node, text) {
+  const speakText = String(text || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+  if (!speakText) return;
+  const toolbar = document.createElement('div');
+  toolbar.className = 'message-toolbar';
+  const button = document.createElement('button');
+  button.className = 'message-tts-button';
+  button.type = 'button';
+  button.textContent = 'Play voice';
+  button.title = 'Play with Peyton voice';
+  button.addEventListener('click', () => speakPeytonVoiceText(speakText));
+  toolbar.appendChild(button);
+  node.appendChild(toolbar);
 }
 
 function renderStoredMessages() {
@@ -5425,6 +5617,40 @@ function appendImageMessage(result) {
       imageBase64,
       svg,
     },
+  });
+}
+
+function appendVoiceMessage(result, audioUrl) {
+  els.empty?.remove();
+  const node = document.createElement('article');
+  node.className = 'message assistant';
+  const roleNode = document.createElement('div');
+  roleNode.className = 'role';
+  roleNode.textContent = 'Peyton Voice';
+  const body = document.createElement('div');
+  body.className = 'body image-artifact';
+  const prompt = document.createElement('div');
+  prompt.className = 'image-prompt';
+  prompt.textContent = result.text || 'Peyton voice preview';
+  const audio = document.createElement('audio');
+  audio.controls = true;
+  audio.src = audioUrl;
+  audio.style.width = '100%';
+  const meta = document.createElement('div');
+  meta.className = 'image-meta';
+  meta.textContent = [
+    'F5TTS Q4',
+    'Vocos FP16',
+    result.samples ? `${formatCount(result.samples)} samples` : '',
+    result.bytes ? formatBytes(result.bytes) : '',
+  ].filter(Boolean).join(' | ');
+  body.append(prompt, audio, meta);
+  node.append(roleNode, body);
+  els.chat.appendChild(node);
+  els.chat.scrollTop = els.chat.scrollHeight;
+  state.messages.push({
+    role: 'assistant',
+    text: `[peyton voice] ${result.text || ''}`,
   });
 }
 
@@ -5588,12 +5814,13 @@ function appendRetrieval(rows, { locked = state.processActive } = {}) {
 
 function setControlsBusy(busy) {
   const browserOnlyMode = state.mode === 'web_search';
-  els.send.disabled = busy || state.image.busy || state.translation.busy || state.translation.listening || (state.image.enabled || browserOnlyMode ? false : state.modelBusy || !state.modelReady);
+  els.send.disabled = busy || state.image.busy || state.voice.busy || state.translation.busy || state.translation.listening || (state.image.enabled || browserOnlyMode ? false : state.modelBusy || !state.modelReady);
   els.prompt.disabled = busy;
   els.loadModel.disabled = state.image.enabled || busy || state.modelBusy;
   if (els.unloadModel) els.unloadModel.disabled = state.image.enabled || busy || state.modelBusy || !state.worker;
   els.loadPack.disabled = busy;
   if (els.audioTranslate) els.audioTranslate.disabled = busy || state.translation.busy;
+  if (els.voiceSpeak) els.voiceSpeak.disabled = busy || state.voice.busy;
   syncModelControls();
 }
 
@@ -6618,6 +6845,7 @@ async function init() {
   els.thinkMode?.addEventListener('click', () => setMode('think'));
   els.deepResearchMode?.addEventListener('click', () => setMode('deep_research'));
   els.imageMode?.addEventListener('click', () => setImageMode(!state.image.enabled));
+  els.voiceSpeak?.addEventListener('click', speakPeytonVoice);
   els.translationMode?.addEventListener('click', () => setTranslationMode(!state.translation.enabled));
   els.translationSource?.addEventListener('change', syncTranslationControls);
   els.translationTarget?.addEventListener('change', syncTranslationControls);

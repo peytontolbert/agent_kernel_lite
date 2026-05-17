@@ -1439,6 +1439,89 @@ fn gated_activation_impl(
     Ok(output)
 }
 
+fn f16_to_f32(bits: u16) -> f32 {
+    let sign = ((bits & 0x8000) as u32) << 16;
+    let exp = ((bits >> 10) & 0x1f) as i32;
+    let frac = (bits & 0x03ff) as u32;
+    let out = if exp == 0 {
+        if frac == 0 {
+            sign
+        } else {
+            let mut mant = frac;
+            let mut e = -14i32;
+            while (mant & 0x0400) == 0 {
+                mant <<= 1;
+                e -= 1;
+            }
+            mant &= 0x03ff;
+            let exp32 = ((e + 127) as u32) << 23;
+            sign | exp32 | (mant << 13)
+        }
+    } else if exp == 0x1f {
+        sign | 0x7f80_0000 | (frac << 13)
+    } else {
+        let exp32 = ((exp - 15 + 127) as u32) << 23;
+        sign | exp32 | (frac << 13)
+    };
+    f32::from_bits(out)
+}
+
+fn decode_signed_i4(nibble: u8) -> f32 {
+    let value = (nibble & 0x0f) as i8;
+    if value >= 8 {
+        (value - 16) as f32
+    } else {
+        value as f32
+    }
+}
+
+#[wasm_bindgen]
+pub fn q4_symmetric_linear_f32(
+    input: &[f32],
+    packed_weight: &[u8],
+    row_scales_f16: &[u16],
+    bias_values: &[f32],
+    rows: usize,
+    in_dim: usize,
+    out_dim: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if rows == 0 || in_dim == 0 || out_dim == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() != rows * in_dim {
+        return Err(JsValue::from_str("Q4 input length does not match rows * in_dim"));
+    }
+    let packed_cols = in_dim.div_ceil(2);
+    if packed_weight.len() < out_dim * packed_cols {
+        return Err(JsValue::from_str("Q4 packed_weight is shorter than layout requires"));
+    }
+    if row_scales_f16.len() < out_dim {
+        return Err(JsValue::from_str("Q4 row_scales_f16 length is shorter than out_dim"));
+    }
+
+    let mut output = vec![0.0f32; rows * out_dim];
+    for row in 0..rows {
+        let input_row = &input[row * in_dim..(row + 1) * in_dim];
+        for out_idx in 0..out_dim {
+            let weight_row = &packed_weight[out_idx * packed_cols..(out_idx + 1) * packed_cols];
+            let scale = f16_to_f32(row_scales_f16[out_idx]);
+            let mut acc = 0.0f32;
+            for (packed_col, packed) in weight_row.iter().enumerate() {
+                let col = packed_col * 2;
+                let lo = decode_signed_i4(*packed);
+                acc += input_row[col] * lo;
+                if col + 1 < in_dim {
+                    let hi = decode_signed_i4(*packed >> 4);
+                    acc += input_row[col + 1] * hi;
+                }
+            }
+            let bias = bias_values.get(out_idx).copied().unwrap_or(0.0);
+            output[row * out_dim + out_idx] = acc * scale + bias;
+        }
+    }
+    Ok(output)
+}
+
 #[wasm_bindgen]
 pub fn activate_f32(input: &[f32], activation: &str) -> Vec<f32> {
     activate_impl(input, activation)
@@ -1511,5 +1594,20 @@ mod tests {
         assert_eq!(y.len(), 2);
         assert!((y[0] - 3.0).abs() < 1e-6);
         assert!((y[1] - 11.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decodes_q4_symmetric_linear() {
+        let input = [2.0f32, 3.0, 5.0];
+        // Row 0: [-1, 0, 7], row 1: [-8, 2, 1].
+        let packed_weight = [
+            0x0fu8, 0x07u8,
+            0x28u8, 0x01u8,
+        ];
+        let scales = [0x3800u16, 0x4000u16]; // 0.5, 2.0
+        let y = q4_symmetric_linear_f32(&input, &packed_weight, &scales, &[1.0], 1, 3, 2).unwrap();
+        assert_eq!(y.len(), 2);
+        assert!((y[0] - 17.5).abs() < 1e-6);
+        assert!((y[1] + 10.0).abs() < 1e-6);
     }
 }

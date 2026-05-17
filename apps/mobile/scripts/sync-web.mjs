@@ -1,5 +1,8 @@
+import { createWriteStream } from 'node:fs';
 import { access, cp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -11,6 +14,9 @@ const bundledModelName = 'agentkernel_lite_100m_bitnet_12000';
 const sourceModel = resolve(sourceWeb, 'models', bundledModelName);
 const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
+const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
+const voiceAssetUrl = process.env.AGENT_KERNEL_LITE_VOICE_Q4_URL
+  || 'https://github.com/peytontolbert/agent_kernel_lite/releases/download/voice-q4-v0/agent-kernel-lite-peyton-voice-q4-v0.tar';
 
 async function exists(path) {
   try {
@@ -38,6 +44,21 @@ await cp(sourceWeb, bundledApp, {
 
 await cp(sourceModel, resolve(bundledApp, 'models', bundledModelName), { recursive: true });
 
+if (await exists(packagedVoice)) {
+  await cp(packagedVoice, bundledApp, { recursive: true });
+} else if (voiceAssetUrl) {
+  const tmpTar = resolve(packagedAssets, 'peyton_voice_q4.tar');
+  await mkdir(packagedAssets, { recursive: true });
+  const response = await fetch(voiceAssetUrl, { redirect: 'follow' });
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to download Peyton voice assets: HTTP ${response.status}`);
+  }
+  await pipeline(response.body, createWriteStream(tmpTar));
+  await untar(tmpTar, bundledApp);
+} else {
+  console.warn('Peyton voice assets were not bundled; AGENT_KERNEL_LITE_VOICE_Q4_URL is empty.');
+}
+
 if (await exists(packagedPapers)) {
   await mkdir(resolve(bundledApp, 'packed-data'), { recursive: true });
   await cp(packagedPapers, resolve(bundledApp, 'packed-data', 'papers_50000.json'));
@@ -58,9 +79,27 @@ await writeFile(
       'web/app-release-manifest.example.json',
     ],
     bundled_model: `./app/models/${bundledModelName}/manifest.json`,
+    bundled_voice: {
+      speaker: 'Peyton',
+      f5tts_q4: './app/models/f5tts_peyton_q4_v0/manifest.json',
+      vocos_q4: './app/models/vocos_mel_24khz_q4_v0/manifest.json',
+      reference_wav: './app/voice/peyton/sample_0.wav',
+      vocab: './app/voice/peyton/F5TTS_Base_vocab.txt',
+    },
     bundled_paper_pack: (await exists(packagedPapers)) ? './app/packed-data/papers_50000.json' : null,
     remote_asset_policy: 'Native builds bundle the default model and 50k paper pack. Hugging Face remains the upstream source for refreshed or larger packs.',
   }, null, 2) + '\n',
 );
 
 console.log(`Synced ${sourceWeb} -> ${bundledApp}`);
+
+function untar(archive, destination) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' });
+    child.on('error', rejectPromise);
+    child.on('exit', (code) => {
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`tar exited with ${code}`));
+    });
+  });
+}
