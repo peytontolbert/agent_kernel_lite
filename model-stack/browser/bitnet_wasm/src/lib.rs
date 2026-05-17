@@ -1566,7 +1566,8 @@ impl AttentionKvCache {
 }
 
 fn gelu_scalar(value: f32) -> f32 {
-    0.5 * value * (1.0 + (core::f32::consts::FRAC_2_SQRT_PI * (value + 0.044715 * value * value * value)).tanh())
+    let coeff = (2.0f32 / core::f32::consts::PI).sqrt();
+    0.5 * value * (1.0 + (coeff * (value + 0.044715 * value * value * value)).tanh())
 }
 
 fn silu_scalar(value: f32) -> f32 {
@@ -1737,14 +1738,23 @@ impl Q4LinearHandle {
         })
     }
 
-    pub fn forward(&self, input: &[f32], rows: usize) -> Result<Vec<f32>, JsValue> {
+    fn run_into(
+        &self,
+        input: &[f32],
+        rows: usize,
+        output: &mut [f32],
+        output_row_stride: usize,
+        output_col_offset: usize,
+    ) -> Result<(), JsValue> {
         if rows == 0 {
-            return Ok(Vec::new());
+            return Ok(());
         }
         if input.len() != rows * self.in_dim {
             return Err(JsValue::from_str("Q4LinearHandle input length does not match rows * in_dim"));
         }
-        let mut output = vec![0.0f32; rows * self.out_dim];
+        if output.len() < rows * output_row_stride || output_col_offset + self.out_dim > output_row_stride {
+            return Err(JsValue::from_str("Q4LinearHandle output shape mismatch"));
+        }
         let even_in_dim = self.in_dim & !1;
         for out_idx in 0..self.out_dim {
             let weight_row = &self.packed_weight[out_idx * self.packed_cols..(out_idx + 1) * self.packed_cols];
@@ -1770,11 +1780,63 @@ impl Q4LinearHandle {
                     let lo = if lo >= 8 { lo - 16 } else { lo } as f32;
                     acc += input_row[col] * lo;
                 }
-                output[row * self.out_dim + out_idx] = acc * scale + bias;
+                output[row * output_row_stride + output_col_offset + out_idx] = acc * scale + bias;
             }
         }
+        Ok(())
+    }
+
+    fn run_impl(&self, input: &[f32], rows: usize) -> Result<Vec<f32>, JsValue> {
+        if rows == 0 {
+            return Ok(Vec::new());
+        }
+        let mut output = vec![0.0f32; rows * self.out_dim];
+        self.run_into(input, rows, &mut output, self.out_dim, 0)?;
         Ok(output)
     }
+
+    pub fn forward(&self, input: &[f32], rows: usize) -> Result<Vec<f32>, JsValue> {
+        self.run_impl(input, rows)
+    }
+}
+
+#[wasm_bindgen]
+pub fn q4_linear3_f32(
+    first: &Q4LinearHandle,
+    second: &Q4LinearHandle,
+    third: &Q4LinearHandle,
+    input: &[f32],
+    rows: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if first.in_dim != second.in_dim || first.in_dim != third.in_dim {
+        return Err(JsValue::from_str("q4_linear3_f32 input dimensions do not match"));
+    }
+    if first.out_dim != second.out_dim || first.out_dim != third.out_dim {
+        return Err(JsValue::from_str("q4_linear3_f32 output dimensions do not match"));
+    }
+    let out_dim = first.out_dim;
+    let mut out = vec![0.0f32; rows * out_dim * 3];
+    let part = rows * out_dim;
+    first.run_into(input, rows, &mut out[0..part], out_dim, 0)?;
+    second.run_into(input, rows, &mut out[part..part * 2], out_dim, 0)?;
+    third.run_into(input, rows, &mut out[part * 2..part * 3], out_dim, 0)?;
+    Ok(out)
+}
+
+#[wasm_bindgen]
+pub fn q4_mlp_f32(
+    first: &Q4LinearHandle,
+    second: &Q4LinearHandle,
+    input: &[f32],
+    rows: usize,
+    activation: &str,
+) -> Result<Vec<f32>, JsValue> {
+    if first.out_dim != second.in_dim {
+        return Err(JsValue::from_str("q4_mlp_f32 linear dimensions do not match"));
+    }
+    let hidden = first.run_impl(input, rows)?;
+    let activated = activate_impl(&hidden, activation);
+    second.run_impl(&activated, rows)
 }
 
 #[wasm_bindgen]

@@ -712,6 +712,53 @@ export function q4_grouped_conv1d_f32(input, packed_weight, row_scales_f16, bias
 }
 
 /**
+ * @param {Q4LinearHandle} first
+ * @param {Q4LinearHandle} second
+ * @param {Q4LinearHandle} third
+ * @param {Float32Array} input
+ * @param {number} rows
+ * @returns {Float32Array}
+ */
+export function q4_linear3_f32(first, second, third, input, rows) {
+    _assertClass(first, Q4LinearHandle);
+    _assertClass(second, Q4LinearHandle);
+    _assertClass(third, Q4LinearHandle);
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.q4_linear3_f32(first.__wbg_ptr, second.__wbg_ptr, third.__wbg_ptr, ptr0, len0, rows);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * @param {Q4LinearHandle} first
+ * @param {Q4LinearHandle} second
+ * @param {Float32Array} input
+ * @param {number} rows
+ * @param {string} activation
+ * @returns {Float32Array}
+ */
+export function q4_mlp_f32(first, second, input, rows, activation) {
+    _assertClass(first, Q4LinearHandle);
+    _assertClass(second, Q4LinearHandle);
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(activation, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.q4_mlp_f32(first.__wbg_ptr, second.__wbg_ptr, ptr0, len0, rows, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * @param {Float32Array} input
  * @param {Uint8Array} packed_weight
  * @param {Uint16Array} row_scales_f16

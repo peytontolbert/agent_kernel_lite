@@ -194,9 +194,26 @@ export class F5TTSQ4DiTRuntime {
       ? this.bundle.runLayerNormAffine(input, shiftMsa, scaleMsa, seqLen, this.dim, EPS)
       : layerNormAffineRows(input, shiftMsa, scaleMsa, seqLen, this.dim);
 
-    let q = this.linear(`${prefix}.attn.to_q.weight`, `${prefix}.attn.to_q.bias`, norm, seqLen);
-    let k = this.linear(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`, norm, seqLen);
-    const v = this.linear(`${prefix}.attn.to_v.weight`, `${prefix}.attn.to_v.bias`, norm, seqLen);
+    let q;
+    let k;
+    let v;
+    if (this.bundle.runQ4Linear3) {
+      const qkv = this.bundle.runQ4Linear3(
+        { weightName: `${prefix}.attn.to_q.weight`, biasName: `${prefix}.attn.to_q.bias` },
+        { weightName: `${prefix}.attn.to_k.weight`, biasName: `${prefix}.attn.to_k.bias` },
+        { weightName: `${prefix}.attn.to_v.weight`, biasName: `${prefix}.attn.to_v.bias` },
+        norm,
+        seqLen,
+      );
+      const part = seqLen * this.dim;
+      q = qkv.subarray(0, part);
+      k = qkv.subarray(part, part * 2);
+      v = qkv.subarray(part * 2, part * 3);
+    } else {
+      q = this.linear(`${prefix}.attn.to_q.weight`, `${prefix}.attn.to_q.bias`, norm, seqLen);
+      k = this.linear(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`, norm, seqLen);
+      v = this.linear(`${prefix}.attn.to_v.weight`, `${prefix}.attn.to_v.bias`, norm, seqLen);
+    }
     applyRotary(q, k, seqLen, this.heads, this.headDim);
     let attn = this.bundle.runAttention
       ? this.bundle.runAttention(q, k, v, seqLen, seqLen, this.heads, this.headDim, false, 0)
@@ -210,9 +227,19 @@ export class F5TTSQ4DiTRuntime {
     norm = this.bundle.runLayerNormAffine
       ? this.bundle.runLayerNormAffine(x, shiftMlp, scaleMlp, seqLen, this.dim, EPS)
       : layerNormAffineRows(x, shiftMlp, scaleMlp, seqLen, this.dim);
-    let ff = this.linear(`${prefix}.ff.ff.0.0.weight`, `${prefix}.ff.ff.0.0.bias`, norm, seqLen);
-    geluTanhInPlace(ff);
-    ff = this.linear(`${prefix}.ff.ff.2.weight`, `${prefix}.ff.ff.2.bias`, ff, seqLen);
+    let ff = this.bundle.runQ4Mlp
+      ? this.bundle.runQ4Mlp(
+          { weightName: `${prefix}.ff.ff.0.0.weight`, biasName: `${prefix}.ff.ff.0.0.bias` },
+          { weightName: `${prefix}.ff.ff.2.weight`, biasName: `${prefix}.ff.ff.2.bias` },
+          norm,
+          seqLen,
+          "gelu",
+        )
+      : this.linear(`${prefix}.ff.ff.0.0.weight`, `${prefix}.ff.ff.0.0.bias`, norm, seqLen);
+    if (!this.bundle.runQ4Mlp) {
+      geluTanhInPlace(ff);
+      ff = this.linear(`${prefix}.ff.ff.2.weight`, `${prefix}.ff.ff.2.bias`, ff, seqLen);
+    }
     return this.bundle.runGatedAddRows
       ? this.bundle.runGatedAddRows(x, ff, gateMlp, seqLen, this.dim)
       : gatedAddRows(x, ff, gateMlp, seqLen, this.dim);

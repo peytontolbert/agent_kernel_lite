@@ -133,18 +133,28 @@ export class Q4TensorBundleWASM {
     return out;
   }
 
+  q4LinearHandle(name, biasName = "") {
+    if (!this.wasm?.Q4LinearHandle) {
+      return null;
+    }
+    const key = `${name}:${biasName || ""}`;
+    let handle = this.q4LinearHandleCache.get(key);
+    if (handle) {
+      return handle;
+    }
+    const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
+    const shape = entry.shape;
+    const outDim = Number(shape[0]);
+    const inDim = Number(shape.slice(1).reduce((acc, value) => acc * Number(value), 1));
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    handle = new this.wasm.Q4LinearHandle(packedWeight, rowScalesF16, bias, inDim, outDim);
+    this.q4LinearHandleCache.set(key, handle);
+    return handle;
+  }
+
   runQ4Linear(name, input, rows = 1, biasName = "") {
     if (this.wasm?.Q4LinearHandle) {
-      let handle = this.q4LinearHandleCache.get(`${name}:${biasName || ""}`);
-      if (!handle) {
-        const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
-        const shape = entry.shape;
-        const outDim = Number(shape[0]);
-        const inDim = Number(shape.slice(1).reduce((acc, value) => acc * Number(value), 1));
-        const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
-        handle = new this.wasm.Q4LinearHandle(packedWeight, rowScalesF16, bias, inDim, outDim);
-        this.q4LinearHandleCache.set(`${name}:${biasName || ""}`, handle);
-      }
+      const handle = this.q4LinearHandle(name, biasName);
       return handle.forward(input instanceof Float32Array ? input : new Float32Array(input), rows);
     }
     const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
@@ -160,6 +170,32 @@ export class Q4TensorBundleWASM {
       rows,
       inDim,
       outDim,
+    );
+  }
+
+  runQ4Linear3(first, second, third, input, rows = 1) {
+    if (!this.wasm?.q4_linear3_f32 || !this.wasm?.Q4LinearHandle) {
+      throw new Error("q4_linear3_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.q4_linear3_f32(
+      this.q4LinearHandle(first.weightName, first.biasName || ""),
+      this.q4LinearHandle(second.weightName, second.biasName || ""),
+      this.q4LinearHandle(third.weightName, third.biasName || ""),
+      input instanceof Float32Array ? input : new Float32Array(input),
+      rows,
+    );
+  }
+
+  runQ4Mlp(first, second, input, rows = 1, activation = "gelu") {
+    if (!this.wasm?.q4_mlp_f32 || !this.wasm?.Q4LinearHandle) {
+      throw new Error("q4_mlp_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.q4_mlp_f32(
+      this.q4LinearHandle(first.weightName, first.biasName || ""),
+      this.q4LinearHandle(second.weightName, second.biasName || ""),
+      input instanceof Float32Array ? input : new Float32Array(input),
+      rows,
+      activation,
     );
   }
 
