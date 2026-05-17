@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v9';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v10';
 const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 938;

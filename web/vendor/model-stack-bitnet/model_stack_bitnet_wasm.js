@@ -528,6 +528,55 @@ export function gated_activation_f32(input, rows, cols, activation) {
 
 /**
  * @param {Float32Array} input
+ * @param {Float32Array} src
+ * @param {Float32Array} gate
+ * @param {number} rows
+ * @param {number} cols
+ * @returns {Float32Array}
+ */
+export function gated_add_rows_f32(input, src, gate, rows, cols) {
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(src, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF32ToWasm0(gate, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.gated_add_rows_f32(ptr0, len0, ptr1, len1, ptr2, len2, rows, cols);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
+/**
+ * @param {Float32Array} input
+ * @param {Float32Array} shift
+ * @param {Float32Array} scale
+ * @param {number} rows
+ * @param {number} cols
+ * @param {number} eps
+ * @returns {Float32Array}
+ */
+export function layer_norm_affine_f32(input, shift, scale, rows, cols, eps) {
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(shift, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF32ToWasm0(scale, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.layer_norm_affine_f32(ptr0, len0, ptr1, len1, ptr2, len2, rows, cols, eps);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
+}
+
+/**
+ * @param {Float32Array} input
  * @param {Float32Array} weight
  * @param {Float32Array} bias
  * @param {number} rows

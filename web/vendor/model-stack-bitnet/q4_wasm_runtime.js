@@ -165,6 +165,33 @@ export class Q4TensorBundleWASM {
       pastLen,
     );
   }
+
+  runLayerNormAffine(input, shift, scale, rows, cols, eps = 1e-6) {
+    if (!this.wasm?.layer_norm_affine_f32) {
+      throw new Error("layer_norm_affine_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.layer_norm_affine_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      shift instanceof Float32Array ? shift : new Float32Array(shift),
+      scale instanceof Float32Array ? scale : new Float32Array(scale),
+      rows,
+      cols,
+      eps,
+    );
+  }
+
+  runGatedAddRows(input, src, gate, rows, cols) {
+    if (!this.wasm?.gated_add_rows_f32) {
+      throw new Error("gated_add_rows_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.gated_add_rows_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      src instanceof Float32Array ? src : new Float32Array(src),
+      gate instanceof Float32Array ? gate : new Float32Array(gate),
+      rows,
+      cols,
+    );
+  }
 }
 
 function f16ToF32(bits) {

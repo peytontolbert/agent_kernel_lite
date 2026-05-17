@@ -1111,6 +1111,64 @@ pub fn layer_norm_f32(
 }
 
 #[wasm_bindgen]
+pub fn layer_norm_affine_f32(
+    input: &[f32],
+    shift: &[f32],
+    scale: &[f32],
+    rows: usize,
+    cols: usize,
+    eps: f32,
+) -> Result<Vec<f32>, JsValue> {
+    if rows == 0 || cols == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() < rows * cols || shift.len() < cols || scale.len() < cols {
+        return Err(JsValue::from_str("layer_norm_affine_f32 input shape mismatch"));
+    }
+    let mut output = vec![0.0f32; rows * cols];
+    for row in 0..rows {
+        let row_offset = row * cols;
+        let row_values = &input[row_offset..row_offset + cols];
+        let mean = row_values.iter().copied().sum::<f32>() / cols as f32;
+        let mut variance = 0.0f32;
+        for value in row_values {
+            let delta = *value - mean;
+            variance += delta * delta;
+        }
+        let inv = 1.0 / (variance / cols as f32 + eps).sqrt();
+        for col in 0..cols {
+            let normalized = (input[row_offset + col] - mean) * inv;
+            output[row_offset + col] = normalized * (1.0 + scale[col]) + shift[col];
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
+pub fn gated_add_rows_f32(
+    input: &[f32],
+    src: &[f32],
+    gate: &[f32],
+    rows: usize,
+    cols: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if rows == 0 || cols == 0 {
+        return Ok(Vec::new());
+    }
+    if input.len() < rows * cols || src.len() < rows * cols || gate.len() < cols {
+        return Err(JsValue::from_str("gated_add_rows_f32 input shape mismatch"));
+    }
+    let mut output = vec![0.0f32; rows * cols];
+    for row in 0..rows {
+        let offset = row * cols;
+        for col in 0..cols {
+            output[offset + col] = input[offset + col] + gate[col] * src[offset + col];
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
 pub fn attention_f32(
     q: &[f32],
     k: &[f32],

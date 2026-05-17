@@ -190,8 +190,9 @@ export class F5TTSQ4DiTRuntime {
     const scaleMlp = mod.subarray(this.dim * 4, this.dim * 5);
     const gateMlp = mod.subarray(this.dim * 5, this.dim * 6);
 
-    let norm = layerNormRows(input, null, null, seqLen, this.dim);
-    affineRowsInPlace(norm, shiftMsa, scaleMsa, seqLen, this.dim);
+    let norm = this.bundle.runLayerNormAffine
+      ? this.bundle.runLayerNormAffine(input, shiftMsa, scaleMsa, seqLen, this.dim, EPS)
+      : layerNormAffineRows(input, shiftMsa, scaleMsa, seqLen, this.dim);
 
     let q = this.linear(`${prefix}.attn.to_q.weight`, `${prefix}.attn.to_q.bias`, norm, seqLen);
     let k = this.linear(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`, norm, seqLen);
@@ -202,25 +203,28 @@ export class F5TTSQ4DiTRuntime {
       : attention(q, k, v, seqLen, this.heads, this.headDim);
     attn = this.linear(`${prefix}.attn.to_out.0.weight`, `${prefix}.attn.to_out.0.bias`, attn, seqLen);
 
-    const x = input.slice();
-    gatedAddRowsInPlace(x, attn, gateMsa, seqLen, this.dim);
+    const x = this.bundle.runGatedAddRows
+      ? this.bundle.runGatedAddRows(input, attn, gateMsa, seqLen, this.dim)
+      : gatedAddRows(input, attn, gateMsa, seqLen, this.dim);
 
-    norm = layerNormRows(x, null, null, seqLen, this.dim);
-    affineRowsInPlace(norm, shiftMlp, scaleMlp, seqLen, this.dim);
+    norm = this.bundle.runLayerNormAffine
+      ? this.bundle.runLayerNormAffine(x, shiftMlp, scaleMlp, seqLen, this.dim, EPS)
+      : layerNormAffineRows(x, shiftMlp, scaleMlp, seqLen, this.dim);
     let ff = this.linear(`${prefix}.ff.ff.0.0.weight`, `${prefix}.ff.ff.0.0.bias`, norm, seqLen);
     geluTanhInPlace(ff);
     ff = this.linear(`${prefix}.ff.ff.2.weight`, `${prefix}.ff.ff.2.bias`, ff, seqLen);
-    gatedAddRowsInPlace(x, ff, gateMlp, seqLen, this.dim);
-    return x;
+    return this.bundle.runGatedAddRows
+      ? this.bundle.runGatedAddRows(x, ff, gateMlp, seqLen, this.dim)
+      : gatedAddRows(x, ff, gateMlp, seqLen, this.dim);
   }
 
   finalAdaNorm(input, t, seqLen) {
     const mod = this.linear("transformer.norm_out.linear.weight", "transformer.norm_out.linear.bias", siluCopy(t), 1);
     const scale = mod.subarray(0, this.dim);
     const shift = mod.subarray(this.dim, this.dim * 2);
-    const x = layerNormRows(input, null, null, seqLen, this.dim);
-    affineRowsInPlace(x, shift, scale, seqLen, this.dim);
-    return x;
+    return this.bundle.runLayerNormAffine
+      ? this.bundle.runLayerNormAffine(input, shift, scale, seqLen, this.dim, EPS)
+      : layerNormAffineRows(input, shift, scale, seqLen, this.dim);
   }
 
   linear(weightName, biasName, input, rows) {
@@ -373,6 +377,18 @@ function gatedAddRowsInPlace(dst, src, gate, rows, cols) {
       dst[offset + col] += gate[col] * src[offset + col];
     }
   }
+}
+
+function gatedAddRows(input, src, gate, rows, cols) {
+  const out = input.slice();
+  gatedAddRowsInPlace(out, src, gate, rows, cols);
+  return out;
+}
+
+function layerNormAffineRows(input, shift, scale, rows, cols) {
+  const out = layerNormRows(input, null, null, rows, cols);
+  affineRowsInPlace(out, shift, scale, rows, cols);
+  return out;
 }
 
 function addInPlace(dst, src) {
