@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-v3';
+const RUNTIME_VERSION = '20260517-peyton-q4-v4';
 const SPEAK_PRESET = 'cond8-gen24-step1';
 
 const DEFAULTS = {

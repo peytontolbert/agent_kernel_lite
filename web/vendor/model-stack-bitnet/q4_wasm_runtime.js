@@ -4,7 +4,11 @@ function resolveUrl(path, baseUrl) {
   return new URL(path, baseUrl).toString();
 }
 
-function alignedSlice(buffer, offset, nbytes, TypedArray) {
+function tensorView(buffer, offset, nbytes, TypedArray) {
+  const elementBytes = TypedArray.BYTES_PER_ELEMENT || 1;
+  if (offset % elementBytes === 0) {
+    return new TypedArray(buffer, offset, Math.floor(nbytes / elementBytes));
+  }
   const bytes = new Uint8Array(buffer, offset, nbytes);
   const copy = new Uint8Array(nbytes);
   copy.set(bytes);
@@ -51,6 +55,9 @@ export class Q4TensorBundleWASM {
     this.q4Buffer = bundle.q4Buffer;
     this.denseBuffer = bundle.denseBuffer;
     this.wasm = bundle.wasm;
+    this.q4TensorCache = new Map();
+    this.denseTensorCache = new Map();
+    this.denseF32TensorCache = new Map();
   }
 
   static async fromManifestUrl(manifestUrl) {
@@ -67,41 +74,51 @@ export class Q4TensorBundleWASM {
   }
 
   q4Tensor(name) {
+    const cached = this.q4TensorCache.get(name);
+    if (cached) return cached;
     const entry = this.q4Index[name];
     if (!entry) {
       throw new Error(`Q4 tensor not found: ${name}`);
     }
-    return {
+    const tensor = {
       entry,
-      packedWeight: alignedSlice(this.q4Buffer, entry.offset, entry.nbytes, Uint8Array),
-      rowScalesF16: alignedSlice(this.q4Buffer, entry.scale_offset, entry.scale_nbytes, Uint16Array),
+      packedWeight: tensorView(this.q4Buffer, entry.offset, entry.nbytes, Uint8Array),
+      rowScalesF16: tensorView(this.q4Buffer, entry.scale_offset, entry.scale_nbytes, Uint16Array),
     };
+    this.q4TensorCache.set(name, tensor);
+    return tensor;
   }
 
   denseTensor(name) {
+    const cached = this.denseTensorCache.get(name);
+    if (cached) return cached;
     const entry = this.denseIndex[name];
     if (!entry) {
       throw new Error(`dense tensor not found: ${name}`);
     }
+    let tensor;
     if (entry.dtype === "float16") {
-      return alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Uint16Array);
+      tensor = tensorView(this.denseBuffer, entry.offset, entry.nbytes, Uint16Array);
+    } else if (entry.dtype === "float32") {
+      tensor = tensorView(this.denseBuffer, entry.offset, entry.nbytes, Float32Array);
+    } else if (entry.dtype === "bool_u8" || entry.dtype === "uint8") {
+      tensor = tensorView(this.denseBuffer, entry.offset, entry.nbytes, Uint8Array);
+    } else if (entry.dtype === "int64") {
+      tensor = tensorView(this.denseBuffer, entry.offset, entry.nbytes, BigInt64Array);
+    } else {
+      throw new Error(`unsupported dense dtype for ${name}: ${entry.dtype}`);
     }
-    if (entry.dtype === "float32") {
-      return alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Float32Array);
-    }
-    if (entry.dtype === "bool_u8" || entry.dtype === "uint8") {
-      return alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Uint8Array);
-    }
-    if (entry.dtype === "int64") {
-      return alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, BigInt64Array);
-    }
-    throw new Error(`unsupported dense dtype for ${name}: ${entry.dtype}`);
+    this.denseTensorCache.set(name, tensor);
+    return tensor;
   }
 
   denseF32Tensor(name) {
+    const cached = this.denseF32TensorCache.get(name);
+    if (cached) return cached;
     const entry = this.denseIndex[name];
     const raw = this.denseTensor(name);
     if (entry.dtype === "float32") {
+      this.denseF32TensorCache.set(name, raw);
       return raw;
     }
     if (entry.dtype !== "float16") {
@@ -111,6 +128,7 @@ export class Q4TensorBundleWASM {
     for (let i = 0; i < raw.length; i += 1) {
       out[i] = f16ToF32(raw[i]);
     }
+    this.denseF32TensorCache.set(name, out);
     return out;
   }
 
