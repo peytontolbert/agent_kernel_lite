@@ -1366,8 +1366,8 @@ async function speakPeytonVoiceText(text) {
     ensureVoiceWorker().postMessage({
       type: 'speak',
       text: promptText,
-      condSeqLen: 4,
-      genFrames: 8,
+      condSeqLen: 8,
+      genFrames: 24,
       steps: 1,
     });
   } catch (error) {
