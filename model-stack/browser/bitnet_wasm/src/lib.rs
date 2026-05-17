@@ -1466,15 +1466,6 @@ fn f16_to_f32(bits: u16) -> f32 {
     f32::from_bits(out)
 }
 
-fn decode_signed_i4(nibble: u8) -> f32 {
-    let value = (nibble & 0x0f) as i8;
-    if value >= 8 {
-        (value - 16) as f32
-    } else {
-        value as f32
-    }
-}
-
 #[wasm_bindgen]
 pub fn q4_symmetric_linear_f32(
     input: &[f32],
@@ -1500,22 +1491,31 @@ pub fn q4_symmetric_linear_f32(
     }
 
     let mut output = vec![0.0f32; rows * out_dim];
-    for row in 0..rows {
-        let input_row = &input[row * in_dim..(row + 1) * in_dim];
-        for out_idx in 0..out_dim {
-            let weight_row = &packed_weight[out_idx * packed_cols..(out_idx + 1) * packed_cols];
-            let scale = f16_to_f32(row_scales_f16[out_idx]);
+    let even_in_dim = in_dim & !1;
+    for out_idx in 0..out_dim {
+        let weight_row = &packed_weight[out_idx * packed_cols..(out_idx + 1) * packed_cols];
+        let scale = f16_to_f32(row_scales_f16[out_idx]);
+        let bias = bias_values.get(out_idx).copied().unwrap_or(0.0);
+        for row in 0..rows {
+            let input_row = &input[row * in_dim..(row + 1) * in_dim];
             let mut acc = 0.0f32;
-            for (packed_col, packed) in weight_row.iter().enumerate() {
-                let col = packed_col * 2;
-                let lo = decode_signed_i4(*packed);
-                acc += input_row[col] * lo;
-                if col + 1 < in_dim {
-                    let hi = decode_signed_i4(*packed >> 4);
-                    acc += input_row[col + 1] * hi;
-                }
+            let mut col = 0usize;
+            let mut packed_col = 0usize;
+            while col < even_in_dim {
+                let packed = weight_row[packed_col];
+                let lo = (packed & 0x0f) as i8;
+                let hi = (packed >> 4) as i8;
+                let lo = if lo >= 8 { lo - 16 } else { lo } as f32;
+                let hi = if hi >= 8 { hi - 16 } else { hi } as f32;
+                acc += input_row[col] * lo + input_row[col + 1] * hi;
+                col += 2;
+                packed_col += 1;
             }
-            let bias = bias_values.get(out_idx).copied().unwrap_or(0.0);
+            if col < in_dim {
+                let lo = (weight_row[packed_col] & 0x0f) as i8;
+                let lo = if lo >= 8 { lo - 16 } else { lo } as f32;
+                acc += input_row[col] * lo;
+            }
             output[row * out_dim + out_idx] = acc * scale + bias;
         }
     }
