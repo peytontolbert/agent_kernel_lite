@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v22-peyton-wasm-q4-handle-voice';
-const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-wasm-v14';
+const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-wasm-v15';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1357,24 +1357,39 @@ async function speakPeytonVoice() {
 }
 
 async function speakPeytonVoiceText(text) {
-  if (state.voice.busy) return;
+  if (state.voice.busy) {
+    const detail = 'Peyton voice is already generating';
+    log(detail);
+    if (els.voiceModeDetail) els.voiceModeDetail.textContent = detail;
+    if (!state.liveStatusNode?.isConnected) startLiveStatus('Peyton voice');
+    updateLiveStatus('generate', 'active', detail);
+    return;
+  }
   const promptText = String(text || '').trim() || 'This is Peyton speaking from Agent Kernel Lite.';
   state.voice.busy = true;
+  startLiveStatus(`Peyton voice: ${shortText(promptText, 80)}`);
+  updateLiveStatus('runtime', 'active', 'Starting Peyton voice worker');
   syncVoiceControls();
   syncModelControls();
   try {
     await loadVoiceRuntime();
+    updateLiveStatus('runtime', 'done', 'Peyton voice runtime ready');
+    updateLiveStatus('generate', 'active', 'Queued voice generation');
+    const mobilePreview = NATIVE_APP;
     log(`Peyton voice prompt: ${shortText(promptText, 80)}`);
     ensureVoiceWorker().postMessage({
       type: 'speak',
       text: promptText,
       runtimeVersion: VOICE_RUNTIME_VERSION,
       condSeqLen: 64,
-      steps: 8,
-      cfgStrength: 2.0,
+      steps: mobilePreview ? 2 : 8,
+      cfgStrength: mobilePreview ? 1.5 : 2.0,
+      genFrames: mobilePreview ? 96 : undefined,
     });
   } catch (error) {
     state.voice.busy = false;
+    updateLiveStatus('runtime', 'error', error.message || String(error));
+    finishLiveStatus('Error');
     appendMessage('assistant', `Peyton voice could not load: ${error.message || String(error)}`);
     log(`Peyton voice load failed: ${error.message || String(error)}`);
     syncVoiceControls();
@@ -1387,6 +1402,10 @@ function onVoiceWorkerMessage(event) {
   if (data.type === 'status') {
     log(`Peyton voice: ${data.detail || 'working'}`);
     if (els.voiceModeDetail) els.voiceModeDetail.textContent = data.detail || 'Peyton voice working';
+    const detail = data.detail || 'Peyton voice working';
+    const lower = detail.toLowerCase();
+    const step = lower.includes('decoding') ? 'render' : lower.includes('loading') || lower.includes('runtime') ? 'runtime' : 'generate';
+    updateLiveStatus(step, 'active', detail);
     return;
   }
   if (data.type === 'ready') {
@@ -1411,6 +1430,8 @@ function onVoiceWorkerMessage(event) {
     }
     appendVoiceMessage(data, state.voice.audioUrl);
     log(`Peyton voice rendered ${formatCount(data.samples)} samples${data.preset ? ` (${data.preset})` : ''}`);
+    updateLiveStatus('render', 'done', `Rendered ${formatCount(data.samples)} samples`);
+    finishLiveStatus('Voice Ready');
     syncVoiceControls();
     syncModelControls();
     return;
@@ -1419,6 +1440,8 @@ function onVoiceWorkerMessage(event) {
     const error = new Error(data.error || 'voice generation error');
     if (state.voice.loadPromise) settleVoiceRuntime(error);
     state.voice.busy = false;
+    updateLiveStatus('generate', 'error', error.message);
+    finishLiveStatus('Error');
     appendMessage('assistant', `Peyton voice failed: ${error.message}`);
     log(`Peyton voice failed: ${error.message}`);
     syncVoiceControls();

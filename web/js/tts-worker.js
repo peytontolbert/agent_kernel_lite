@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v14';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v15';
 const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 938;
@@ -84,6 +84,7 @@ async function speak(message) {
     const duration = condSeqLen + genFrames;
     const textIds = tokenize(`${REFERENCE_TEXT} ${chunk}`, runtime.vocabMap, duration);
 
+    postMessage({ type: 'status', detail: `Preparing WASM F5 session ${index + 1}/${chunks.length}` });
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
     const mel = runtime.f5.sampleMel({
       condMel,
