@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v17';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v18';
 const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 938;
@@ -64,7 +64,9 @@ async function loadRuntime() {
 }
 
 async function speak(message) {
+  const startedAt = performance.now();
   const runtime = await loadRuntime();
+  const loadedAt = performance.now();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, 64, 2, 96);
   const steps = clampInt(message.steps, 8, 1, 32);
@@ -75,8 +77,11 @@ async function speak(message) {
 
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
+  const conditionedAt = performance.now();
   const audioParts = [];
   let totalSamples = 0;
+  let generationMs = 0;
+  let decodeMs = 0;
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
@@ -86,6 +91,7 @@ async function speak(message) {
 
     postMessage({ type: 'status', detail: `Preparing WASM F5 session ${index + 1}/${chunks.length}` });
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
+    const generateStartedAt = performance.now();
     const mel = runtime.f5.sampleMel({
       condMel,
       condSeqLen,
@@ -94,10 +100,13 @@ async function speak(message) {
       steps,
       cfgStrength,
     });
+    generationMs += performance.now() - generateStartedAt;
 
     postMessage({ type: 'status', detail: `Decoding waveform ${index + 1}/${chunks.length}` });
     const targetMel = mel.subarray(condSeqLen * runtime.f5.melDim);
+    const decodeStartedAt = performance.now();
     const audio = runtime.vocos.decode(targetMel);
+    decodeMs += performance.now() - decodeStartedAt;
     audioParts.push(audio);
     totalSamples += audio.length;
   }
@@ -113,6 +122,13 @@ async function speak(message) {
     preset,
     runtimeVersion: message.runtimeVersion || RUNTIME_VERSION,
     chunks: chunks.length,
+    timing: {
+      loadMs: Math.round(loadedAt - startedAt),
+      conditioningMs: Math.round(conditionedAt - loadedAt),
+      generationMs: Math.round(generationMs),
+      decodeMs: Math.round(decodeMs),
+      totalMs: Math.round(performance.now() - startedAt),
+    },
     wav,
   }, [wav]);
 }

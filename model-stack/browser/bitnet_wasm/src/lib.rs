@@ -1968,8 +1968,12 @@ impl F5Q4DiTSession {
         in_dim: usize,
         out_dim: usize,
     ) -> Result<(), JsValue> {
-        self.q4_raw.insert(name.to_string(), Q4RawTensor::new(packed_weight, row_scales_f16, bias_values, in_dim, out_dim)?);
-        if packed_weight.len() >= out_dim * in_dim.div_ceil(2) {
+        let is_conv = name.contains(".conv") || name.contains("dwconv");
+        let has_padded_rows = packed_weight.len() >= out_dim * in_dim.div_ceil(2);
+        if is_conv || !has_padded_rows {
+            self.q4_raw.insert(name.to_string(), Q4RawTensor::new(packed_weight, row_scales_f16, bias_values, in_dim, out_dim)?);
+        }
+        if !is_conv && has_padded_rows {
             let handle = Q4LinearHandle::new(packed_weight, row_scales_f16, bias_values, in_dim, out_dim)?;
             self.q4.insert(name.to_string(), handle);
         }
