@@ -1835,9 +1835,12 @@ pub fn q4_mlp_f32(
     if first.out_dim != second.in_dim {
         return Err(JsValue::from_str("q4_mlp_f32 linear dimensions do not match"));
     }
-    let hidden = first.run_impl(input, rows)?;
-    let activated = activate_impl(&hidden, activation);
-    second.run_impl(&activated, rows)
+    let mut hidden = first.run_impl(input, rows)?;
+    let use_gelu = activation.eq_ignore_ascii_case("gelu");
+    for value in &mut hidden {
+        *value = if use_gelu { gelu_scalar(*value) } else { silu_scalar(*value) };
+    }
+    second.run_impl(&hidden, rows)
 }
 
 #[wasm_bindgen]
@@ -1867,7 +1870,41 @@ pub fn f5_dit_block_f32(
     for value in &mut t {
         *value = silu_scalar(*value);
     }
-    let modulation = attn_norm.run_impl(&t, 1)?;
+    f5_dit_block_silu_t(
+        attn_norm,
+        to_q,
+        to_k,
+        to_v,
+        to_out,
+        ff_in,
+        ff_out,
+        input,
+        &t,
+        seq_len,
+        dim,
+        heads,
+        head_dim,
+        eps,
+    )
+}
+
+fn f5_dit_block_silu_t(
+    attn_norm: &Q4LinearHandle,
+    to_q: &Q4LinearHandle,
+    to_k: &Q4LinearHandle,
+    to_v: &Q4LinearHandle,
+    to_out: &Q4LinearHandle,
+    ff_in: &Q4LinearHandle,
+    ff_out: &Q4LinearHandle,
+    input: &[f32],
+    silu_time_embedding: &[f32],
+    seq_len: usize,
+    dim: usize,
+    heads: usize,
+    head_dim: usize,
+    eps: f32,
+) -> Result<Vec<f32>, JsValue> {
+    let modulation = attn_norm.run_impl(silu_time_embedding, 1)?;
     if modulation.len() < dim * 6 {
         return Err(JsValue::from_str("f5_dit_block_f32 modulation shape mismatch"));
     }
@@ -2066,12 +2103,16 @@ impl F5Q4DiTSession {
         }
         let seq_len = x.len() / self.mel_dim;
         let t = self.time_embedding(time)?;
+        let mut t_silu = t.clone();
+        for value in &mut t_silu {
+            *value = silu_scalar(*value);
+        }
         let text = self.text_embedding(text_ids, seq_len, drop_text)?;
         let mut hidden = self.input_embedding(x, cond, &text, seq_len, drop_audio_cond)?;
         for block in 0..self.depth {
-            hidden = self.dit_block(block, &hidden, &t, seq_len)?;
+            hidden = self.dit_block(block, &hidden, &t_silu, seq_len)?;
         }
-        hidden = self.final_ada_norm(&hidden, &t, seq_len)?;
+        hidden = self.final_ada_norm(&hidden, &t_silu, seq_len)?;
         self.linear("transformer.proj_out.weight", &hidden, seq_len)
     }
 
@@ -2149,9 +2190,9 @@ impl F5Q4DiTSession {
         Ok(pos)
     }
 
-    fn dit_block(&self, block: usize, input: &[f32], t: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
+    fn dit_block(&self, block: usize, input: &[f32], t_silu: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
         let prefix = format!("transformer.transformer_blocks.{}", block);
-        f5_dit_block_f32(
+        f5_dit_block_silu_t(
             self.q4(&format!("{}.attn_norm.linear.weight", prefix))?,
             self.q4(&format!("{}.attn.to_q.weight", prefix))?,
             self.q4(&format!("{}.attn.to_k.weight", prefix))?,
@@ -2160,7 +2201,7 @@ impl F5Q4DiTSession {
             self.q4(&format!("{}.ff.ff.0.0.weight", prefix))?,
             self.q4(&format!("{}.ff.ff.2.weight", prefix))?,
             input,
-            t,
+            t_silu,
             seq_len,
             self.dim,
             self.heads,
@@ -2169,12 +2210,8 @@ impl F5Q4DiTSession {
         )
     }
 
-    fn final_ada_norm(&self, input: &[f32], t: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
-        let mut t_act = t.to_vec();
-        for value in &mut t_act {
-            *value = silu_scalar(*value);
-        }
-        let modulation = self.linear("transformer.norm_out.linear.weight", &t_act, 1)?;
+    fn final_ada_norm(&self, input: &[f32], t_silu: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
+        let modulation = self.linear("transformer.norm_out.linear.weight", t_silu, 1)?;
         if modulation.len() < self.dim * 2 {
             return Err(JsValue::from_str("F5 final modulation shape mismatch"));
         }
