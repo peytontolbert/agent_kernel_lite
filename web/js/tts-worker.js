@@ -5,11 +5,13 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v20';
-const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
-const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v21';
+const SPEAK_PRESET = 'custom-wasm-shortref-cond64-duration-cfg2-step8';
+const REFERENCE_TEXT = "Hi, I'm";
 const REFERENCE_MEL_FRAMES = 938;
-const REFERENCE_TEXT_BYTES = new TextEncoder().encode(REFERENCE_TEXT).length;
+const FULL_REFERENCE_TEXT_BYTES = 146;
+const REFERENCE_FRAMES_PER_TEXT_BYTE = REFERENCE_MEL_FRAMES / FULL_REFERENCE_TEXT_BYTES;
+const REFERENCE_AUDIO_START_SEC = 0.48;
 const MAX_DURATION_FRAMES = 384;
 
 const DEFAULTS = {
@@ -59,7 +61,10 @@ async function loadRuntime() {
         f5,
         vocos: new VocosMel24khzRuntime(vocosBundle),
         vocosBundle,
-        refSamples: wav.samples,
+        refSamples: wav.samples.subarray(Math.min(
+          wav.samples.length,
+          Math.max(0, Math.round(REFERENCE_AUDIO_START_SEC * wav.sampleRate)),
+        )),
         vocabMap,
         detail: `${RUNTIME_VERSION} | ${f5Id} | ${vocosId} | ${SPEAK_PRESET}`,
       };
@@ -223,12 +228,12 @@ function splitTextForSpeech(text) {
 
 function estimateTargetFrames(text) {
   const bytes = new TextEncoder().encode(String(text || '').trim()).length;
-  return Math.ceil((REFERENCE_MEL_FRAMES / REFERENCE_TEXT_BYTES) * bytes);
+  return Math.ceil(REFERENCE_FRAMES_PER_TEXT_BYTE * bytes);
 }
 
 function maxChunkChars() {
   const maxGenFrames = MAX_DURATION_FRAMES - 64;
-  return Math.max(24, Math.floor(maxGenFrames / (REFERENCE_MEL_FRAMES / REFERENCE_TEXT_BYTES)));
+  return Math.max(24, Math.floor(maxGenFrames / REFERENCE_FRAMES_PER_TEXT_BYTE));
 }
 
 function concatFloat32(parts, totalLength) {

@@ -1,6 +1,6 @@
 {
   "schema": "agent_kernel_lite_mobile_app_source",
-  "generated_at": "2026-05-17T17:15:15.057Z",
+  "generated_at": "2026-05-18T13:01:54.477Z",
   "source": "../../web",
   "bundled_app": "./app/",
   "excluded": [
