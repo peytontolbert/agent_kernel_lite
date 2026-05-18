@@ -17,6 +17,12 @@ export class F5TTSQ4DiTRuntime {
     this.depth = options.depth || DEPTH;
   }
 
+  prepareSession() {
+    if (this.bundle.prepareF5Session) {
+      this.bundle.prepareF5Session();
+    }
+  }
+
   forward({ x, cond, textIds, time = 0.5, dropAudioCond = false, dropText = false }) {
     if (this.bundle.runF5Forward) {
       return this.bundle.runF5Forward({ x, cond, textIds, time, dropAudioCond, dropText });

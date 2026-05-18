@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v19';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v20';
 const SPEAK_PRESET = 'custom-wasm-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 938;
@@ -50,8 +50,13 @@ async function loadRuntime() {
       const vocabMap = buildVocabMap(vocabText);
       const f5Id = f5Bundle.manifest?.model_id || 'f5tts-peyton-q4';
       const vocosId = vocosBundle.manifest?.model_id || 'vocos-q4';
+      const f5 = new F5TTSQ4DiTRuntime(f5Bundle);
+      postMessage({ type: 'status', detail: 'Preparing F5 WASM session' });
+      const sessionStartedAt = performance.now();
+      f5.prepareSession();
+      postMessage({ type: 'status', detail: `F5 WASM session ready (${Math.round(performance.now() - sessionStartedAt)} ms)` });
       return {
-        f5: new F5TTSQ4DiTRuntime(f5Bundle),
+        f5,
         vocos: new VocosMel24khzRuntime(vocosBundle),
         vocosBundle,
         refSamples: wav.samples,

@@ -249,6 +249,10 @@ export class Q4TensorBundleWASM {
     return session;
   }
 
+  prepareF5Session() {
+    return this.f5Session();
+  }
+
   runF5Forward({ x, cond, textIds, time = 0.5, dropAudioCond = false, dropText = false }) {
     const session = this.f5Session();
     if (!session) {
