@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v22-peyton-wasm-q4-handle-voice';
-const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-wasm-v16';
+const VOICE_RUNTIME_VERSION = '20260517-peyton-q4-wasm-v17';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1375,7 +1375,6 @@ async function speakPeytonVoiceText(text) {
     await loadVoiceRuntime();
     updateLiveStatus('runtime', 'done', 'Peyton voice runtime ready');
     updateLiveStatus('generate', 'active', 'Queued voice generation');
-    const mobilePreview = NATIVE_APP;
     log(`Peyton voice prompt: ${shortText(promptText, 80)}`);
     ensureVoiceWorker().postMessage({
       type: 'speak',
@@ -1384,7 +1383,6 @@ async function speakPeytonVoiceText(text) {
       condSeqLen: 64,
       steps: 8,
       cfgStrength: 2.0,
-      genFrames: mobilePreview ? 96 : undefined,
     });
   } catch (error) {
     state.voice.busy = false;
