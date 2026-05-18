@@ -5,7 +5,7 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v21';
+const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v22';
 const SPEAK_PRESET = 'custom-wasm-shortref-cond64-duration-cfg2-step8';
 const REFERENCE_TEXT = "Hi, I'm";
 const REFERENCE_MEL_FRAMES = 938;

@@ -8,14 +8,19 @@ import { FP16TensorBundle, SAMPLE_RATE, VocosMel24khzRuntime } from "../../model
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
-const wasmPkg = path.join(repoRoot, "model-stack/browser/bitnet/pkg");
+const wasmPkg = path.join(repoRoot, "web/vendor/model-stack-bitnet");
 const defaultF5Bundle = "/data/resumebot/checkpoints/f5tts_peyton_q4_v0";
 const defaultVocosBundle = "/data/resumebot/checkpoints/vocos_mel_24khz_q4_v0";
-const defaultRefWav = "/data/resumebot/voice_profiles/Peyton/sample_0.wav";
-const defaultVocab = "/data/resumebot/checkpoints/F5TTS_Base_vocab.txt";
+const defaultRefWav = path.join(repoRoot, "apps/mobile/www/app/voice/peyton/sample_0.wav");
+const defaultVocab = path.join(repoRoot, "apps/mobile/www/app/voice/peyton/F5TTS_Base_vocab.txt");
 const outDir = path.join(here, "out");
+const referenceText = "Hi, I'm";
+const referenceAudioStartSec = 0.48;
+const referenceMelFrames = 938;
+const fullReferenceTextBytes = 146;
+const referenceFramesPerTextByte = referenceMelFrames / fullReferenceTextBytes;
 
-const { default: initWasm, q4_symmetric_linear_f32 } = await import(
+const { default: initWasm, q4_symmetric_linear_f32, F5Q4DiTSession, Q4LinearHandle } = await import(
   pathToFileURL(path.join(wasmPkg, "model_stack_bitnet_wasm.js")).href
 );
 
@@ -47,6 +52,8 @@ class NodeQ4Bundle {
     this.q4Buffer = fs.readFileSync(path.join(bundleDir, this.manifest.files.q4));
     this.denseBuffer = fs.readFileSync(path.join(bundleDir, this.manifest.files.dense));
     this.denseCache = new Map();
+    this.q4LinearHandleCache = new Map();
+    this.f5SessionCache = null;
   }
 
   q4Tensor(name) {
@@ -72,12 +79,67 @@ class NodeQ4Bundle {
   }
 
   runQ4Linear(name, input, rows = 1, biasName = "") {
+    if (Q4LinearHandle) {
+      return this.q4LinearHandle(name, biasName).forward(input instanceof Float32Array ? input : new Float32Array(input), rows);
+    }
     const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
     const shape = entry.shape.map(Number);
     const outDim = shape[0];
     const inDim = shape.slice(1).reduce((acc, value) => acc * value, 1);
     const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
     return q4_symmetric_linear_f32(input, packedWeight, rowScalesF16, bias, rows, inDim, outDim);
+  }
+
+  q4LinearHandle(name, biasName = "") {
+    const key = `${name}:${biasName || ""}`;
+    const cached = this.q4LinearHandleCache.get(key);
+    if (cached) return cached;
+    const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
+    const shape = entry.shape.map(Number);
+    const outDim = shape[0];
+    const inDim = shape.slice(1).reduce((acc, value) => acc * value, 1);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    const handle = new Q4LinearHandle(packedWeight, rowScalesF16, bias, inDim, outDim);
+    this.q4LinearHandleCache.set(key, handle);
+    return handle;
+  }
+
+  f5Session() {
+    if (this.f5SessionCache) return this.f5SessionCache;
+    const session = new F5Q4DiTSession();
+    for (const name of Object.keys(this.q4Index)) {
+      const { entry, packedWeight, rowScalesF16 } = this.q4Tensor(name);
+      const shape = entry.shape.map(Number);
+      const outDim = shape[0];
+      const inDim = shape.slice(1).reduce((acc, value) => acc * value, 1);
+      const biasName = name.endsWith(".weight") ? `${name.slice(0, -".weight".length)}.bias` : "";
+      const bias = biasName && this.denseIndex[biasName] ? this.denseF32Tensor(biasName) : new Float32Array(0);
+      session.add_q4_tensor(name, packedWeight, rowScalesF16, bias, inDim, outDim);
+    }
+    for (const [name, entry] of Object.entries(this.denseIndex)) {
+      if (entry.dtype === "float16" || entry.dtype === "float32") {
+        session.add_dense_f32(name, this.denseF32Tensor(name));
+      }
+    }
+    this.f5SessionCache = session;
+    return session;
+  }
+
+  prepareF5Session() {
+    return this.f5Session();
+  }
+
+  runF5SampleMel({ condMel, condSeqLen, textIds, duration, steps, cfgStrength, swaySamplingCoef = -1.0, seed = 1337 }) {
+    return this.f5Session().sample_mel(
+      condMel instanceof Float32Array ? condMel : new Float32Array(condMel),
+      condSeqLen,
+      textIds instanceof Int32Array ? textIds : new Int32Array(textIds),
+      duration,
+      steps,
+      cfgStrength,
+      swaySamplingCoef,
+      seed,
+    );
   }
 }
 
@@ -132,28 +194,36 @@ function writeWav(filePath, samples, sampleRate) {
 const f5BundleDir = process.argv[2] || defaultF5Bundle;
 const vocosBundleDir = process.argv[3] || defaultVocosBundle;
 const refWav = process.argv[4] || defaultRefWav;
-const text = process.argv[5] || "This is Peyton speaking from the local int4 browser stack.";
-const condSeqLen = Number(process.argv[6] || 4);
-const genFrames = Number(process.argv[7] || 4);
+const text = process.argv[5] || "This is Peyton speaking from Agent Kernel Lite.";
+const condSeqLen = Number(process.argv[6] || 64);
+const genFrames = Number(process.argv[7] || Math.ceil(new TextEncoder().encode(text.trim()).length * referenceFramesPerTextByte));
+const steps = Number(process.argv[8] || 8);
+const cfgStrength = Number(process.argv[9] || 2.0);
 const duration = condSeqLen + genFrames;
 
 await initWasm({ module_or_path: fs.readFileSync(path.join(wasmPkg, "model_stack_bitnet_wasm_bg.wasm")) });
 const vocosBundle = loadVocosBundle(vocosBundleDir);
 const wavBytes = fs.readFileSync(refWav);
 const wav = decodeWavMono(wavBytes.buffer.slice(wavBytes.byteOffset, wavBytes.byteOffset + wavBytes.byteLength));
-const { mel: refMel, frames: refFrames } = vocosMelFromMono(wav.samples, vocosBundle, { maxFrames: condSeqLen });
+const refStartSample = Math.min(wav.samples.length, Math.max(0, Math.round(referenceAudioStartSec * wav.sampleRate)));
+const { mel: refMel, frames: refFrames } = vocosMelFromMono(wav.samples.subarray(refStartSample), vocosBundle, { maxFrames: condSeqLen });
 if (refFrames < condSeqLen) {
   throw new Error(`reference wav only yielded ${refFrames} mel frames`);
 }
 
 const f5 = new F5TTSQ4DiTRuntime(new NodeQ4Bundle(f5BundleDir));
+const sessionStarted = Date.now();
+f5.prepareSession();
+const sessionMs = Date.now() - sessionStarted;
 const vocos = new VocosMel24khzRuntime(vocosBundle);
-const textIds = tokenize(text, defaultVocab, duration);
+const textIds = tokenize(`${referenceText} ${text}`, defaultVocab, duration);
 
 const started = Date.now();
-const mel = f5.sampleMel({ condMel: refMel, condSeqLen, textIds, duration, steps: 1, cfgStrength: 0.0 });
-const audio = vocos.decode(mel);
-const elapsedMs = Date.now() - started;
+const mel = f5.sampleMel({ condMel: refMel, condSeqLen, textIds, duration, steps, cfgStrength });
+const generationMs = Date.now() - started;
+const decodeStarted = Date.now();
+const audio = vocos.decode(mel.subarray(condSeqLen * 100));
+const decodeMs = Date.now() - decodeStarted;
 
 let finite = true;
 let peak = 0;
@@ -171,15 +241,21 @@ writeWav(wavPath, audio, SAMPLE_RATE);
 console.log(JSON.stringify({
   refWav,
   text,
+  referenceText,
+  refStartSample,
   condSeqLen,
   genFrames,
   duration,
+  steps,
+  cfgStrength,
   audioSamples: audio.length,
   wavPath,
   finite,
   peak: Number(peak.toFixed(6)),
   checksum: Number(checksum.toFixed(6)),
-  elapsedMs,
+  sessionMs,
+  generationMs,
+  decodeMs,
 }, null, 2));
 
 if (!finite || audio.length <= 0) process.exitCode = 1;

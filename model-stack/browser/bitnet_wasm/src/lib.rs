@@ -2051,12 +2051,23 @@ impl F5Q4DiTSession {
         cond[..cond_mel.len()].copy_from_slice(cond_mel);
         let mut y = gaussian_vec(duration * self.mel_dim, seed);
         let times = make_f5_time_grid(steps, sway_sampling_coef);
+        let text = self.text_embedding(text_ids, duration, false)?;
+        let null_text = if cfg_strength.abs() >= 1e-5 {
+            Some(self.text_embedding(text_ids, duration, true)?)
+        } else {
+            None
+        };
         for step in 0..steps {
             let t = times[step];
             let dt = times[step + 1] - times[step];
-            let pred = self.forward_impl(&y, &cond, text_ids, t, false, false)?;
-            if cfg_strength.abs() >= 1e-5 {
-                let null_pred = self.forward_impl(&y, &cond, text_ids, t, true, true)?;
+            let t_emb = self.time_embedding(t)?;
+            let mut t_silu = t_emb.clone();
+            for value in &mut t_silu {
+                *value = silu_scalar(*value);
+            }
+            let pred = self.forward_impl_with_text(&y, &cond, &text, &t_silu, false)?;
+            if let Some(null_text) = null_text.as_ref() {
+                let null_pred = self.forward_impl_with_text(&y, &cond, null_text, &t_silu, true)?;
                 for idx in 0..y.len() {
                     let flow = pred[idx] + (pred[idx] - null_pred[idx]) * cfg_strength;
                     y[idx] += dt * flow;
@@ -2108,7 +2119,25 @@ impl F5Q4DiTSession {
             *value = silu_scalar(*value);
         }
         let text = self.text_embedding(text_ids, seq_len, drop_text)?;
-        let mut hidden = self.input_embedding(x, cond, &text, seq_len, drop_audio_cond)?;
+        self.forward_impl_with_text(x, cond, &text, &t_silu, drop_audio_cond)
+    }
+
+    fn forward_impl_with_text(
+        &self,
+        x: &[f32],
+        cond: &[f32],
+        text: &[f32],
+        t_silu: &[f32],
+        drop_audio_cond: bool,
+    ) -> Result<Vec<f32>, JsValue> {
+        if x.len() % self.mel_dim != 0 || cond.len() != x.len() {
+            return Err(JsValue::from_str("F5Q4DiTSession forward shape mismatch"));
+        }
+        let seq_len = x.len() / self.mel_dim;
+        if text.len() != seq_len * self.text_dim {
+            return Err(JsValue::from_str("F5Q4DiTSession text embedding shape mismatch"));
+        }
+        let mut hidden = self.input_embedding(x, cond, text, seq_len, drop_audio_cond)?;
         for block in 0..self.depth {
             hidden = self.dit_block(block, &hidden, &t_silu, seq_len)?;
         }
