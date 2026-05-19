@@ -65,6 +65,21 @@ export class Q4TensorBundleWASM {
   static async fromManifestUrl(manifestUrl) {
     const manifest = await fetchJson(manifestUrl);
     const baseUrl = new URL(".", manifestUrl).toString();
+    if (manifest.files?.index && manifest.files?.tensors && !manifest.files?.q4) {
+      const [wasm, denseIndex, denseBuffer] = await Promise.all([
+        ensureQ4Wasm(),
+        fetchJson(resolveUrl(manifest.files.index, baseUrl)),
+        fetchBuffer(resolveUrl(manifest.files.tensors, baseUrl)),
+      ]);
+      return new Q4TensorBundleWASM({
+        manifest,
+        q4Index: {},
+        denseIndex,
+        q4Buffer: new ArrayBuffer(0),
+        denseBuffer,
+        wasm,
+      });
+    }
     const [wasm, q4Index, denseIndex, q4Buffer, denseBuffer] = await Promise.all([
       ensureQ4Wasm(),
       fetchJson(resolveUrl(manifest.files.q4_index, baseUrl)),

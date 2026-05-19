@@ -326,6 +326,98 @@ export class F5Q4DiTSession {
         }
     }
     /**
+     * @param {number} block
+     * @param {Float32Array} input
+     * @param {Float32Array} time_embedding
+     * @param {number} seq_len
+     * @returns {Float32Array}
+     */
+    debug_dit_block(block, input, time_embedding, seq_len) {
+        const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(time_embedding, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.f5q4ditsession_debug_dit_block(this.__wbg_ptr, block, ptr0, len0, ptr1, len1, seq_len);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v3;
+    }
+    /**
+     * @param {Float32Array} input
+     * @param {Float32Array} time_embedding
+     * @param {number} seq_len
+     * @returns {Float32Array}
+     */
+    debug_final_ada_norm(input, time_embedding, seq_len) {
+        const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(time_embedding, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.f5q4ditsession_debug_final_ada_norm(this.__wbg_ptr, ptr0, len0, ptr1, len1, seq_len);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v3;
+    }
+    /**
+     * @param {Float32Array} x
+     * @param {Float32Array} cond
+     * @param {Float32Array} text
+     * @param {number} seq_len
+     * @param {boolean} drop_audio_cond
+     * @returns {Float32Array}
+     */
+    debug_input_embedding(x, cond, text, seq_len, drop_audio_cond) {
+        const ptr0 = passArrayF32ToWasm0(x, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(cond, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayF32ToWasm0(text, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.f5q4ditsession_debug_input_embedding(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, seq_len, drop_audio_cond);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v4;
+    }
+    /**
+     * @param {Int32Array} text_ids
+     * @param {number} seq_len
+     * @param {boolean} drop_text
+     * @returns {Float32Array}
+     */
+    debug_text_embedding(text_ids, seq_len, drop_text) {
+        const ptr0 = passArray32ToWasm0(text_ids, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.f5q4ditsession_debug_text_embedding(this.__wbg_ptr, ptr0, len0, seq_len, drop_text);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v2;
+    }
+    /**
+     * @param {number} time
+     * @returns {Float32Array}
+     */
+    debug_time_embedding(time) {
+        const ret = wasm.f5q4ditsession_debug_time_embedding(this.__wbg_ptr, time);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * @param {Float32Array} x
      * @param {Float32Array} cond
      * @param {Int32Array} text_ids

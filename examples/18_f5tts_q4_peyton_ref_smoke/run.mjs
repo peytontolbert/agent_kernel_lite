@@ -10,14 +10,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../..");
 const wasmPkg = path.join(repoRoot, "web/vendor/model-stack-bitnet");
 const defaultF5Bundle = "/data/resumebot/checkpoints/f5tts_peyton_q4_v0";
-const defaultVocosBundle = "/data/resumebot/checkpoints/vocos_mel_24khz_q4_v0";
+const defaultVocosBundle = "/data/resumebot/checkpoints/vocos_mel_24khz_fp16_v0";
 const defaultRefWav = path.join(repoRoot, "apps/mobile/www/app/voice/peyton/sample_0.wav");
 const defaultVocab = path.join(repoRoot, "apps/mobile/www/app/voice/peyton/F5TTS_Base_vocab.txt");
 const outDir = path.join(here, "out");
-const referenceText = "Hi, I'm";
-const referenceAudioStartSec = 0.48;
-const referenceMelFrames = 938;
-const fullReferenceTextBytes = 146;
+const defaultReferenceText = "Hi, I'm recording this sample to create a ";
+const referenceAudioStartSec = 0.0;
+const referenceMelFrames = 256;
+const fullReferenceTextBytes = 42;
 const referenceFramesPerTextByte = referenceMelFrames / fullReferenceTextBytes;
 
 const { default: initWasm, q4_symmetric_linear_f32, F5Q4DiTSession, Q4LinearHandle } = await import(
@@ -70,10 +70,16 @@ class NodeQ4Bundle {
     if (this.denseCache.has(name)) return this.denseCache.get(name);
     const entry = this.denseIndex[name];
     if (!entry) throw new Error(`dense tensor not found: ${name}`);
-    if (entry.dtype !== "float16") throw new Error(`unsupported dense dtype for ${name}: ${entry.dtype}`);
-    const raw = alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Uint16Array);
-    const out = new Float32Array(raw.length);
-    for (let i = 0; i < raw.length; i += 1) out[i] = f16ToF32(raw[i]);
+    let out;
+    if (entry.dtype === "float32") {
+      out = alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Float32Array);
+    } else if (entry.dtype === "float16") {
+      const raw = alignedSlice(this.denseBuffer, entry.offset, entry.nbytes, Uint16Array);
+      out = new Float32Array(raw.length);
+      for (let i = 0; i < raw.length; i += 1) out[i] = f16ToF32(raw[i]);
+    } else {
+      throw new Error(`unsupported dense dtype for ${name}: ${entry.dtype}`);
+    }
     this.denseCache.set(name, out);
     return out;
   }
@@ -195,10 +201,12 @@ const f5BundleDir = process.argv[2] || defaultF5Bundle;
 const vocosBundleDir = process.argv[3] || defaultVocosBundle;
 const refWav = process.argv[4] || defaultRefWav;
 const text = process.argv[5] || "This is Peyton speaking from Agent Kernel Lite.";
-const condSeqLen = Number(process.argv[6] || 64);
+const condSeqLen = Number(process.argv[6] || referenceMelFrames);
 const genFrames = Number(process.argv[7] || Math.ceil(new TextEncoder().encode(text.trim()).length * referenceFramesPerTextByte));
-const steps = Number(process.argv[8] || 8);
+const steps = Number(process.argv[8] || 12);
 const cfgStrength = Number(process.argv[9] || 2.0);
+const referenceText = process.argv[10] || defaultReferenceText;
+const outputStartFrame = Number(process.argv[11] || condSeqLen);
 const duration = condSeqLen + genFrames;
 
 await initWasm({ module_or_path: fs.readFileSync(path.join(wasmPkg, "model_stack_bitnet_wasm_bg.wasm")) });
@@ -216,13 +224,14 @@ const sessionStarted = Date.now();
 f5.prepareSession();
 const sessionMs = Date.now() - sessionStarted;
 const vocos = new VocosMel24khzRuntime(vocosBundle);
-const textIds = tokenize(`${referenceText} ${text}`, defaultVocab, duration);
+const textIds = tokenize(`${referenceText}${text}`, defaultVocab, duration);
 
 const started = Date.now();
 const mel = f5.sampleMel({ condMel: refMel, condSeqLen, textIds, duration, steps, cfgStrength });
 const generationMs = Date.now() - started;
 const decodeStarted = Date.now();
-const audio = vocos.decode(mel.subarray(condSeqLen * 100));
+const generatedMel = mel.subarray(outputStartFrame * 100);
+const audio = vocos.decode(generatedMel);
 const decodeMs = Date.now() - decodeStarted;
 
 let finite = true;
@@ -236,7 +245,9 @@ for (const value of audio) {
 
 fs.mkdirSync(outDir, { recursive: true });
 const wavPath = path.join(outDir, "peyton_ref_q4_vocos_smoke.wav");
+const melPath = path.join(outDir, "peyton_ref_q4_generated_mel.f32");
 writeWav(wavPath, audio, SAMPLE_RATE);
+fs.writeFileSync(melPath, Buffer.from(generatedMel.buffer, generatedMel.byteOffset, generatedMel.byteLength));
 
 console.log(JSON.stringify({
   refWav,
@@ -244,12 +255,15 @@ console.log(JSON.stringify({
   referenceText,
   refStartSample,
   condSeqLen,
+  outputStartFrame,
   genFrames,
   duration,
   steps,
   cfgStrength,
   audioSamples: audio.length,
   wavPath,
+  melPath,
+  melFrames: generatedMel.length / 100,
   finite,
   peak: Number(peak.toFixed(6)),
   checksum: Number(checksum.toFixed(6)),

@@ -12,6 +12,7 @@ const sourceWeb = resolve(repoRoot, 'web');
 const bundledApp = resolve(mobileRoot, 'www', 'app');
 const bundledModelName = 'agentkernel_lite_100m_bitnet_12000';
 const sourceModel = resolve(sourceWeb, 'models', bundledModelName);
+const bundledExtraModelNames = ['vocos_mel_24khz_fp16_v0'];
 const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
 const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
@@ -43,6 +44,12 @@ await cp(sourceWeb, bundledApp, {
 });
 
 await cp(sourceModel, resolve(bundledApp, 'models', bundledModelName), { recursive: true });
+for (const modelName of bundledExtraModelNames) {
+  const modelPath = resolve(sourceWeb, 'models', modelName);
+  if (await exists(modelPath)) {
+    await cp(modelPath, resolve(bundledApp, 'models', modelName), { recursive: true });
+  }
+}
 
 if (await exists(packagedVoice)) {
   await cp(packagedVoice, bundledApp, { recursive: true });
@@ -83,6 +90,7 @@ await writeFile(
       speaker: 'Peyton',
       f5tts_q4: './app/models/f5tts_peyton_q4_v0/manifest.json',
       vocos_q4: './app/models/vocos_mel_24khz_q4_v0/manifest.json',
+      vocos_fp16: './app/models/vocos_mel_24khz_fp16_v0/manifest.json',
       reference_wav: './app/voice/peyton/sample_0.wav',
       vocab: './app/voice/peyton/F5TTS_Base_vocab.txt',
     },

@@ -5,18 +5,17 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260517-peyton-q4-wasm-v22';
-const SPEAK_PRESET = 'custom-wasm-shortref-cond64-duration-cfg2-step8';
-const REFERENCE_TEXT = "Hi, I'm";
-const REFERENCE_MEL_FRAMES = 938;
-const FULL_REFERENCE_TEXT_BYTES = 146;
+const RUNTIME_VERSION = '20260519-peyton-f5-q4-w4fpact-vocos-fp16-local';
+const SPEAK_PRESET = 'custom-wasm-f5-q4w4fpact-vocosfp16-cond256-duration-cfg2-step12';
+const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
+const REFERENCE_MEL_FRAMES = 256;
+const FULL_REFERENCE_TEXT_BYTES = 42;
 const REFERENCE_FRAMES_PER_TEXT_BYTE = REFERENCE_MEL_FRAMES / FULL_REFERENCE_TEXT_BYTES;
-const REFERENCE_AUDIO_START_SEC = 0.48;
-const MAX_DURATION_FRAMES = 384;
+const MAX_DURATION_FRAMES = 1536;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
-  vocosManifest: '../models/vocos_mel_24khz_q4_v0/manifest.json',
+  vocosManifest: '../models/vocos_mel_24khz_fp16_v0/manifest.json',
   refWav: '../voice/peyton/sample_0.wav',
   vocab: '../voice/peyton/F5TTS_Base_vocab.txt',
 };
@@ -42,7 +41,7 @@ async function loadRuntime() {
     runtimePromise = (async () => {
       postMessage({ type: 'status', detail: 'Loading Peyton Q4 F5TTS' });
       const f5Bundle = await Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest));
-      postMessage({ type: 'status', detail: 'Loading Vocos Q4' });
+      postMessage({ type: 'status', detail: 'Loading Vocos FP16' });
       const vocosBundle = await Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.vocosManifest));
       const [refAudioBuffer, vocabText] = await Promise.all([
         fetchArrayBuffer(versionedUrl(DEFAULTS.refWav)),
@@ -61,10 +60,7 @@ async function loadRuntime() {
         f5,
         vocos: new VocosMel24khzRuntime(vocosBundle),
         vocosBundle,
-        refSamples: wav.samples.subarray(Math.min(
-          wav.samples.length,
-          Math.max(0, Math.round(REFERENCE_AUDIO_START_SEC * wav.sampleRate)),
-        )),
+        refSamples: wav.samples,
         vocabMap,
         detail: `${RUNTIME_VERSION} | ${f5Id} | ${vocosId} | ${SPEAK_PRESET}`,
       };
@@ -78,8 +74,8 @@ async function speak(message) {
   const runtime = await loadRuntime();
   const loadedAt = performance.now();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
-  const condSeqLen = clampInt(message.condSeqLen, 64, 2, 96);
-  const steps = clampInt(message.steps, 8, 1, 32);
+  const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
+  const steps = clampInt(message.steps, 12, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
   const chunks = splitTextForSpeech(text);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
@@ -97,7 +93,7 @@ async function speak(message) {
     const chunk = chunks[index];
     const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 96, MAX_DURATION_FRAMES - condSeqLen);
     const duration = condSeqLen + genFrames;
-    const textIds = tokenize(`${REFERENCE_TEXT} ${chunk}`, runtime.vocabMap, duration);
+    const textIds = tokenize(`${REFERENCE_TEXT}${chunk}`, runtime.vocabMap, duration);
 
     postMessage({ type: 'status', detail: `Preparing WASM F5 session ${index + 1}/${chunks.length}` });
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
