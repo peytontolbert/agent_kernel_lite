@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "check": "node --check www/app/js/agent-kernel-app.js && node --check www/app/js/llm-worker.js && node --check scripts/sync-web.mjs && node --check scripts/prepare-packaged-assets.mjs && node --check scripts/register-ios-local-plugins.mjs",
+    "check:tts": "node ../../scripts/harden_f5tts_wasm_kernel.mjs",
+    "check:tts:full": "node ../../scripts/harden_f5tts_wasm_kernel.mjs --full",
     "prepare:assets": "node scripts/prepare-packaged-assets.mjs",
     "sync:web": "node scripts/sync-web.mjs",
     "sync": "npm run sync:web && cap sync && node scripts/register-ios-local-plugins.mjs",
