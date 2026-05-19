@@ -346,6 +346,35 @@ export class F5Q4DiTSession {
         return v3;
     }
     /**
+     * @param {number} block
+     * @param {Float32Array} input
+     * @param {Float32Array} time_embedding
+     * @param {number} seq_len
+     * @returns {string}
+     */
+    debug_dit_block_profile_json(block, input, time_embedding, seq_len) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArrayF32ToWasm0(time_embedding, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.f5q4ditsession_debug_dit_block_profile_json(this.__wbg_ptr, block, ptr0, len0, ptr1, len1, seq_len);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * @param {Float32Array} input
      * @param {Float32Array} time_embedding
      * @param {number} seq_len
@@ -889,6 +918,36 @@ export function layer_norm_f32(input, weight, bias, rows, cols, eps) {
  * @param {Uint16Array} row_scales_f16
  * @param {Float32Array} bias_values
  * @param {number} seq_len
+ * @param {number} in_channels
+ * @param {number} out_channels
+ * @param {number} kernel
+ * @param {number} padding
+ * @returns {Float32Array}
+ */
+export function q4_conv1d_f32(input, packed_weight, row_scales_f16, bias_values, seq_len, in_channels, out_channels, kernel, padding) {
+    const ptr0 = passArrayF32ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(packed_weight, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray16ToWasm0(row_scales_f16, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArrayF32ToWasm0(bias_values, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.q4_conv1d_f32(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, seq_len, in_channels, out_channels, kernel, padding);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v5 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v5;
+}
+
+/**
+ * @param {Float32Array} input
+ * @param {Uint8Array} packed_weight
+ * @param {Uint16Array} row_scales_f16
+ * @param {Float32Array} bias_values
+ * @param {number} seq_len
  * @param {number} channels
  * @param {number} kernel
  * @param {number} padding
@@ -1021,6 +1080,10 @@ function __wbg_get_imports() {
         __proto__: null,
         __wbg___wbindgen_throw_9c75d47bf9e7731e: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_now_37d9e24e05ce8b2e: function() {
+            const ret = Date.now();
+            return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.

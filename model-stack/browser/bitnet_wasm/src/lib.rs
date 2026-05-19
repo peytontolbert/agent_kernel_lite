@@ -2,6 +2,12 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = Date, js_name = now)]
+    fn date_now() -> f64;
+}
+
 const HEADER_LEN: usize = 13;
 const IDX_FORMAT_VERSION: usize = 0;
 const IDX_TILE_N: usize = 1;
@@ -2127,6 +2133,184 @@ fn dot8_unpacked_i8_f32_pair(
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[target_feature(enable = "simd128")]
+unsafe fn dot4_unpacked_i8_f32_six_simd(
+    input: &[f32],
+    row: usize,
+    in_dim: usize,
+    weight_a0: &[i8],
+    weight_b0: &[i8],
+    weight_c0: &[i8],
+    weight_a1: &[i8],
+    weight_b1: &[i8],
+    weight_c1: &[i8],
+) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
+    use core::arch::wasm32::*;
+
+    let mut a0 = f32x4_splat(0.0);
+    let mut a1 = f32x4_splat(0.0);
+    let mut a2 = f32x4_splat(0.0);
+    let mut a3 = f32x4_splat(0.0);
+    let mut b0 = f32x4_splat(0.0);
+    let mut b1 = f32x4_splat(0.0);
+    let mut b2 = f32x4_splat(0.0);
+    let mut b3 = f32x4_splat(0.0);
+    let mut c0 = f32x4_splat(0.0);
+    let mut c1 = f32x4_splat(0.0);
+    let mut c2 = f32x4_splat(0.0);
+    let mut c3 = f32x4_splat(0.0);
+    let mut d0 = f32x4_splat(0.0);
+    let mut d1 = f32x4_splat(0.0);
+    let mut d2 = f32x4_splat(0.0);
+    let mut d3 = f32x4_splat(0.0);
+    let mut e0 = f32x4_splat(0.0);
+    let mut e1 = f32x4_splat(0.0);
+    let mut e2 = f32x4_splat(0.0);
+    let mut e3 = f32x4_splat(0.0);
+    let mut f0 = f32x4_splat(0.0);
+    let mut f1 = f32x4_splat(0.0);
+    let mut f2 = f32x4_splat(0.0);
+    let mut f3 = f32x4_splat(0.0);
+    let mut col = 0usize;
+    while col + 3 < in_dim {
+        let wa0 = f32x4(
+            *weight_a0.get_unchecked(col) as f32,
+            *weight_a0.get_unchecked(col + 1) as f32,
+            *weight_a0.get_unchecked(col + 2) as f32,
+            *weight_a0.get_unchecked(col + 3) as f32,
+        );
+        let wb0 = f32x4(
+            *weight_b0.get_unchecked(col) as f32,
+            *weight_b0.get_unchecked(col + 1) as f32,
+            *weight_b0.get_unchecked(col + 2) as f32,
+            *weight_b0.get_unchecked(col + 3) as f32,
+        );
+        let wc0 = f32x4(
+            *weight_c0.get_unchecked(col) as f32,
+            *weight_c0.get_unchecked(col + 1) as f32,
+            *weight_c0.get_unchecked(col + 2) as f32,
+            *weight_c0.get_unchecked(col + 3) as f32,
+        );
+        let wa1 = f32x4(
+            *weight_a1.get_unchecked(col) as f32,
+            *weight_a1.get_unchecked(col + 1) as f32,
+            *weight_a1.get_unchecked(col + 2) as f32,
+            *weight_a1.get_unchecked(col + 3) as f32,
+        );
+        let wb1 = f32x4(
+            *weight_b1.get_unchecked(col) as f32,
+            *weight_b1.get_unchecked(col + 1) as f32,
+            *weight_b1.get_unchecked(col + 2) as f32,
+            *weight_b1.get_unchecked(col + 3) as f32,
+        );
+        let wc1 = f32x4(
+            *weight_c1.get_unchecked(col) as f32,
+            *weight_c1.get_unchecked(col + 1) as f32,
+            *weight_c1.get_unchecked(col + 2) as f32,
+            *weight_c1.get_unchecked(col + 3) as f32,
+        );
+        let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
+        let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
+        let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
+        let x3 = v128_load(input.as_ptr().add((row + 3) * in_dim + col) as *const v128);
+        a0 = f32x4_add(a0, f32x4_mul(x0, wa0));
+        a1 = f32x4_add(a1, f32x4_mul(x1, wa0));
+        a2 = f32x4_add(a2, f32x4_mul(x2, wa0));
+        a3 = f32x4_add(a3, f32x4_mul(x3, wa0));
+        b0 = f32x4_add(b0, f32x4_mul(x0, wb0));
+        b1 = f32x4_add(b1, f32x4_mul(x1, wb0));
+        b2 = f32x4_add(b2, f32x4_mul(x2, wb0));
+        b3 = f32x4_add(b3, f32x4_mul(x3, wb0));
+        c0 = f32x4_add(c0, f32x4_mul(x0, wc0));
+        c1 = f32x4_add(c1, f32x4_mul(x1, wc0));
+        c2 = f32x4_add(c2, f32x4_mul(x2, wc0));
+        c3 = f32x4_add(c3, f32x4_mul(x3, wc0));
+        d0 = f32x4_add(d0, f32x4_mul(x0, wa1));
+        d1 = f32x4_add(d1, f32x4_mul(x1, wa1));
+        d2 = f32x4_add(d2, f32x4_mul(x2, wa1));
+        d3 = f32x4_add(d3, f32x4_mul(x3, wa1));
+        e0 = f32x4_add(e0, f32x4_mul(x0, wb1));
+        e1 = f32x4_add(e1, f32x4_mul(x1, wb1));
+        e2 = f32x4_add(e2, f32x4_mul(x2, wb1));
+        e3 = f32x4_add(e3, f32x4_mul(x3, wb1));
+        f0 = f32x4_add(f0, f32x4_mul(x0, wc1));
+        f1 = f32x4_add(f1, f32x4_mul(x1, wc1));
+        f2 = f32x4_add(f2, f32x4_mul(x2, wc1));
+        f3 = f32x4_add(f3, f32x4_mul(x3, wc1));
+        col += 4;
+    }
+    let mut out_a0 = [sum_f32x4(a0), sum_f32x4(a1), sum_f32x4(a2), sum_f32x4(a3)];
+    let mut out_b0 = [sum_f32x4(b0), sum_f32x4(b1), sum_f32x4(b2), sum_f32x4(b3)];
+    let mut out_c0 = [sum_f32x4(c0), sum_f32x4(c1), sum_f32x4(c2), sum_f32x4(c3)];
+    let mut out_a1 = [sum_f32x4(d0), sum_f32x4(d1), sum_f32x4(d2), sum_f32x4(d3)];
+    let mut out_b1 = [sum_f32x4(e0), sum_f32x4(e1), sum_f32x4(e2), sum_f32x4(e3)];
+    let mut out_c1 = [sum_f32x4(f0), sum_f32x4(f1), sum_f32x4(f2), sum_f32x4(f3)];
+    while col < in_dim {
+        let wa0 = *weight_a0.get_unchecked(col) as f32;
+        let wb0 = *weight_b0.get_unchecked(col) as f32;
+        let wc0 = *weight_c0.get_unchecked(col) as f32;
+        let wa1 = *weight_a1.get_unchecked(col) as f32;
+        let wb1 = *weight_b1.get_unchecked(col) as f32;
+        let wc1 = *weight_c1.get_unchecked(col) as f32;
+        for local_row in 0..4 {
+            let x = *input.get_unchecked((row + local_row) * in_dim + col);
+            out_a0[local_row] += x * wa0;
+            out_b0[local_row] += x * wb0;
+            out_c0[local_row] += x * wc0;
+            out_a1[local_row] += x * wa1;
+            out_b1[local_row] += x * wb1;
+            out_c1[local_row] += x * wc1;
+        }
+        col += 1;
+    }
+    (out_a0, out_b0, out_c0, out_a1, out_b1, out_c1)
+}
+
+fn dot4_unpacked_i8_f32_six(
+    input: &[f32],
+    row: usize,
+    in_dim: usize,
+    weight_a0: &[i8],
+    weight_b0: &[i8],
+    weight_c0: &[i8],
+    weight_a1: &[i8],
+    weight_b1: &[i8],
+    weight_c1: &[i8],
+) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return unsafe { dot4_unpacked_i8_f32_six_simd(input, row, in_dim, weight_a0, weight_b0, weight_c0, weight_a1, weight_b1, weight_c1) };
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let mut out_a0 = [0.0f32; 4];
+        let mut out_b0 = [0.0f32; 4];
+        let mut out_c0 = [0.0f32; 4];
+        let mut out_a1 = [0.0f32; 4];
+        let mut out_b1 = [0.0f32; 4];
+        let mut out_c1 = [0.0f32; 4];
+        for col in 0..in_dim {
+            let wa0 = weight_a0[col] as f32;
+            let wb0 = weight_b0[col] as f32;
+            let wc0 = weight_c0[col] as f32;
+            let wa1 = weight_a1[col] as f32;
+            let wb1 = weight_b1[col] as f32;
+            let wc1 = weight_c1[col] as f32;
+            for local_row in 0..4 {
+                let x = input[(row + local_row) * in_dim + col];
+                out_a0[local_row] += x * wa0;
+                out_b0[local_row] += x * wb0;
+                out_c0[local_row] += x * wc0;
+                out_a1[local_row] += x * wa1;
+                out_b1[local_row] += x * wb1;
+                out_c1[local_row] += x * wc1;
+            }
+        }
+        (out_a0, out_b0, out_c0, out_a1, out_b1, out_c1)
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
 unsafe fn dot8_unpacked_i8_f32_triple_simd(
     input: &[f32],
     row: usize,
@@ -3234,7 +3418,79 @@ pub fn q4_linear3_f32(
     let out_dim = first.out_dim;
     let mut out = vec![0.0f32; rows * out_dim * 3];
     let part = rows * out_dim;
-    for out_idx in 0..out_dim {
+    let mut out_idx = 0usize;
+    while out_idx + 1 < out_dim {
+        let weight_a = &first.unpacked_weight[out_idx * first.in_dim..(out_idx + 1) * first.in_dim];
+        let weight_b = &second.unpacked_weight[out_idx * second.in_dim..(out_idx + 1) * second.in_dim];
+        let weight_c = &third.unpacked_weight[out_idx * third.in_dim..(out_idx + 1) * third.in_dim];
+        let weight_a_next = &first.unpacked_weight[(out_idx + 1) * first.in_dim..(out_idx + 2) * first.in_dim];
+        let weight_b_next = &second.unpacked_weight[(out_idx + 1) * second.in_dim..(out_idx + 2) * second.in_dim];
+        let weight_c_next = &third.unpacked_weight[(out_idx + 1) * third.in_dim..(out_idx + 2) * third.in_dim];
+        let scale_a = first.row_scales[out_idx];
+        let scale_b = second.row_scales[out_idx];
+        let scale_c = third.row_scales[out_idx];
+        let scale_a_next = first.row_scales[out_idx + 1];
+        let scale_b_next = second.row_scales[out_idx + 1];
+        let scale_c_next = third.row_scales[out_idx + 1];
+        let bias_a = first.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_b = second.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_c = third.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_a_next = first.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let bias_b_next = second.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let bias_c_next = third.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let mut row = 0usize;
+        while row + 3 < rows {
+            let (dot_a, dot_b, dot_c, dot_a_next, dot_b_next, dot_c_next) = dot4_unpacked_i8_f32_six(
+                input,
+                row,
+                first.in_dim,
+                weight_a,
+                weight_b,
+                weight_c,
+                weight_a_next,
+                weight_b_next,
+                weight_c_next,
+            );
+            for local_row in 0..4 {
+                let dst = (row + local_row) * out_dim + out_idx;
+                out[dst] = dot_a[local_row] * scale_a + bias_a;
+                out[dst + 1] = dot_a_next[local_row] * scale_a_next + bias_a_next;
+                out[part + dst] = dot_b[local_row] * scale_b + bias_b;
+                out[part + dst + 1] = dot_b_next[local_row] * scale_b_next + bias_b_next;
+                out[part * 2 + dst] = dot_c[local_row] * scale_c + bias_c;
+                out[part * 2 + dst + 1] = dot_c_next[local_row] * scale_c_next + bias_c_next;
+            }
+            row += 4;
+        }
+        while row < rows {
+            let input_row = &input[row * first.in_dim..(row + 1) * first.in_dim];
+            let mut dot_a = 0.0f32;
+            let mut dot_b = 0.0f32;
+            let mut dot_c = 0.0f32;
+            let mut dot_a_next = 0.0f32;
+            let mut dot_b_next = 0.0f32;
+            let mut dot_c_next = 0.0f32;
+            for col in 0..first.in_dim {
+                let value = input_row[col];
+                dot_a += value * weight_a[col] as f32;
+                dot_b += value * weight_b[col] as f32;
+                dot_c += value * weight_c[col] as f32;
+                dot_a_next += value * weight_a_next[col] as f32;
+                dot_b_next += value * weight_b_next[col] as f32;
+                dot_c_next += value * weight_c_next[col] as f32;
+            }
+            let dst = row * out_dim + out_idx;
+            out[dst] = dot_a * scale_a + bias_a;
+            out[dst + 1] = dot_a_next * scale_a_next + bias_a_next;
+            out[part + dst] = dot_b * scale_b + bias_b;
+            out[part + dst + 1] = dot_b_next * scale_b_next + bias_b_next;
+            out[part * 2 + dst] = dot_c * scale_c + bias_c;
+            out[part * 2 + dst + 1] = dot_c_next * scale_c_next + bias_c_next;
+            row += 1;
+        }
+        out_idx += 2;
+    }
+    while out_idx < out_dim {
         let weight_a = &first.unpacked_weight[out_idx * first.in_dim..(out_idx + 1) * first.in_dim];
         let weight_b = &second.unpacked_weight[out_idx * second.in_dim..(out_idx + 1) * second.in_dim];
         let weight_c = &third.unpacked_weight[out_idx * third.in_dim..(out_idx + 1) * third.in_dim];
@@ -3272,6 +3528,7 @@ pub fn q4_linear3_f32(
             out[part * 2 + dst] = dot_c * scale_c + bias_c;
             row += 1;
         }
+        out_idx += 1;
     }
     Ok(out)
 }
@@ -3770,6 +4027,110 @@ impl F5Q4DiTSession {
     ) -> Result<Vec<f32>, JsValue> {
         let (rotary_cos, rotary_sin) = make_rotary_f5_cache(seq_len, self.head_dim)?;
         self.dit_block_cached_rotary(block, input, time_embedding, seq_len, &rotary_cos, &rotary_sin)
+    }
+
+    pub fn debug_dit_block_profile_json(
+        &self,
+        block: usize,
+        input: &[f32],
+        time_embedding: &[f32],
+        seq_len: usize,
+    ) -> Result<String, JsValue> {
+        if input.len() != seq_len * self.dim {
+            return Err(JsValue::from_str("F5 debug block profile input shape mismatch"));
+        }
+        let prefix = format!("transformer.transformer_blocks.{}", block);
+        let attn_norm = self.q4(&format!("{}.attn_norm.linear.weight", prefix))?;
+        let to_q = self.q4(&format!("{}.attn.to_q.weight", prefix))?;
+        let to_k = self.q4(&format!("{}.attn.to_k.weight", prefix))?;
+        let to_v = self.q4(&format!("{}.attn.to_v.weight", prefix))?;
+        let to_out = self.q4(&format!("{}.attn.to_out.0.weight", prefix))?;
+        let ff_in = self.q4(&format!("{}.ff.ff.0.0.weight", prefix))?;
+        let ff_out = self.q4(&format!("{}.ff.ff.2.weight", prefix))?;
+        let mut marks: Vec<(&str, f64)> = Vec::new();
+        let started = date_now();
+
+        let (rotary_cos, rotary_sin) = make_rotary_f5_cache(seq_len, self.head_dim)?;
+        marks.push(("rotary_cache", date_now()));
+
+        let modulation = attn_norm.run_impl(time_embedding, 1)?;
+        if modulation.len() < self.dim * 6 {
+            return Err(JsValue::from_str("F5 debug block profile modulation shape mismatch"));
+        }
+        let shift_msa = &modulation[0..self.dim];
+        let scale_msa = &modulation[self.dim..self.dim * 2];
+        let gate_msa = &modulation[self.dim * 2..self.dim * 3];
+        let shift_mlp = &modulation[self.dim * 3..self.dim * 4];
+        let scale_mlp = &modulation[self.dim * 4..self.dim * 5];
+        let gate_mlp = &modulation[self.dim * 5..self.dim * 6];
+        marks.push(("modulation", date_now()));
+
+        let mut norm = vec![0.0f32; seq_len * self.dim];
+        layer_norm_affine_into(input, shift_msa, scale_msa, seq_len, self.dim, 1e-6, &mut norm)?;
+        marks.push(("norm_msa", date_now()));
+
+        let mut qkv = q4_linear3_f32(to_q, to_k, to_v, &norm, seq_len)?;
+        marks.push(("qkv", date_now()));
+
+        let part = seq_len * self.dim;
+        {
+            let (q, rest) = qkv.split_at_mut(part);
+            let (k, _) = rest.split_at_mut(part);
+            apply_rotary_f5_cached(q, k, seq_len, self.heads, self.head_dim, &rotary_cos, &rotary_sin)?;
+        }
+        marks.push(("rotary_apply", date_now()));
+
+        let attn = attention_impl_kv_head_major(
+            &qkv[0..part],
+            &qkv[part..part * 2],
+            &qkv[part * 2..part * 3],
+            seq_len,
+            seq_len,
+            self.heads,
+            self.head_dim,
+            false,
+            0,
+        )?;
+        marks.push(("attention", date_now()));
+
+        let attn = to_out.run_impl(&attn, seq_len)?;
+        marks.push(("attn_out", date_now()));
+
+        let mut x = vec![0.0f32; seq_len * self.dim];
+        gated_add_rows_into(input, &attn, gate_msa, seq_len, self.dim, &mut x)?;
+        marks.push(("gate_msa", date_now()));
+
+        layer_norm_affine_into(&x, shift_mlp, scale_mlp, seq_len, self.dim, 1e-6, &mut norm)?;
+        marks.push(("norm_mlp", date_now()));
+
+        let mut hidden = ff_in.run_impl(&norm, seq_len)?;
+        marks.push(("ff_in", date_now()));
+        for value in &mut hidden {
+            *value = gelu_scalar(*value);
+        }
+        marks.push(("gelu", date_now()));
+        let ff = ff_out.run_impl(&hidden, seq_len)?;
+        marks.push(("ff_out", date_now()));
+
+        let mut output = vec![0.0f32; seq_len * self.dim];
+        gated_add_rows_into(&x, &ff, gate_mlp, seq_len, self.dim, &mut output)?;
+        marks.push(("gate_mlp", date_now()));
+
+        let mut previous = started;
+        let mut fields = Vec::new();
+        for (name, at) in marks {
+            fields.push(format!("\"{}\":{:.3}", name, at - previous));
+            previous = at;
+        }
+        let checksum: f64 = output.iter().take(4096).map(|value| *value as f64).sum();
+        Ok(format!(
+            "{{\"block\":{},\"seqLen\":{},\"totalMs\":{:.3},\"checksum\":{:.6},\"timings\":{{{}}}}}",
+            block,
+            seq_len,
+            previous - started,
+            checksum,
+            fields.join(",")
+        ))
     }
 
     pub fn debug_final_ada_norm(&self, input: &[f32], time_embedding: &[f32], seq_len: usize) -> Result<Vec<f32>, JsValue> {
