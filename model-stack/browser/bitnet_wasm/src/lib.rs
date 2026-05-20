@@ -2133,6 +2133,140 @@ fn dot8_unpacked_i8_f32_pair(
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[target_feature(enable = "simd128")]
+unsafe fn dot4_unpacked_i8_f32_quad_simd(
+    input: &[f32],
+    row: usize,
+    in_dim: usize,
+    weight_a: &[i8],
+    weight_b: &[i8],
+    weight_c: &[i8],
+    weight_d: &[i8],
+) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
+    use core::arch::wasm32::*;
+
+    let mut a0 = f32x4_splat(0.0);
+    let mut a1 = f32x4_splat(0.0);
+    let mut a2 = f32x4_splat(0.0);
+    let mut a3 = f32x4_splat(0.0);
+    let mut b0 = f32x4_splat(0.0);
+    let mut b1 = f32x4_splat(0.0);
+    let mut b2 = f32x4_splat(0.0);
+    let mut b3 = f32x4_splat(0.0);
+    let mut c0 = f32x4_splat(0.0);
+    let mut c1 = f32x4_splat(0.0);
+    let mut c2 = f32x4_splat(0.0);
+    let mut c3 = f32x4_splat(0.0);
+    let mut d0 = f32x4_splat(0.0);
+    let mut d1 = f32x4_splat(0.0);
+    let mut d2 = f32x4_splat(0.0);
+    let mut d3 = f32x4_splat(0.0);
+    let mut col = 0usize;
+    while col + 3 < in_dim {
+        let wa = f32x4(
+            *weight_a.get_unchecked(col) as f32,
+            *weight_a.get_unchecked(col + 1) as f32,
+            *weight_a.get_unchecked(col + 2) as f32,
+            *weight_a.get_unchecked(col + 3) as f32,
+        );
+        let wb = f32x4(
+            *weight_b.get_unchecked(col) as f32,
+            *weight_b.get_unchecked(col + 1) as f32,
+            *weight_b.get_unchecked(col + 2) as f32,
+            *weight_b.get_unchecked(col + 3) as f32,
+        );
+        let wc = f32x4(
+            *weight_c.get_unchecked(col) as f32,
+            *weight_c.get_unchecked(col + 1) as f32,
+            *weight_c.get_unchecked(col + 2) as f32,
+            *weight_c.get_unchecked(col + 3) as f32,
+        );
+        let wd = f32x4(
+            *weight_d.get_unchecked(col) as f32,
+            *weight_d.get_unchecked(col + 1) as f32,
+            *weight_d.get_unchecked(col + 2) as f32,
+            *weight_d.get_unchecked(col + 3) as f32,
+        );
+        let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
+        let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
+        let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
+        let x3 = v128_load(input.as_ptr().add((row + 3) * in_dim + col) as *const v128);
+        a0 = f32x4_add(a0, f32x4_mul(x0, wa));
+        a1 = f32x4_add(a1, f32x4_mul(x1, wa));
+        a2 = f32x4_add(a2, f32x4_mul(x2, wa));
+        a3 = f32x4_add(a3, f32x4_mul(x3, wa));
+        b0 = f32x4_add(b0, f32x4_mul(x0, wb));
+        b1 = f32x4_add(b1, f32x4_mul(x1, wb));
+        b2 = f32x4_add(b2, f32x4_mul(x2, wb));
+        b3 = f32x4_add(b3, f32x4_mul(x3, wb));
+        c0 = f32x4_add(c0, f32x4_mul(x0, wc));
+        c1 = f32x4_add(c1, f32x4_mul(x1, wc));
+        c2 = f32x4_add(c2, f32x4_mul(x2, wc));
+        c3 = f32x4_add(c3, f32x4_mul(x3, wc));
+        d0 = f32x4_add(d0, f32x4_mul(x0, wd));
+        d1 = f32x4_add(d1, f32x4_mul(x1, wd));
+        d2 = f32x4_add(d2, f32x4_mul(x2, wd));
+        d3 = f32x4_add(d3, f32x4_mul(x3, wd));
+        col += 4;
+    }
+    let mut out_a = [sum_f32x4(a0), sum_f32x4(a1), sum_f32x4(a2), sum_f32x4(a3)];
+    let mut out_b = [sum_f32x4(b0), sum_f32x4(b1), sum_f32x4(b2), sum_f32x4(b3)];
+    let mut out_c = [sum_f32x4(c0), sum_f32x4(c1), sum_f32x4(c2), sum_f32x4(c3)];
+    let mut out_d = [sum_f32x4(d0), sum_f32x4(d1), sum_f32x4(d2), sum_f32x4(d3)];
+    while col < in_dim {
+        let wa = *weight_a.get_unchecked(col) as f32;
+        let wb = *weight_b.get_unchecked(col) as f32;
+        let wc = *weight_c.get_unchecked(col) as f32;
+        let wd = *weight_d.get_unchecked(col) as f32;
+        for local_row in 0..4 {
+            let x = *input.get_unchecked((row + local_row) * in_dim + col);
+            out_a[local_row] += x * wa;
+            out_b[local_row] += x * wb;
+            out_c[local_row] += x * wc;
+            out_d[local_row] += x * wd;
+        }
+        col += 1;
+    }
+    (out_a, out_b, out_c, out_d)
+}
+
+fn dot4_unpacked_i8_f32_quad(
+    input: &[f32],
+    row: usize,
+    in_dim: usize,
+    weight_a: &[i8],
+    weight_b: &[i8],
+    weight_c: &[i8],
+    weight_d: &[i8],
+) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        return unsafe { dot4_unpacked_i8_f32_quad_simd(input, row, in_dim, weight_a, weight_b, weight_c, weight_d) };
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        let mut out_a = [0.0f32; 4];
+        let mut out_b = [0.0f32; 4];
+        let mut out_c = [0.0f32; 4];
+        let mut out_d = [0.0f32; 4];
+        for col in 0..in_dim {
+            let wa = weight_a[col] as f32;
+            let wb = weight_b[col] as f32;
+            let wc = weight_c[col] as f32;
+            let wd = weight_d[col] as f32;
+            for local_row in 0..4 {
+                let x = input[(row + local_row) * in_dim + col];
+                out_a[local_row] += x * wa;
+                out_b[local_row] += x * wb;
+                out_c[local_row] += x * wc;
+                out_d[local_row] += x * wd;
+            }
+        }
+        (out_a, out_b, out_c, out_d)
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
 unsafe fn dot4_unpacked_i8_f32_six_simd(
     input: &[f32],
     row: usize,
@@ -2967,6 +3101,75 @@ impl Q4LinearHandle {
             return Err(JsValue::from_str("Q4LinearHandle output shape mismatch"));
         }
         let mut out_idx = 0usize;
+        while out_idx + 3 < self.out_dim {
+            let weight_a = &self.unpacked_weight[out_idx * self.in_dim..(out_idx + 1) * self.in_dim];
+            let weight_b = &self.unpacked_weight[(out_idx + 1) * self.in_dim..(out_idx + 2) * self.in_dim];
+            let weight_c = &self.unpacked_weight[(out_idx + 2) * self.in_dim..(out_idx + 3) * self.in_dim];
+            let weight_d = &self.unpacked_weight[(out_idx + 3) * self.in_dim..(out_idx + 4) * self.in_dim];
+            let scale = self.row_scales[out_idx];
+            let scale_b = self.row_scales[out_idx + 1];
+            let scale_c = self.row_scales[out_idx + 2];
+            let scale_d = self.row_scales[out_idx + 3];
+            let bias = self.bias_values.get(out_idx).copied().unwrap_or(0.0);
+            let bias_b = self.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+            let bias_c = self.bias_values.get(out_idx + 2).copied().unwrap_or(0.0);
+            let bias_d = self.bias_values.get(out_idx + 3).copied().unwrap_or(0.0);
+            let mut row = 0usize;
+            while row + 3 < rows {
+                let (acc, acc_b, acc_c, acc_d) =
+                    dot4_unpacked_i8_f32_quad(input, row, self.in_dim, weight_a, weight_b, weight_c, weight_d);
+                for local_row in 0..4 {
+                    let base = (row + local_row) * output_row_stride + output_col_offset + out_idx;
+                    output[base] = acc[local_row] * scale + bias;
+                    output[base + 1] = acc_b[local_row] * scale_b + bias_b;
+                    output[base + 2] = acc_c[local_row] * scale_c + bias_c;
+                    output[base + 3] = acc_d[local_row] * scale_d + bias_d;
+                }
+                row += 4;
+            }
+            while row < rows {
+                let input_row = &input[row * self.in_dim..(row + 1) * self.in_dim];
+                let mut acc = 0.0f32;
+                let mut acc_b = 0.0f32;
+                let mut acc_c = 0.0f32;
+                let mut acc_d = 0.0f32;
+                let mut col = 0usize;
+                while col + 3 < self.in_dim {
+                    acc += input_row[col] * weight_a[col] as f32
+                        + input_row[col + 1] * weight_a[col + 1] as f32
+                        + input_row[col + 2] * weight_a[col + 2] as f32
+                        + input_row[col + 3] * weight_a[col + 3] as f32;
+                    acc_b += input_row[col] * weight_b[col] as f32
+                        + input_row[col + 1] * weight_b[col + 1] as f32
+                        + input_row[col + 2] * weight_b[col + 2] as f32
+                        + input_row[col + 3] * weight_b[col + 3] as f32;
+                    acc_c += input_row[col] * weight_c[col] as f32
+                        + input_row[col + 1] * weight_c[col + 1] as f32
+                        + input_row[col + 2] * weight_c[col + 2] as f32
+                        + input_row[col + 3] * weight_c[col + 3] as f32;
+                    acc_d += input_row[col] * weight_d[col] as f32
+                        + input_row[col + 1] * weight_d[col + 1] as f32
+                        + input_row[col + 2] * weight_d[col + 2] as f32
+                        + input_row[col + 3] * weight_d[col + 3] as f32;
+                    col += 4;
+                }
+                while col < self.in_dim {
+                    let x = input_row[col];
+                    acc += x * weight_a[col] as f32;
+                    acc_b += x * weight_b[col] as f32;
+                    acc_c += x * weight_c[col] as f32;
+                    acc_d += x * weight_d[col] as f32;
+                    col += 1;
+                }
+                let base = row * output_row_stride + output_col_offset + out_idx;
+                output[base] = acc * scale + bias;
+                output[base + 1] = acc_b * scale_b + bias_b;
+                output[base + 2] = acc_c * scale_c + bias_c;
+                output[base + 3] = acc_d * scale_d + bias_d;
+                row += 1;
+            }
+            out_idx += 4;
+        }
         while out_idx + 1 < self.out_dim {
             let weight_a = &self.unpacked_weight[out_idx * self.in_dim..(out_idx + 1) * self.in_dim];
             let weight_b = &self.unpacked_weight[(out_idx + 1) * self.in_dim..(out_idx + 2) * self.in_dim];
