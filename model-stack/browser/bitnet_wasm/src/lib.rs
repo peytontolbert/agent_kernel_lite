@@ -5188,13 +5188,13 @@ impl F5Q4DiTSession {
                     let mut sum_h = bias_h;
                     let k_start = padding.saturating_sub(pos);
                     let k_end = kernel.min(seq_len + padding - pos);
-                    for local_in in 0..group_in {
-                        let input_base = in_start + local_in;
-                        for k in k_start..k_end {
-                            let src_pos = pos + k - padding;
+                    for k in k_start..k_end {
+                        let src_pos = pos + k - padding;
+                        let input_base = src_pos * channels + in_start;
+                        for local_in in 0..group_in {
                             let col = local_in * kernel + k;
                             unsafe {
-                                let value = *input.get_unchecked(src_pos * channels + input_base);
+                                let value = *input.get_unchecked(input_base + local_in);
                                 sum += value * *weight_row.get_unchecked(col) as f32 * scale;
                                 sum_b += value * *weight_b.get_unchecked(col) as f32 * scale_b;
                                 sum_c += value * *weight_c.get_unchecked(col) as f32 * scale_c;

@@ -5,8 +5,8 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-progress-v5';
-const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-dynamic-ref-duration-cfg2-step12';
+const RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-fast-v6';
+const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-dynamic-ref-duration-cfg2-step2';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
@@ -112,7 +112,7 @@ async function speak(message) {
   const loadedAt = performance.now();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
-  const steps = clampInt(message.steps, 12, 1, 32);
+  const steps = clampInt(message.steps, 2, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
   const reference = referenceProfile(condSeqLen);
   const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;

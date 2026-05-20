@@ -102,7 +102,7 @@ if (full) {
   if (!smoke2.finite || smoke2.audioSamples !== 23040 || smoke2.generationMs > 45000) {
     throw new Error(`2-step smoke failed: finite=${smoke2.finite} samples=${smoke2.audioSamples} generationMs=${smoke2.generationMs}`);
   }
-  if (Math.abs(smoke2.checksum - -520.945459) > 0.001) {
+  if (Math.abs(smoke2.checksum - -520.955826) > 0.001) {
     throw new Error(`2-step smoke checksum drift: checksum=${smoke2.checksum}`);
   }
 }
