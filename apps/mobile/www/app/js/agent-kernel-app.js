@@ -1329,6 +1329,35 @@ function ensureVoiceWorker() {
   return state.voice.worker;
 }
 
+function releaseChatRuntimeForVoice() {
+  if (!state.worker && !state.modelBusy && !state.modelReady && !state.modelLoadPromise) return;
+  log('unloading chat runtime before Peyton voice');
+  updateLiveStatus('runtime', 'active', 'Unloading chat runtime for Peyton voice');
+  unloadModel({ silent: true });
+  updateRuntimeDetail('Chat runtime unloaded while Peyton voice is active.');
+}
+
+function unloadVoiceRuntime({ silent = false } = {}) {
+  if (state.voice.worker) {
+    state.voice.worker.terminate();
+    state.voice.worker = null;
+  }
+  if (state.voice.loadPromise) settleVoiceRuntime(new Error('Peyton voice runtime unloaded.'));
+  state.voice.ready = false;
+  state.voice.busy = false;
+  state.voice.detail = '';
+  state.voice.nativeRuntime = null;
+  if (!silent) log('Peyton voice runtime unloaded');
+  syncVoiceControls();
+}
+
+function releaseVoiceRuntimeForChat() {
+  if (!state.voice.worker && !state.voice.ready && !state.voice.loadPromise) return;
+  log('unloading Peyton voice runtime before chat model');
+  unloadVoiceRuntime({ silent: true });
+  if (els.voiceModeDetail) els.voiceModeDetail.textContent = 'Peyton voice unloaded for chat runtime';
+}
+
 function loadVoiceRuntime() {
   if (state.voice.ready) return Promise.resolve();
   if (state.voice.loadPromise) return state.voice.loadPromise;
@@ -1372,6 +1401,7 @@ async function speakPeytonVoiceText(text) {
   syncVoiceControls();
   syncModelControls();
   try {
+    releaseChatRuntimeForVoice();
     await loadVoiceRuntime();
     updateLiveStatus('runtime', 'done', 'Peyton voice runtime ready');
     updateLiveStatus('generate', 'active', 'Queued voice generation');
@@ -1984,6 +2014,7 @@ async function loadModel({ force = false, auto = false } = {}) {
   if (force && state.worker) {
     unloadModel({ silent: true });
   }
+  releaseVoiceRuntimeForChat();
   state.modelBusy = true;
   state.modelReady = false;
   state.loadedModelId = '';
@@ -6957,11 +6988,18 @@ async function init() {
   const shouldAutoloadModel = URL_PARAMS.get('autoload') !== '0';
   if (shouldAutoloadModel) {
     state.modelAutoLoadStarted = true;
-    const startModelLoad = () => loadModel({ auto: true }).catch((error) => {
-      log(error.message || String(error));
-      updateRuntimeDetail(`Runtime did not load automatically: ${error.message || String(error)}`);
-      syncModelControls();
-    });
+    const startModelLoad = () => {
+      if (state.voice.busy || state.voice.ready || state.voice.loadPromise) {
+        updateRuntimeDetail('Runtime autoload skipped while Peyton voice is active.');
+        syncModelControls();
+        return;
+      }
+      loadModel({ auto: true }).catch((error) => {
+        log(error.message || String(error));
+        updateRuntimeDetail(`Runtime did not load automatically: ${error.message || String(error)}`);
+        syncModelControls();
+      });
+    };
     if (NATIVE_APP) {
       window.setTimeout(startModelLoad, 1200);
     } else {
