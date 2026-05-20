@@ -1,4 +1,5 @@
 let wasmModulePromise = null;
+const WASM_RUNTIME_VERSION = "20260520-vocos-istft-simd-wasm-v2";
 
 function resolveUrl(path, baseUrl) {
   return new URL(path, baseUrl).toString();
@@ -22,13 +23,16 @@ async function ensureQ4Wasm() {
       let moduleUrl;
       try {
         moduleUrl = new URL("model_stack_bitnet_wasm.js", import.meta.url);
+        moduleUrl.searchParams.set("v", WASM_RUNTIME_VERSION);
         module = await import(moduleUrl.href);
       } catch (error) {
         moduleUrl = new URL("pkg/model_stack_bitnet_wasm.js", import.meta.url);
+        moduleUrl.searchParams.set("v", WASM_RUNTIME_VERSION);
         module = await import(moduleUrl.href);
       }
-      const wasmUrl = new URL("model_stack_bitnet_wasm_bg.wasm", moduleUrl).href;
-      const wasmBytes = await fetchBuffer(wasmUrl, "Model Stack WASM runtime");
+      const wasmUrl = new URL("model_stack_bitnet_wasm_bg.wasm", moduleUrl);
+      wasmUrl.searchParams.set("v", WASM_RUNTIME_VERSION);
+      const wasmBytes = await fetchBuffer(wasmUrl.href, "Model Stack WASM runtime");
       await module.default(wasmBytes);
       return module;
     })();
@@ -498,6 +502,16 @@ export class Q4TensorBundleWASM {
       kernel,
       padding,
       groups,
+    );
+  }
+
+  runVocosIstftHead(stftRows, frames) {
+    if (!this.wasm?.vocos_istft_head_f32) {
+      throw new Error("vocos_istft_head_f32 is not available in the WASM runtime");
+    }
+    return this.wasm.vocos_istft_head_f32(
+      stftRows instanceof Float32Array ? stftRows : new Float32Array(stftRows),
+      frames,
     );
   }
 }

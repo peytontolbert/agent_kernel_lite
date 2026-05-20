@@ -5,13 +5,15 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260519-peyton-f5-q4-vocos-q4-wasm-v1';
-const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-cond256-duration-cfg2-step12';
+const RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-simd-wasm-v4';
+const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-dynamic-ref-duration-cfg2-step12';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
+const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
-const FULL_REFERENCE_TEXT_BYTES = 42;
-const REFERENCE_FRAMES_PER_TEXT_BYTE = REFERENCE_MEL_FRAMES / FULL_REFERENCE_TEXT_BYTES;
+const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
+const SHORT_TEXT_SPEED = 0.3;
+const CROSS_FADE_SECONDS = 0.15;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
@@ -88,9 +90,11 @@ async function speak(message) {
   const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
   const steps = clampInt(message.steps, 12, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
-  const chunks = splitTextForSpeech(text);
+  const reference = referenceProfile(condSeqLen);
+  const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;
+  const chunks = splitTextForSpeech(text, reference.framesPerTextByte, maxGenFrames);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `custom-wasm-cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
+  const preset = `custom-wasm-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
 
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
@@ -102,9 +106,9 @@ async function speak(message) {
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 96, MAX_DURATION_FRAMES - condSeqLen);
+    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte), 96, maxGenFrames);
     const duration = condSeqLen + genFrames;
-    const textIds = tokenize(`${REFERENCE_TEXT}${chunk}`, runtime.vocabMap, duration);
+    const textIds = tokenize(`${reference.text}${chunk}`, runtime.vocabMap, duration);
 
     postMessage({ type: 'status', detail: `Preparing WASM F5 session ${index + 1}/${chunks.length}` });
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
@@ -128,7 +132,7 @@ async function speak(message) {
     totalSamples += audio.length;
   }
 
-  const audio = concatFloat32(audioParts, totalSamples);
+  const audio = concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS);
   const wav = encodeWav(audio, SAMPLE_RATE);
   postMessage({
     type: 'audio',
@@ -232,13 +236,35 @@ function tokenize(text, vocabMap, maxLen) {
   return ids;
 }
 
-function splitTextForSpeech(text) {
+function referenceProfile(condSeqLen) {
+  const text = referenceTextForFrames(condSeqLen);
+  const textBytes = utf8Length(text);
+  return {
+    text,
+    textBytes,
+    framesPerTextByte: condSeqLen / Math.max(1, textBytes),
+  };
+}
+
+function referenceTextForFrames(condSeqLen) {
+  if (condSeqLen <= REFERENCE_MEL_FRAMES) return REFERENCE_TEXT;
+  if (condSeqLen >= FULL_REFERENCE_MEL_FRAMES) return FULL_REFERENCE_TEXT;
+  const targetBytes = Math.max(1, Math.round(utf8Length(FULL_REFERENCE_TEXT) * condSeqLen / FULL_REFERENCE_MEL_FRAMES));
+  let out = '';
+  for (const char of Array.from(FULL_REFERENCE_TEXT)) {
+    if (utf8Length(out + char) > targetBytes) break;
+    out += char;
+  }
+  return out.endsWith(' ') ? out : `${out} `;
+}
+
+function splitTextForSpeech(text, framesPerTextByte, maxGenFrames) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return ['This is Peyton speaking from Agent Kernel Lite.'];
   const sentences = normalized.match(/[^.!?]+[.!?]*/g) || [normalized];
   const chunks = [];
   let current = '';
-  const maxChars = maxChunkChars();
+  const maxChars = maxChunkChars(framesPerTextByte, maxGenFrames);
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (!trimmed) continue;
@@ -258,14 +284,43 @@ function splitTextForSpeech(text) {
   return chunks;
 }
 
-function estimateTargetFrames(text) {
-  const bytes = new TextEncoder().encode(String(text || '').trim()).length;
-  return Math.ceil(REFERENCE_FRAMES_PER_TEXT_BYTE * bytes);
+function estimateTargetFrames(text, framesPerTextByte) {
+  const bytes = utf8Length(String(text || '').trim());
+  const speed = bytes < 10 ? SHORT_TEXT_SPEED : 1;
+  return Math.ceil(framesPerTextByte * bytes / speed);
 }
 
-function maxChunkChars() {
-  const maxGenFrames = MAX_DURATION_FRAMES - 64;
-  return Math.max(24, Math.floor(maxGenFrames / REFERENCE_FRAMES_PER_TEXT_BYTE));
+function maxChunkChars(framesPerTextByte, maxGenFrames) {
+  return Math.max(24, Math.floor(maxGenFrames / Math.max(1e-6, framesPerTextByte)));
+}
+
+function utf8Length(text) {
+  return new TextEncoder().encode(String(text || '')).length;
+}
+
+function concatAudioParts(parts, totalLength, sampleRate, crossFadeSeconds) {
+  if (parts.length <= 1 || crossFadeSeconds <= 0) return concatFloat32(parts, totalLength);
+  const fadeSamples = Math.max(0, Math.floor(sampleRate * crossFadeSeconds));
+  let out = parts[0].slice();
+  for (let i = 1; i < parts.length; i += 1) {
+    const next = parts[i];
+    const overlap = Math.min(fadeSamples, out.length, next.length);
+    if (overlap <= 0) {
+      out = concatFloat32([out, next], out.length + next.length);
+      continue;
+    }
+    const merged = new Float32Array(out.length + next.length - overlap);
+    merged.set(out.subarray(0, out.length - overlap));
+    const overlapStart = out.length - overlap;
+    for (let j = 0; j < overlap; j += 1) {
+      const fadeIn = j / Math.max(1, overlap - 1);
+      const fadeOut = 1 - fadeIn;
+      merged[overlapStart + j] = out[overlapStart + j] * fadeOut + next[j] * fadeIn;
+    }
+    merged.set(next.subarray(overlap), out.length);
+    out = merged;
+  }
+  return out;
 }
 
 function concatFloat32(parts, totalLength) {

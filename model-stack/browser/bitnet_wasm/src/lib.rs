@@ -1408,6 +1408,115 @@ pub fn q4_grouped_conv1d_f32(
 }
 
 #[wasm_bindgen]
+pub fn vocos_istft_head_f32(stft_rows: &[f32], frames: usize) -> Result<Vec<f32>, JsValue> {
+    const N_FFT: usize = 1024;
+    const HOP: usize = 256;
+    const BINS: usize = N_FFT / 2 + 1;
+    const ROW: usize = N_FFT + 2;
+    const LOG_100: f32 = 4.6051702;
+
+    if frames == 0 {
+        return Ok(Vec::new());
+    }
+    if stft_rows.len() < frames * ROW {
+        return Err(JsValue::from_str("vocos_istft_head_f32 input shape mismatch"));
+    }
+
+    let mut hann = vec![0.0f32; N_FFT];
+    for n in 0..N_FFT {
+        let value = ((std::f32::consts::PI * n as f32) / N_FFT as f32).sin();
+        hann[n] = value * value;
+    }
+    let mut bit_reverse = vec![0usize; N_FFT];
+    for i in 0..N_FFT {
+        bit_reverse[i] = i.reverse_bits() >> (usize::BITS as usize - 10);
+    }
+
+    let padded_len = (frames - 1) * HOP + N_FFT;
+    let mut audio = vec![0.0f32; padded_len];
+    let mut envelope = vec![0.0f32; padded_len];
+    let mut real = vec![0.0f32; N_FFT];
+    let mut imag = vec![0.0f32; N_FFT];
+
+    for frame in 0..frames {
+        let row = frame * ROW;
+        real.fill(0.0);
+        imag.fill(0.0);
+        for bin in 0..BINS {
+            let mag = stft_rows[row + bin].min(LOG_100).exp();
+            let phase = stft_rows[row + BINS + bin];
+            let re = mag * phase.cos();
+            let im = mag * phase.sin();
+            real[bin] = re;
+            imag[bin] = if bin == 0 || bin == BINS - 1 { 0.0 } else { im };
+            if bin > 0 && bin < BINS - 1 {
+                real[N_FFT - bin] = re;
+                imag[N_FFT - bin] = -im;
+            }
+        }
+
+        inverse_fft_1024_in_place(&mut real, &mut imag, &bit_reverse);
+        let offset = frame * HOP;
+        for n in 0..N_FFT {
+            audio[offset + n] += real[n] * hann[n];
+            envelope[offset + n] += hann[n] * hann[n];
+        }
+    }
+
+    for idx in 0..audio.len() {
+        if envelope[idx] > 1.0e-11 {
+            audio[idx] /= envelope[idx];
+        }
+    }
+    let start = N_FFT / 2;
+    let end = padded_len.saturating_sub(N_FFT / 2).max(start);
+    Ok(audio[start..end].to_vec())
+}
+
+fn inverse_fft_1024_in_place(real: &mut [f32], imag: &mut [f32], bit_reverse: &[usize]) {
+    const N_FFT: usize = 1024;
+    for i in 0..N_FFT {
+        let j = bit_reverse[i];
+        if j > i {
+            real.swap(i, j);
+            imag.swap(i, j);
+        }
+    }
+    let mut len = 2usize;
+    while len <= N_FFT {
+        let half = len / 2;
+        let angle = 2.0f32 * std::f32::consts::PI / len as f32;
+        let step_re = angle.cos();
+        let step_im = angle.sin();
+        let mut start = 0usize;
+        while start < N_FFT {
+            let mut w_re = 1.0f32;
+            let mut w_im = 0.0f32;
+            for j in 0..half {
+                let even = start + j;
+                let odd = even + half;
+                let odd_re = real[odd] * w_re - imag[odd] * w_im;
+                let odd_im = real[odd] * w_im + imag[odd] * w_re;
+                real[odd] = real[even] - odd_re;
+                imag[odd] = imag[even] - odd_im;
+                real[even] += odd_re;
+                imag[even] += odd_im;
+                let next_re = w_re * step_re - w_im * step_im;
+                w_im = w_re * step_im + w_im * step_re;
+                w_re = next_re;
+            }
+            start += len;
+        }
+        len <<= 1;
+    }
+    let scale = 1.0f32 / N_FFT as f32;
+    for idx in 0..N_FFT {
+        real[idx] *= scale;
+        imag[idx] *= scale;
+    }
+}
+
+#[wasm_bindgen]
 pub fn attention_f32(
     q: &[f32],
     k: &[f32],
@@ -4748,6 +4857,72 @@ impl F5Q4DiTSession {
             let bias = handle.bias_values.get(out_ch).copied().unwrap_or(0.0);
             let scale = handle.row_scales[out_ch];
             let weight_row = handle.unpacked_row(out_ch);
+            if out_ch + 7 < channels && (out_ch + 7) / group_in == group {
+                let bias_b = handle.bias_values.get(out_ch + 1).copied().unwrap_or(0.0);
+                let bias_c = handle.bias_values.get(out_ch + 2).copied().unwrap_or(0.0);
+                let bias_d = handle.bias_values.get(out_ch + 3).copied().unwrap_or(0.0);
+                let bias_e = handle.bias_values.get(out_ch + 4).copied().unwrap_or(0.0);
+                let bias_f = handle.bias_values.get(out_ch + 5).copied().unwrap_or(0.0);
+                let bias_g = handle.bias_values.get(out_ch + 6).copied().unwrap_or(0.0);
+                let bias_h = handle.bias_values.get(out_ch + 7).copied().unwrap_or(0.0);
+                let scale_b = handle.row_scales[out_ch + 1];
+                let scale_c = handle.row_scales[out_ch + 2];
+                let scale_d = handle.row_scales[out_ch + 3];
+                let scale_e = handle.row_scales[out_ch + 4];
+                let scale_f = handle.row_scales[out_ch + 5];
+                let scale_g = handle.row_scales[out_ch + 6];
+                let scale_h = handle.row_scales[out_ch + 7];
+                let weight_b = handle.unpacked_row(out_ch + 1);
+                let weight_c = handle.unpacked_row(out_ch + 2);
+                let weight_d = handle.unpacked_row(out_ch + 3);
+                let weight_e = handle.unpacked_row(out_ch + 4);
+                let weight_f = handle.unpacked_row(out_ch + 5);
+                let weight_g = handle.unpacked_row(out_ch + 6);
+                let weight_h = handle.unpacked_row(out_ch + 7);
+                for pos in 0..seq_len {
+                    let mut sum = bias;
+                    let mut sum_b = bias_b;
+                    let mut sum_c = bias_c;
+                    let mut sum_d = bias_d;
+                    let mut sum_e = bias_e;
+                    let mut sum_f = bias_f;
+                    let mut sum_g = bias_g;
+                    let mut sum_h = bias_h;
+                    let k_start = padding.saturating_sub(pos);
+                    let k_end = kernel.min(seq_len + padding - pos);
+                    for local_in in 0..group_in {
+                        let input_base = in_start + local_in;
+                        for k in k_start..k_end {
+                            let src_pos = pos + k - padding;
+                            let col = local_in * kernel + k;
+                            unsafe {
+                                let value = *input.get_unchecked(src_pos * channels + input_base);
+                                sum += value * *weight_row.get_unchecked(col) as f32 * scale;
+                                sum_b += value * *weight_b.get_unchecked(col) as f32 * scale_b;
+                                sum_c += value * *weight_c.get_unchecked(col) as f32 * scale_c;
+                                sum_d += value * *weight_d.get_unchecked(col) as f32 * scale_d;
+                                sum_e += value * *weight_e.get_unchecked(col) as f32 * scale_e;
+                                sum_f += value * *weight_f.get_unchecked(col) as f32 * scale_f;
+                                sum_g += value * *weight_g.get_unchecked(col) as f32 * scale_g;
+                                sum_h += value * *weight_h.get_unchecked(col) as f32 * scale_h;
+                            }
+                        }
+                    }
+                    let dst = pos * channels + out_ch;
+                    unsafe {
+                        *output.get_unchecked_mut(dst) = sum;
+                        *output.get_unchecked_mut(dst + 1) = sum_b;
+                        *output.get_unchecked_mut(dst + 2) = sum_c;
+                        *output.get_unchecked_mut(dst + 3) = sum_d;
+                        *output.get_unchecked_mut(dst + 4) = sum_e;
+                        *output.get_unchecked_mut(dst + 5) = sum_f;
+                        *output.get_unchecked_mut(dst + 6) = sum_g;
+                        *output.get_unchecked_mut(dst + 7) = sum_h;
+                    }
+                }
+                out_ch += 8;
+                continue;
+            }
             if out_ch + 3 < channels && (out_ch + 3) / group_in == group {
                 let bias_b = handle.bias_values.get(out_ch + 1).copied().unwrap_or(0.0);
                 let bias_c = handle.bias_values.get(out_ch + 2).copied().unwrap_or(0.0);

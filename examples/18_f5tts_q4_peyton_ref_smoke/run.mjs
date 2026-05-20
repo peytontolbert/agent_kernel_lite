@@ -20,7 +20,7 @@ const referenceMelFrames = 256;
 const fullReferenceTextBytes = 42;
 const referenceFramesPerTextByte = referenceMelFrames / fullReferenceTextBytes;
 
-const { default: initWasm, q4_symmetric_linear_f32, F5Q4DiTSession, Q4LinearHandle } = await import(
+const { default: initWasm, q4_symmetric_linear_f32, q4_conv1d_f32, q4_depthwise_conv1d_f32, vocos_istft_head_f32, F5Q4DiTSession, Q4LinearHandle } = await import(
   pathToFileURL(path.join(wasmPkg, "model_stack_bitnet_wasm.js")).href
 );
 
@@ -94,6 +94,41 @@ class NodeQ4Bundle {
     const inDim = shape.slice(1).reduce((acc, value) => acc * value, 1);
     const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
     return q4_symmetric_linear_f32(input, packedWeight, rowScalesF16, bias, rows, inDim, outDim);
+  }
+
+  runQ4Conv1d(name, biasName, input, seqLen, inChannels, outChannels, kernel, padding) {
+    const { packedWeight, rowScalesF16 } = this.q4Tensor(name);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    return q4_conv1d_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      packedWeight,
+      rowScalesF16,
+      bias,
+      seqLen,
+      inChannels,
+      outChannels,
+      kernel,
+      padding,
+    );
+  }
+
+  runQ4DepthwiseConv1d(name, biasName, input, seqLen, channels, kernel, padding) {
+    const { packedWeight, rowScalesF16 } = this.q4Tensor(name);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    return q4_depthwise_conv1d_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      packedWeight,
+      rowScalesF16,
+      bias,
+      seqLen,
+      channels,
+      kernel,
+      padding,
+    );
+  }
+
+  runVocosIstftHead(stftRows, frames) {
+    return vocos_istft_head_f32(stftRows instanceof Float32Array ? stftRows : new Float32Array(stftRows), frames);
   }
 
   q4LinearHandle(name, biasName = "") {

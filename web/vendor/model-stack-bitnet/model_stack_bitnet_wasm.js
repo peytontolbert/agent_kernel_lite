@@ -1107,6 +1107,23 @@ export function q4_symmetric_linear_f32(input, packed_weight, row_scales_f16, bi
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v5;
 }
+
+/**
+ * @param {Float32Array} stft_rows
+ * @param {number} frames
+ * @returns {Float32Array}
+ */
+export function vocos_istft_head_f32(stft_rows, frames) {
+    const ptr0 = passArrayF32ToWasm0(stft_rows, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.vocos_istft_head_f32(ptr0, len0, frames);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

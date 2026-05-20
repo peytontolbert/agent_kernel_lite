@@ -6,6 +6,8 @@ const DIM = 512;
 const INNER = 1536;
 const LAYERS = 8;
 const EPS = 1e-6;
+const HANN_WINDOW = makeHannWindow();
+const IFFT_BIT_REVERSE = makeBitReverseTable(N_FFT);
 
 export class VocosMel24khzRuntime {
   constructor(bundle) {
@@ -30,7 +32,7 @@ export class VocosMel24khzRuntime {
       DIM,
     );
     const stft = linear(this.bundle, "head.out.weight", "head.out.bias", x, frames, DIM, N_FFT + 2);
-    return istftHead(stft, frames);
+    return istftHead(this.bundle, stft, frames);
   }
 
   convnextBlock(layer, input, frames) {
@@ -113,6 +115,9 @@ function f16ToF32(bits) {
 }
 
 function conv1d(bundle, weightName, biasName, input, frames, inChannels, outChannels, kernel, padding) {
+  if (bundle.q4Index?.[weightName] && typeof bundle.runQ4Conv1d === 'function') {
+    return bundle.runQ4Conv1d(weightName, biasName, input, frames, inChannels, outChannels, kernel, padding);
+  }
   const bias = bundle.denseF32Tensor(biasName);
   const q4 = maybeQ4Tensor(bundle, weightName);
   const weight = q4 ? null : bundle.denseF32Tensor(weightName);
@@ -137,6 +142,9 @@ function conv1d(bundle, weightName, biasName, input, frames, inChannels, outChan
 }
 
 function depthwiseConv1d(bundle, weightName, biasName, input, frames, channels, kernel, padding) {
+  if (bundle.q4Index?.[weightName] && typeof bundle.runQ4DepthwiseConv1d === 'function') {
+    return bundle.runQ4DepthwiseConv1d(weightName, biasName, input, frames, channels, kernel, padding);
+  }
   const bias = bundle.denseF32Tensor(biasName);
   const q4 = maybeQ4Tensor(bundle, weightName);
   const weight = q4 ? null : bundle.denseF32Tensor(weightName);
@@ -228,25 +236,34 @@ function erf(x) {
   return sign * y;
 }
 
-function istftHead(stftRows, frames) {
+function istftHead(bundle, stftRows, frames) {
+  if (typeof bundle.runVocosIstftHead === 'function') {
+    return bundle.runVocosIstftHead(stftRows, frames);
+  }
   const bins = N_FFT / 2 + 1;
   const frameTime = new Float32Array(frames * N_FFT);
+  const real = new Float32Array(N_FFT);
+  const imag = new Float32Array(N_FFT);
   for (let t = 0; t < frames; t += 1) {
     const row = t * (N_FFT + 2);
-    for (let n = 0; n < N_FFT; n += 1) {
-      let sum = Math.exp(Math.min(stftRows[row], Math.log(100))) * Math.cos(stftRows[row + bins]);
-      for (let f = 1; f < bins - 1; f += 1) {
-        const mag = Math.exp(Math.min(stftRows[row + f], Math.log(100)));
-        const phase = stftRows[row + bins + f];
-        const re = mag * Math.cos(phase);
-        const im = mag * Math.sin(phase);
-        const angle = (2 * Math.PI * f * n) / N_FFT;
-        sum += 2 * (re * Math.cos(angle) - im * Math.sin(angle));
+    real.fill(0);
+    imag.fill(0);
+    for (let f = 0; f < bins; f += 1) {
+      const mag = Math.exp(Math.min(stftRows[row + f], Math.log(100)));
+      const phase = stftRows[row + bins + f];
+      const re = mag * Math.cos(phase);
+      const im = mag * Math.sin(phase);
+      real[f] = re;
+      imag[f] = im;
+      if (f > 0 && f < bins - 1) {
+        real[N_FFT - f] = re;
+        imag[N_FFT - f] = -im;
       }
-      const nyquistMag = Math.exp(Math.min(stftRows[row + bins - 1], Math.log(100)));
-      const nyquistPhase = stftRows[row + bins + bins - 1];
-      sum += nyquistMag * Math.cos(nyquistPhase) * (n % 2 === 0 ? 1 : -1);
-      frameTime[t * N_FFT + n] = (sum / N_FFT) * hann(n);
+    }
+    inverseFftInPlace(real, imag);
+    const frameOffset = t * N_FFT;
+    for (let n = 0; n < N_FFT; n += 1) {
+      frameTime[frameOffset + n] = real[n] * HANN_WINDOW[n];
     }
   }
 
@@ -256,7 +273,7 @@ function istftHead(stftRows, frames) {
   for (let t = 0; t < frames; t += 1) {
     const offset = t * HOP;
     for (let n = 0; n < N_FFT; n += 1) {
-      const w = hann(n);
+      const w = HANN_WINDOW[n];
       audio[offset + n] += frameTime[t * N_FFT + n];
       envelope[offset + n] += w * w;
     }
@@ -269,6 +286,68 @@ function istftHead(stftRows, frames) {
 
 function hann(n) {
   return Math.sin(Math.PI * n / N_FFT) ** 2;
+}
+
+function makeHannWindow() {
+  const out = new Float32Array(N_FFT);
+  for (let n = 0; n < N_FFT; n += 1) out[n] = hann(n);
+  return out;
+}
+
+function makeBitReverseTable(size) {
+  const bits = Math.log2(size);
+  const table = new Uint16Array(size);
+  for (let i = 0; i < size; i += 1) {
+    let value = i;
+    let reversed = 0;
+    for (let bit = 0; bit < bits; bit += 1) {
+      reversed = (reversed << 1) | (value & 1);
+      value >>= 1;
+    }
+    table[i] = reversed;
+  }
+  return table;
+}
+
+function inverseFftInPlace(real, imag) {
+  for (let i = 0; i < N_FFT; i += 1) {
+    const j = IFFT_BIT_REVERSE[i];
+    if (j > i) {
+      const re = real[i];
+      const im = imag[i];
+      real[i] = real[j];
+      imag[i] = imag[j];
+      real[j] = re;
+      imag[j] = im;
+    }
+  }
+  for (let len = 2; len <= N_FFT; len <<= 1) {
+    const half = len >> 1;
+    const angle = (2 * Math.PI) / len;
+    const stepRe = Math.cos(angle);
+    const stepIm = Math.sin(angle);
+    for (let start = 0; start < N_FFT; start += len) {
+      let wRe = 1;
+      let wIm = 0;
+      for (let j = 0; j < half; j += 1) {
+        const even = start + j;
+        const odd = even + half;
+        const oddRe = real[odd] * wRe - imag[odd] * wIm;
+        const oddIm = real[odd] * wIm + imag[odd] * wRe;
+        real[odd] = real[even] - oddRe;
+        imag[odd] = imag[even] - oddIm;
+        real[even] += oddRe;
+        imag[even] += oddIm;
+        const nextRe = wRe * stepRe - wIm * stepIm;
+        wIm = wRe * stepIm + wIm * stepRe;
+        wRe = nextRe;
+      }
+    }
+  }
+  for (let i = 0; i < N_FFT; i += 1) {
+    real[i] /= N_FFT;
+    imag[i] /= N_FFT;
+  }
 }
 
 export { SAMPLE_RATE };
