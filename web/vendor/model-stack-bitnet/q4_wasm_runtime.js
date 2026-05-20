@@ -1,5 +1,5 @@
 let wasmModulePromise = null;
-const WASM_RUNTIME_VERSION = "20260520-vocos-istft-simd-wasm-v2";
+const WASM_RUNTIME_VERSION = "20260520-f5-step-progress-wasm-v3";
 
 function resolveUrl(path, baseUrl) {
   return new URL(path, baseUrl).toString();
@@ -388,12 +388,12 @@ export class Q4TensorBundleWASM {
     );
   }
 
-  runF5SampleMel({ condMel, condSeqLen, textIds, duration, steps, cfgStrength, swaySamplingCoef = -1.0, seed = 1337 }) {
+  runF5SampleMel({ condMel, condSeqLen, textIds, duration, steps, cfgStrength, swaySamplingCoef = -1.0, seed = 1337, onProgress = null }) {
     const session = this.f5Session();
     if (!session) {
       throw new Error("F5Q4DiTSession is not available in the WASM runtime");
     }
-    return session.sample_mel(
+    const args = [
       condMel instanceof Float32Array ? condMel : new Float32Array(condMel),
       condSeqLen,
       textIds instanceof Int32Array ? textIds : new Int32Array(textIds),
@@ -402,7 +402,11 @@ export class Q4TensorBundleWASM {
       cfgStrength,
       swaySamplingCoef,
       seed,
-    );
+    ];
+    if (typeof onProgress === "function" && typeof session.sample_mel_with_progress === "function") {
+      return session.sample_mel_with_progress(...args, onProgress);
+    }
+    return session.sample_mel(...args);
   }
 
   runAttention(q, k, v, qLen, kvLen, heads, headDim, causal = false, pastLen = 0) {

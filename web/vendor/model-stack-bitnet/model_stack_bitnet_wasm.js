@@ -532,6 +532,31 @@ export class F5Q4DiTSession {
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v3;
     }
+    /**
+     * @param {Float32Array} cond_mel
+     * @param {number} cond_seq_len
+     * @param {Int32Array} text_ids
+     * @param {number} duration
+     * @param {number} steps
+     * @param {number} cfg_strength
+     * @param {number} sway_sampling_coef
+     * @param {number} seed
+     * @param {Function} progress
+     * @returns {Float32Array}
+     */
+    sample_mel_with_progress(cond_mel, cond_seq_len, text_ids, duration, steps, cfg_strength, sway_sampling_coef, seed, progress) {
+        const ptr0 = passArrayF32ToWasm0(cond_mel, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray32ToWasm0(text_ids, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.f5q4ditsession_sample_mel_with_progress(this.__wbg_ptr, ptr0, len0, cond_seq_len, ptr1, len1, duration, steps, cfg_strength, sway_sampling_coef, seed, progress);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v3;
+    }
 }
 if (Symbol.dispose) F5Q4DiTSession.prototype[Symbol.dispose] = F5Q4DiTSession.prototype.free;
 
@@ -1127,14 +1152,23 @@ export function vocos_istft_head_f32(stft_rows, frames) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_9c75d47bf9e7731e: function(arg0, arg1) {
+        __wbg___wbindgen_throw_9c31b086c2b26051: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
+        __wbg_call_084ee3e860ee9f92: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
+            const ret = arg0.call(arg1, arg2, arg3, arg4);
+            return ret;
+        }, arguments); },
         __wbg_now_37d9e24e05ce8b2e: function() {
             const ret = Date.now();
             return ret;
         },
-        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
@@ -1173,6 +1207,12 @@ const Q4LinearHandleFinalization = (typeof FinalizationRegistry === 'undefined')
 const TokenSampleFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tokensample_free(ptr, 1));
+
+function addToExternrefTable0(obj) {
+    const idx = wasm.__externref_table_alloc();
+    wasm.__wbindgen_externrefs.set(idx, obj);
+    return idx;
+}
 
 function _assertClass(instance, klass) {
     if (!(instance instanceof klass)) {
@@ -1219,6 +1259,15 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_exn_store(idx);
+    }
 }
 
 function passArray16ToWasm0(arg, malloc) {

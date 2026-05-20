@@ -5,13 +5,15 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260519-peyton-f5-q4-vocos-q4-wasm-v1';
-const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-cond256-duration-cfg2-step12';
+const RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-progress-v5';
+const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-dynamic-ref-duration-cfg2-step12';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
+const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
-const FULL_REFERENCE_TEXT_BYTES = 42;
-const REFERENCE_FRAMES_PER_TEXT_BYTE = REFERENCE_MEL_FRAMES / FULL_REFERENCE_TEXT_BYTES;
+const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
+const SHORT_TEXT_SPEED = 0.3;
+const CROSS_FADE_SECONDS = 0.15;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
@@ -39,12 +41,15 @@ self.addEventListener('message', (event) => {
 async function loadRuntime() {
   if (!runtimePromise) {
     runtimePromise = (async () => {
+      postProgress({ phase: 'runtime', detail: 'Loading Peyton Q4 F5TTS weights', percent: 4 });
       const f5Bundle = await loadStage('Loading Peyton Q4 F5TTS', () => (
         Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest))
       ));
+      postProgress({ phase: 'runtime', detail: 'Loading Vocos Q4 weights', percent: 9 });
       const vocosBundle = await loadStage('Loading Vocos Q4', () => (
         Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.vocosManifest))
       ));
+      postProgress({ phase: 'runtime', detail: 'Loading Peyton reference audio and vocab', percent: 13 });
       const [refAudioBuffer, vocabText] = await loadStage('Loading Peyton reference assets', () => Promise.all([
         fetchArrayBuffer(versionedUrl(DEFAULTS.refWav)),
         fetchText(versionedUrl(DEFAULTS.vocab)),
@@ -55,9 +60,11 @@ async function loadRuntime() {
       const vocosId = vocosBundle.manifest?.model_id || 'vocos-q4';
       const f5 = new F5TTSQ4DiTRuntime(f5Bundle);
       postMessage({ type: 'status', detail: 'Preparing F5 WASM session' });
+      postProgress({ phase: 'runtime', detail: 'Preparing F5 WASM session', percent: 17 });
       const sessionStartedAt = performance.now();
       f5.prepareSession();
       postMessage({ type: 'status', detail: `F5 WASM session ready (${Math.round(performance.now() - sessionStartedAt)} ms)` });
+      postProgress({ phase: 'runtime', detail: 'Peyton voice runtime ready', percent: 20 });
       return {
         f5,
         vocos: new VocosMel24khzRuntime(vocosBundle),
@@ -80,18 +87,47 @@ async function loadStage(label, fn) {
   }
 }
 
+function postProgress(progress) {
+  const percent = Number.isFinite(Number(progress.percent))
+    ? Math.max(0, Math.min(100, Math.round(Number(progress.percent))))
+    : 0;
+  postMessage({
+    type: 'progress',
+    phase: progress.phase || 'generate',
+    detail: progress.detail || 'Peyton voice working',
+    percent,
+    chunk: progress.chunk || 0,
+    chunks: progress.chunks || 0,
+    frames: progress.frames || 0,
+    steps: progress.steps || 0,
+    elapsedMs: Math.max(0, Math.round(progress.elapsedMs || 0)),
+    etaMs: Number.isFinite(Number(progress.etaMs)) ? Math.max(0, Math.round(Number(progress.etaMs))) : 0,
+  });
+}
+
 async function speak(message) {
   const startedAt = performance.now();
+  postProgress({ phase: 'runtime', detail: 'Starting Peyton voice request', percent: 1 });
   const runtime = await loadRuntime();
   const loadedAt = performance.now();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
   const steps = clampInt(message.steps, 12, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
-  const chunks = splitTextForSpeech(text);
+  const reference = referenceProfile(condSeqLen);
+  const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;
+  const chunks = splitTextForSpeech(text, reference.framesPerTextByte, maxGenFrames);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `custom-wasm-cond${condSeqLen}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
+  const preset = `custom-wasm-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
 
+  postProgress({
+    phase: 'condition',
+    detail: `Extracting Peyton reference mel (${condSeqLen} frames)`,
+    percent: 22,
+    chunks: chunks.length,
+    steps,
+    elapsedMs: performance.now() - startedAt,
+  });
   postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
   const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
   const conditionedAt = performance.now();
@@ -99,15 +135,45 @@ async function speak(message) {
   let totalSamples = 0;
   let generationMs = 0;
   let decodeMs = 0;
+  const generationPlan = chunks.map((chunk) => clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte), 96, maxGenFrames));
+  const totalPlannedFrames = generationPlan.reduce((sum, frames) => sum + frames, 0);
+  let completedFrames = 0;
 
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index];
-    const genFrames = clampInt(explicitGenFrames, estimateTargetFrames(chunk), 96, MAX_DURATION_FRAMES - condSeqLen);
+    const genFrames = generationPlan[index];
     const duration = condSeqLen + genFrames;
-    const textIds = tokenize(`${REFERENCE_TEXT}${chunk}`, runtime.vocabMap, duration);
+    const textIds = tokenize(`${reference.text}${chunk}`, runtime.vocabMap, duration);
+    const chunkStartPercent = 28 + Math.round((completedFrames / Math.max(1, totalPlannedFrames)) * 58);
+    const chunkGeneratePercent = Math.min(88, chunkStartPercent + Math.max(1, Math.round((genFrames / Math.max(1, totalPlannedFrames)) * 46)));
+    const estimatedChunkMs = generationMs > 0 && completedFrames > 0
+      ? (generationMs / completedFrames) * genFrames
+      : 0;
 
     postMessage({ type: 'status', detail: `Preparing WASM F5 session ${index + 1}/${chunks.length}` });
+    postProgress({
+      phase: 'prepare',
+      detail: `Preparing chunk ${index + 1}/${chunks.length} (${genFrames} frames)`,
+      percent: chunkStartPercent,
+      chunk: index + 1,
+      chunks: chunks.length,
+      frames: genFrames,
+      steps,
+      elapsedMs: performance.now() - startedAt,
+      etaMs: estimatedChunkMs,
+    });
     postMessage({ type: 'status', detail: `Generating Q4 F5TTS mel ${index + 1}/${chunks.length} (${genFrames} target frames)` });
+    postProgress({
+      phase: 'generate',
+      detail: `Diffusion chunk ${index + 1}/${chunks.length}: ${steps} steps, ${genFrames} frames`,
+      percent: chunkStartPercent,
+      chunk: index + 1,
+      chunks: chunks.length,
+      frames: genFrames,
+      steps,
+      elapsedMs: performance.now() - startedAt,
+      etaMs: estimatedChunkMs,
+    });
     const generateStartedAt = performance.now();
     const mel = runtime.f5.sampleMel({
       condMel,
@@ -116,10 +182,49 @@ async function speak(message) {
       duration,
       steps,
       cfgStrength,
+      onProgress: (step, total) => {
+        const stepNumber = Math.max(0, Number(step) || 0);
+        const totalSteps = Math.max(1, Number(total) || steps);
+        const stepPercent = chunkStartPercent + Math.round((stepNumber / totalSteps) * Math.max(1, chunkGeneratePercent - chunkStartPercent));
+        const stepElapsedMs = performance.now() - generateStartedAt;
+        const etaMs = stepNumber > 0 ? (stepElapsedMs / stepNumber) * (totalSteps - stepNumber) : estimatedChunkMs;
+        postProgress({
+          phase: 'generate',
+          detail: `Diffusion chunk ${index + 1}/${chunks.length}: step ${stepNumber}/${totalSteps}`,
+          percent: Math.min(chunkGeneratePercent, stepPercent),
+          chunk: index + 1,
+          chunks: chunks.length,
+          frames: genFrames,
+          steps: totalSteps,
+          elapsedMs: performance.now() - startedAt,
+          etaMs,
+        });
+      },
     });
     generationMs += performance.now() - generateStartedAt;
+    completedFrames += genFrames;
+    postProgress({
+      phase: 'generate',
+      detail: `Generated mel chunk ${index + 1}/${chunks.length}`,
+      percent: chunkGeneratePercent,
+      chunk: index + 1,
+      chunks: chunks.length,
+      frames: completedFrames,
+      steps,
+      elapsedMs: performance.now() - startedAt,
+    });
 
     postMessage({ type: 'status', detail: `Decoding waveform ${index + 1}/${chunks.length}` });
+    postProgress({
+      phase: 'decode',
+      detail: `Decoding waveform chunk ${index + 1}/${chunks.length}`,
+      percent: Math.min(94, chunkGeneratePercent + 2),
+      chunk: index + 1,
+      chunks: chunks.length,
+      frames: genFrames,
+      steps,
+      elapsedMs: performance.now() - startedAt,
+    });
     const targetMel = mel.subarray(condSeqLen * runtime.f5.melDim);
     const decodeStartedAt = performance.now();
     const audio = runtime.vocos.decode(targetMel);
@@ -128,8 +233,24 @@ async function speak(message) {
     totalSamples += audio.length;
   }
 
-  const audio = concatFloat32(audioParts, totalSamples);
+  postProgress({
+    phase: 'render',
+    detail: `Assembling ${chunks.length} audio chunk${chunks.length === 1 ? '' : 's'}`,
+    percent: 96,
+    chunks: chunks.length,
+    steps,
+    elapsedMs: performance.now() - startedAt,
+  });
+  const audio = concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS);
   const wav = encodeWav(audio, SAMPLE_RATE);
+  postProgress({
+    phase: 'render',
+    detail: `Peyton voice ready (${formatDurationMs(performance.now() - startedAt)})`,
+    percent: 100,
+    chunks: chunks.length,
+    steps,
+    elapsedMs: performance.now() - startedAt,
+  });
   postMessage({
     type: 'audio',
     text,
@@ -148,6 +269,12 @@ async function speak(message) {
     },
     wav,
   }, [wav]);
+}
+
+function formatDurationMs(ms) {
+  const seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
 function versionedUrl(path) {
@@ -232,13 +359,35 @@ function tokenize(text, vocabMap, maxLen) {
   return ids;
 }
 
-function splitTextForSpeech(text) {
+function referenceProfile(condSeqLen) {
+  const text = referenceTextForFrames(condSeqLen);
+  const textBytes = utf8Length(text);
+  return {
+    text,
+    textBytes,
+    framesPerTextByte: condSeqLen / Math.max(1, textBytes),
+  };
+}
+
+function referenceTextForFrames(condSeqLen) {
+  if (condSeqLen <= REFERENCE_MEL_FRAMES) return REFERENCE_TEXT;
+  if (condSeqLen >= FULL_REFERENCE_MEL_FRAMES) return FULL_REFERENCE_TEXT;
+  const targetBytes = Math.max(1, Math.round(utf8Length(FULL_REFERENCE_TEXT) * condSeqLen / FULL_REFERENCE_MEL_FRAMES));
+  let out = '';
+  for (const char of Array.from(FULL_REFERENCE_TEXT)) {
+    if (utf8Length(out + char) > targetBytes) break;
+    out += char;
+  }
+  return out.endsWith(' ') ? out : `${out} `;
+}
+
+function splitTextForSpeech(text, framesPerTextByte, maxGenFrames) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return ['This is Peyton speaking from Agent Kernel Lite.'];
   const sentences = normalized.match(/[^.!?]+[.!?]*/g) || [normalized];
   const chunks = [];
   let current = '';
-  const maxChars = maxChunkChars();
+  const maxChars = maxChunkChars(framesPerTextByte, maxGenFrames);
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (!trimmed) continue;
@@ -258,14 +407,43 @@ function splitTextForSpeech(text) {
   return chunks;
 }
 
-function estimateTargetFrames(text) {
-  const bytes = new TextEncoder().encode(String(text || '').trim()).length;
-  return Math.ceil(REFERENCE_FRAMES_PER_TEXT_BYTE * bytes);
+function estimateTargetFrames(text, framesPerTextByte) {
+  const bytes = utf8Length(String(text || '').trim());
+  const speed = bytes < 10 ? SHORT_TEXT_SPEED : 1;
+  return Math.ceil(framesPerTextByte * bytes / speed);
 }
 
-function maxChunkChars() {
-  const maxGenFrames = MAX_DURATION_FRAMES - 64;
-  return Math.max(24, Math.floor(maxGenFrames / REFERENCE_FRAMES_PER_TEXT_BYTE));
+function maxChunkChars(framesPerTextByte, maxGenFrames) {
+  return Math.max(24, Math.floor(maxGenFrames / Math.max(1e-6, framesPerTextByte)));
+}
+
+function utf8Length(text) {
+  return new TextEncoder().encode(String(text || '')).length;
+}
+
+function concatAudioParts(parts, totalLength, sampleRate, crossFadeSeconds) {
+  if (parts.length <= 1 || crossFadeSeconds <= 0) return concatFloat32(parts, totalLength);
+  const fadeSamples = Math.max(0, Math.floor(sampleRate * crossFadeSeconds));
+  let out = parts[0].slice();
+  for (let i = 1; i < parts.length; i += 1) {
+    const next = parts[i];
+    const overlap = Math.min(fadeSamples, out.length, next.length);
+    if (overlap <= 0) {
+      out = concatFloat32([out, next], out.length + next.length);
+      continue;
+    }
+    const merged = new Float32Array(out.length + next.length - overlap);
+    merged.set(out.subarray(0, out.length - overlap));
+    const overlapStart = out.length - overlap;
+    for (let j = 0; j < overlap; j += 1) {
+      const fadeIn = j / Math.max(1, overlap - 1);
+      const fadeOut = 1 - fadeIn;
+      merged[overlapStart + j] = out[overlapStart + j] * fadeOut + next[j] * fadeIn;
+    }
+    merged.set(next.subarray(overlap), out.length);
+    out = merged;
+  }
+  return out;
 }
 
 function concatFloat32(parts, totalLength) {

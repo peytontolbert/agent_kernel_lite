@@ -31,6 +31,8 @@ fn f5_use_i8act_q4_linear() -> bool {
     F5_USE_GROUPED_I8ACT_Q4_LINEAR || F5_USE_I8ACT_Q4_LINEAR || F5_USE_TILED_I8ACT_Q4_LINEAR
 }
 static Q4_BYTE_DOT_TABLE: OnceLock<Box<[i16; 65536]>> = OnceLock::new();
+static VOCOS_HANN_1024: OnceLock<Box<[f32]>> = OnceLock::new();
+static VOCOS_BIT_REVERSE_1024: OnceLock<Box<[usize]>> = OnceLock::new();
 
 fn validate_header(layout_header: &[i32]) -> Result<(), JsValue> {
     if layout_header.len() < HEADER_LEN {
@@ -1422,15 +1424,8 @@ pub fn vocos_istft_head_f32(stft_rows: &[f32], frames: usize) -> Result<Vec<f32>
         return Err(JsValue::from_str("vocos_istft_head_f32 input shape mismatch"));
     }
 
-    let mut hann = vec![0.0f32; N_FFT];
-    for n in 0..N_FFT {
-        let value = ((std::f32::consts::PI * n as f32) / N_FFT as f32).sin();
-        hann[n] = value * value;
-    }
-    let mut bit_reverse = vec![0usize; N_FFT];
-    for i in 0..N_FFT {
-        bit_reverse[i] = i.reverse_bits() >> (usize::BITS as usize - 10);
-    }
+    let hann = vocos_hann_1024();
+    let bit_reverse = vocos_bit_reverse_1024();
 
     let padded_len = (frames - 1) * HOP + N_FFT;
     let mut audio = vec![0.0f32; padded_len];
@@ -1440,8 +1435,6 @@ pub fn vocos_istft_head_f32(stft_rows: &[f32], frames: usize) -> Result<Vec<f32>
 
     for frame in 0..frames {
         let row = frame * ROW;
-        real.fill(0.0);
-        imag.fill(0.0);
         for bin in 0..BINS {
             let mag = stft_rows[row + bin].min(LOG_100).exp();
             let phase = stft_rows[row + BINS + bin];
@@ -1471,6 +1464,27 @@ pub fn vocos_istft_head_f32(stft_rows: &[f32], frames: usize) -> Result<Vec<f32>
     let start = N_FFT / 2;
     let end = padded_len.saturating_sub(N_FFT / 2).max(start);
     Ok(audio[start..end].to_vec())
+}
+
+fn vocos_hann_1024() -> &'static [f32] {
+    VOCOS_HANN_1024.get_or_init(|| {
+        let mut hann = vec![0.0f32; 1024];
+        for n in 0..1024 {
+            let value = ((std::f32::consts::PI * n as f32) / 1024.0).sin();
+            hann[n] = value * value;
+        }
+        hann.into_boxed_slice()
+    })
+}
+
+fn vocos_bit_reverse_1024() -> &'static [usize] {
+    VOCOS_BIT_REVERSE_1024.get_or_init(|| {
+        let mut bit_reverse = vec![0usize; 1024];
+        for i in 0..1024 {
+            bit_reverse[i] = i.reverse_bits() >> (usize::BITS as usize - 10);
+        }
+        bit_reverse.into_boxed_slice()
+    })
 }
 
 fn inverse_fft_1024_in_place(real: &mut [f32], imag: &mut [f32], bit_reverse: &[usize]) {
@@ -1628,6 +1642,67 @@ fn attention_impl_kv_head_major(
     }
     let k_head = to_head_major_cache(k, kv_len, n_heads, head_dim);
     let v_head = to_head_major_cache(v, kv_len, n_heads, head_dim);
+    let mut output = vec![0.0f32; q_len * model_dim];
+    let mut scores = vec![0.0f32; kv_len];
+    let scale = 1.0f32 / (head_dim as f32).sqrt();
+    for head in 0..n_heads {
+        let head_base = head * kv_len * head_dim;
+        for qi in 0..q_len {
+            let mut max_score = f32::NEG_INFINITY;
+            let q_base = qi * model_dim + head * head_dim;
+            for kj in 0..kv_len {
+                let mut score = if causal && kj > past_len + qi { -1.0e30 } else { 0.0 };
+                if score > -1.0e20 {
+                    let k_base = head_base + kj * head_dim;
+                    score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
+                }
+                scores[kj] = score;
+                if score > max_score {
+                    max_score = score;
+                }
+            }
+            let mut denom = 0.0f32;
+            for score in scores.iter_mut().take(kv_len) {
+                *score = (*score - max_score).exp();
+                denom += *score;
+            }
+            let denom = denom.max(1.0e-20);
+            let out_base = qi * model_dim + head * head_dim;
+            output[out_base..out_base + 64].fill(0.0);
+            for kj in 0..kv_len {
+                let v_base = head_base + kj * head_dim;
+                add_weighted_64(
+                    &mut output[out_base..out_base + 64],
+                    &v_head[v_base..v_base + 64],
+                    scores[kj] / denom,
+                );
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn attention_impl_kv_already_head_major(
+    q: &[f32],
+    k_head: &[f32],
+    v_head: &[f32],
+    q_len: usize,
+    kv_len: usize,
+    n_heads: usize,
+    head_dim: usize,
+    causal: bool,
+    past_len: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if q_len == 0 || kv_len == 0 || n_heads == 0 || head_dim == 0 {
+        return Ok(Vec::new());
+    }
+    let model_dim = n_heads * head_dim;
+    if q.len() < q_len * model_dim || k_head.len() < kv_len * model_dim || v_head.len() < kv_len * model_dim {
+        return Err(JsValue::from_str("attention_f32 pretransposed input shape mismatch"));
+    }
+    if head_dim != 64 {
+        return attention_impl(q, k_head, v_head, q_len, kv_len, n_heads, head_dim, causal, past_len);
+    }
     let mut output = vec![0.0f32; q_len * model_dim];
     let mut scores = vec![0.0f32; kv_len];
     let scale = 1.0f32 / (head_dim as f32).sqrt();
@@ -3845,6 +3920,152 @@ pub fn q4_linear3_f32(
     Ok(out)
 }
 
+fn q4_linear3_f32_q_row_kv_head_major(
+    first: &Q4LinearHandle,
+    second: &Q4LinearHandle,
+    third: &Q4LinearHandle,
+    input: &[f32],
+    rows: usize,
+    heads: usize,
+    head_dim: usize,
+) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>), JsValue> {
+    if first.in_dim != second.in_dim || first.in_dim != third.in_dim {
+        return Err(JsValue::from_str("q4_linear3 head-major input dimensions do not match"));
+    }
+    if first.out_dim != second.out_dim || first.out_dim != third.out_dim || first.out_dim != heads * head_dim {
+        return Err(JsValue::from_str("q4_linear3 head-major output dimensions do not match"));
+    }
+    let out_dim = first.out_dim;
+    let mut q_out = vec![0.0f32; rows * out_dim];
+    let mut k_head = vec![0.0f32; rows * out_dim];
+    let mut v_head = vec![0.0f32; rows * out_dim];
+    let mut out_idx = 0usize;
+    while out_idx + 1 < out_dim {
+        let weight_a = &first.unpacked_weight[out_idx * first.in_dim..(out_idx + 1) * first.in_dim];
+        let weight_b = &second.unpacked_weight[out_idx * second.in_dim..(out_idx + 1) * second.in_dim];
+        let weight_c = &third.unpacked_weight[out_idx * third.in_dim..(out_idx + 1) * third.in_dim];
+        let weight_a_next = &first.unpacked_weight[(out_idx + 1) * first.in_dim..(out_idx + 2) * first.in_dim];
+        let weight_b_next = &second.unpacked_weight[(out_idx + 1) * second.in_dim..(out_idx + 2) * second.in_dim];
+        let weight_c_next = &third.unpacked_weight[(out_idx + 1) * third.in_dim..(out_idx + 2) * third.in_dim];
+        let scale_a = first.row_scales[out_idx];
+        let scale_b = second.row_scales[out_idx];
+        let scale_c = third.row_scales[out_idx];
+        let scale_a_next = first.row_scales[out_idx + 1];
+        let scale_b_next = second.row_scales[out_idx + 1];
+        let scale_c_next = third.row_scales[out_idx + 1];
+        let bias_a = first.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_b = second.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_c = third.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_a_next = first.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let bias_b_next = second.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let bias_c_next = third.bias_values.get(out_idx + 1).copied().unwrap_or(0.0);
+        let head = out_idx / head_dim;
+        let lane = out_idx - head * head_dim;
+        let head_offset = head * rows * head_dim;
+        let mut row = 0usize;
+        while row + 3 < rows {
+            let (dot_a, dot_b, dot_c, dot_a_next, dot_b_next, dot_c_next) = dot4_unpacked_i8_f32_six(
+                input,
+                row,
+                first.in_dim,
+                weight_a,
+                weight_b,
+                weight_c,
+                weight_a_next,
+                weight_b_next,
+                weight_c_next,
+            );
+            for local_row in 0..4 {
+                let src_row = row + local_row;
+                let q_dst = src_row * out_dim + out_idx;
+                let kv_dst = head_offset + src_row * head_dim + lane;
+                q_out[q_dst] = dot_a[local_row] * scale_a + bias_a;
+                q_out[q_dst + 1] = dot_a_next[local_row] * scale_a_next + bias_a_next;
+                k_head[kv_dst] = dot_b[local_row] * scale_b + bias_b;
+                k_head[kv_dst + 1] = dot_b_next[local_row] * scale_b_next + bias_b_next;
+                v_head[kv_dst] = dot_c[local_row] * scale_c + bias_c;
+                v_head[kv_dst + 1] = dot_c_next[local_row] * scale_c_next + bias_c_next;
+            }
+            row += 4;
+        }
+        while row < rows {
+            let input_row = &input[row * first.in_dim..(row + 1) * first.in_dim];
+            let mut dot_a = 0.0f32;
+            let mut dot_b = 0.0f32;
+            let mut dot_c = 0.0f32;
+            let mut dot_a_next = 0.0f32;
+            let mut dot_b_next = 0.0f32;
+            let mut dot_c_next = 0.0f32;
+            for col in 0..first.in_dim {
+                let value = input_row[col];
+                dot_a += value * weight_a[col] as f32;
+                dot_b += value * weight_b[col] as f32;
+                dot_c += value * weight_c[col] as f32;
+                dot_a_next += value * weight_a_next[col] as f32;
+                dot_b_next += value * weight_b_next[col] as f32;
+                dot_c_next += value * weight_c_next[col] as f32;
+            }
+            let q_dst = row * out_dim + out_idx;
+            let kv_dst = head_offset + row * head_dim + lane;
+            q_out[q_dst] = dot_a * scale_a + bias_a;
+            q_out[q_dst + 1] = dot_a_next * scale_a_next + bias_a_next;
+            k_head[kv_dst] = dot_b * scale_b + bias_b;
+            k_head[kv_dst + 1] = dot_b_next * scale_b_next + bias_b_next;
+            v_head[kv_dst] = dot_c * scale_c + bias_c;
+            v_head[kv_dst + 1] = dot_c_next * scale_c_next + bias_c_next;
+            row += 1;
+        }
+        out_idx += 2;
+    }
+    while out_idx < out_dim {
+        let weight_a = &first.unpacked_weight[out_idx * first.in_dim..(out_idx + 1) * first.in_dim];
+        let weight_b = &second.unpacked_weight[out_idx * second.in_dim..(out_idx + 1) * second.in_dim];
+        let weight_c = &third.unpacked_weight[out_idx * third.in_dim..(out_idx + 1) * third.in_dim];
+        let scale_a = first.row_scales[out_idx];
+        let scale_b = second.row_scales[out_idx];
+        let scale_c = third.row_scales[out_idx];
+        let bias_a = first.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_b = second.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let bias_c = third.bias_values.get(out_idx).copied().unwrap_or(0.0);
+        let head = out_idx / head_dim;
+        let lane = out_idx - head * head_dim;
+        let head_offset = head * rows * head_dim;
+        let mut row = 0usize;
+        while row + 7 < rows {
+            let (dot_a, dot_b, dot_c) = dot8_unpacked_i8_f32_triple(input, row, first.in_dim, weight_a, weight_b, weight_c);
+            for local_row in 0..8 {
+                let src_row = row + local_row;
+                let q_dst = src_row * out_dim + out_idx;
+                let kv_dst = head_offset + src_row * head_dim + lane;
+                q_out[q_dst] = dot_a[local_row] * scale_a + bias_a;
+                k_head[kv_dst] = dot_b[local_row] * scale_b + bias_b;
+                v_head[kv_dst] = dot_c[local_row] * scale_c + bias_c;
+            }
+            row += 8;
+        }
+        while row < rows {
+            let input_row = &input[row * first.in_dim..(row + 1) * first.in_dim];
+            let mut dot_a = 0.0f32;
+            let mut dot_b = 0.0f32;
+            let mut dot_c = 0.0f32;
+            for col in 0..first.in_dim {
+                let value = input_row[col];
+                dot_a += value * weight_a[col] as f32;
+                dot_b += value * weight_b[col] as f32;
+                dot_c += value * weight_c[col] as f32;
+            }
+            let q_dst = row * out_dim + out_idx;
+            let kv_dst = head_offset + row * head_dim + lane;
+            q_out[q_dst] = dot_a * scale_a + bias_a;
+            k_head[kv_dst] = dot_b * scale_b + bias_b;
+            v_head[kv_dst] = dot_c * scale_c + bias_c;
+            row += 1;
+        }
+        out_idx += 1;
+    }
+    Ok((q_out, k_head, v_head))
+}
+
 fn q4_linear3_i8act_f32(
     first: &Q4LinearHandle,
     second: &Q4LinearHandle,
@@ -4123,20 +4344,29 @@ fn f5_dit_block_silu_t_cached_rotary(
 
     let mut norm = vec![0.0f32; seq_len * dim];
     layer_norm_affine_into(input, shift_msa, scale_msa, seq_len, dim, eps, &mut norm)?;
-    let mut qkv = if F5_USE_Q4ACT_Q4_LINEAR {
-        q4_linear3_q4act_f32(to_q, to_k, to_v, &norm, seq_len)?
+    let attn = if F5_USE_Q4ACT_Q4_LINEAR {
+        let mut qkv = q4_linear3_q4act_f32(to_q, to_k, to_v, &norm, seq_len)?;
+        let part = seq_len * dim;
+        {
+            let (q, rest) = qkv.split_at_mut(part);
+            let (k, _) = rest.split_at_mut(part);
+            apply_rotary_f5_cached(q, k, seq_len, heads, head_dim, rotary_cos, rotary_sin)?;
+        }
+        attention_impl_kv_head_major(&qkv[0..part], &qkv[part..part * 2], &qkv[part * 2..part * 3], seq_len, seq_len, heads, head_dim, false, 0)?
     } else if f5_use_i8act_q4_linear() {
-        q4_linear3_i8act_f32(to_q, to_k, to_v, &norm, seq_len)?
+        let mut qkv = q4_linear3_i8act_f32(to_q, to_k, to_v, &norm, seq_len)?;
+        let part = seq_len * dim;
+        {
+            let (q, rest) = qkv.split_at_mut(part);
+            let (k, _) = rest.split_at_mut(part);
+            apply_rotary_f5_cached(q, k, seq_len, heads, head_dim, rotary_cos, rotary_sin)?;
+        }
+        attention_impl_kv_head_major(&qkv[0..part], &qkv[part..part * 2], &qkv[part * 2..part * 3], seq_len, seq_len, heads, head_dim, false, 0)?
     } else {
-        q4_linear3_f32(to_q, to_k, to_v, &norm, seq_len)?
+        let (mut q, mut k_head, v_head) = q4_linear3_f32_q_row_kv_head_major(to_q, to_k, to_v, &norm, seq_len, heads, head_dim)?;
+        apply_rotary_f5_cached_q_row_k_head(&mut q, &mut k_head, seq_len, heads, head_dim, rotary_cos, rotary_sin)?;
+        attention_impl_kv_already_head_major(&q, &k_head, &v_head, seq_len, seq_len, heads, head_dim, false, 0)?
     };
-    let part = seq_len * dim;
-    {
-        let (q, rest) = qkv.split_at_mut(part);
-        let (k, _) = rest.split_at_mut(part);
-        apply_rotary_f5_cached(q, k, seq_len, heads, head_dim, rotary_cos, rotary_sin)?;
-    }
-    let attn = attention_impl_kv_head_major(&qkv[0..part], &qkv[part..part * 2], &qkv[part * 2..part * 3], seq_len, seq_len, heads, head_dim, false, 0)?;
     let attn = if F5_USE_Q4ACT_Q4_LINEAR {
         to_out.run_q4act_impl(&attn, seq_len)?
     } else if f5_use_i8act_q4_linear() {
@@ -4232,6 +4462,41 @@ fn apply_rotary_f5_cached(
             let right = left + 1;
             rotate_pair(q, left, right, c, s);
             rotate_pair(k, left, right, c, s);
+        }
+    }
+    Ok(())
+}
+
+fn apply_rotary_f5_cached_q_row_k_head(
+    q: &mut [f32],
+    k_head: &mut [f32],
+    seq_len: usize,
+    heads: usize,
+    head_dim: usize,
+    cos: &[f32],
+    sin: &[f32],
+) -> Result<(), JsValue> {
+    let dim = heads * head_dim;
+    if q.len() < seq_len * dim || k_head.len() < seq_len * dim || head_dim % 2 != 0 {
+        return Err(JsValue::from_str("apply_rotary_f5_cached_q_row_k_head input shape mismatch"));
+    }
+    let half = head_dim / 2;
+    if cos.len() < seq_len * half || sin.len() < seq_len * half {
+        return Err(JsValue::from_str("apply_rotary_f5_cached_q_row_k_head cache shape mismatch"));
+    }
+    for pos in 0..seq_len {
+        let q_base = pos * dim;
+        let k_base = pos * head_dim;
+        let cache_base = pos * half;
+        for idx in 0..half {
+            let c = cos[cache_base + idx];
+            let s = sin[cache_base + idx];
+            let q_left = q_base + idx * 2;
+            let q_right = q_left + 1;
+            let k_left = k_base + idx * 2;
+            let k_right = k_left + 1;
+            rotate_pair(q, q_left, q_right, c, s);
+            rotate_pair(k_head, k_left, k_right, c, s);
         }
     }
     Ok(())
@@ -4440,21 +4705,16 @@ impl F5Q4DiTSession {
         layer_norm_affine_into(input, shift_msa, scale_msa, seq_len, self.dim, 1e-6, &mut norm)?;
         marks.push(("norm_msa", date_now()));
 
-        let mut qkv = q4_linear3_f32(to_q, to_k, to_v, &norm, seq_len)?;
+        let (mut q, mut k_head, v_head) = q4_linear3_f32_q_row_kv_head_major(to_q, to_k, to_v, &norm, seq_len, self.heads, self.head_dim)?;
         marks.push(("qkv", date_now()));
 
-        let part = seq_len * self.dim;
-        {
-            let (q, rest) = qkv.split_at_mut(part);
-            let (k, _) = rest.split_at_mut(part);
-            apply_rotary_f5_cached(q, k, seq_len, self.heads, self.head_dim, &rotary_cos, &rotary_sin)?;
-        }
+        apply_rotary_f5_cached_q_row_k_head(&mut q, &mut k_head, seq_len, self.heads, self.head_dim, &rotary_cos, &rotary_sin)?;
         marks.push(("rotary_apply", date_now()));
 
-        let attn = attention_impl_kv_head_major(
-            &qkv[0..part],
-            &qkv[part..part * 2],
-            &qkv[part * 2..part * 3],
+        let attn = attention_impl_kv_already_head_major(
+            &q,
+            &k_head,
+            &v_head,
             seq_len,
             seq_len,
             self.heads,
@@ -4519,6 +4779,36 @@ impl F5Q4DiTSession {
         sway_sampling_coef: f32,
         seed: u32,
     ) -> Result<Vec<f32>, JsValue> {
+        self.sample_mel_impl(cond_mel, cond_seq_len, text_ids, duration, steps, cfg_strength, sway_sampling_coef, seed, None)
+    }
+
+    pub fn sample_mel_with_progress(
+        &self,
+        cond_mel: &[f32],
+        cond_seq_len: usize,
+        text_ids: &[i32],
+        duration: usize,
+        steps: usize,
+        cfg_strength: f32,
+        sway_sampling_coef: f32,
+        seed: u32,
+        progress: &js_sys::Function,
+    ) -> Result<Vec<f32>, JsValue> {
+        self.sample_mel_impl(cond_mel, cond_seq_len, text_ids, duration, steps, cfg_strength, sway_sampling_coef, seed, Some(progress))
+    }
+
+    fn sample_mel_impl(
+        &self,
+        cond_mel: &[f32],
+        cond_seq_len: usize,
+        text_ids: &[i32],
+        duration: usize,
+        steps: usize,
+        cfg_strength: f32,
+        sway_sampling_coef: f32,
+        seed: u32,
+        progress: Option<&js_sys::Function>,
+    ) -> Result<Vec<f32>, JsValue> {
         if duration < cond_seq_len || cond_mel.len() != cond_seq_len * self.mel_dim {
             return Err(JsValue::from_str("F5Q4DiTSession sample_mel shape mismatch"));
         }
@@ -4559,6 +4849,14 @@ impl F5Q4DiTSession {
                 for idx in 0..y.len() {
                     y[idx] += dt * pred[idx];
                 }
+            }
+            if let Some(progress) = progress {
+                progress.call3(
+                    &JsValue::NULL,
+                    &JsValue::from_f64((step + 1) as f64),
+                    &JsValue::from_f64(steps as f64),
+                    &JsValue::from_f64(t as f64),
+                )?;
             }
         }
         y[..cond_seq_len * self.mel_dim].copy_from_slice(&cond[..cond_seq_len * self.mel_dim]);

@@ -56,6 +56,7 @@ export class F5TTSQ4DiTRuntime {
     cfgStrength = 2.0,
     swaySamplingCoef = -1.0,
     seed = 1337,
+    onProgress = null,
   }) {
     if (duration < condSeqLen) {
       throw new Error("duration must be >= condSeqLen");
@@ -73,6 +74,7 @@ export class F5TTSQ4DiTRuntime {
         cfgStrength,
         swaySamplingCoef,
         seed,
+        onProgress,
       });
     }
 

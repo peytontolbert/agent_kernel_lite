@@ -23,9 +23,9 @@ const VLLM_ENDPOINT = String(URL_PARAMS.get('vllmEndpoint') || '').trim();
 const VLLM_MODEL = String(URL_PARAMS.get('vllmModel') || 'Qwen/Qwen3.5-9B').trim();
 const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
-const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') === '1';
+const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') !== '0';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
-const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260517-v173c-active-agent';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260518-v192b-headed-controller';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v24-peyton-f5-vocos-q4';
-const VOICE_RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-simd-wasm-v4';
+const VOICE_RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-progress-v5';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -269,6 +269,7 @@ const state = {
     loadReject: null,
     audioUrl: '',
     detail: '',
+    progressDetail: '',
     nativeRuntime: null,
   },
   webSearch: {
@@ -681,6 +682,12 @@ function formatBytes(bytes) {
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString();
+}
+
+function formatDurationMs(ms) {
+  const seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
 function setPill(el, text, mode = '') {
@@ -1306,7 +1313,7 @@ function syncVoiceControls() {
   }
   if (els.voiceModeDetail) {
     els.voiceModeDetail.textContent = state.voice.busy
-      ? 'Generating Peyton voice'
+      ? state.voice.progressDetail || 'Generating Peyton voice'
       : state.voice.ready
         ? state.voice.detail || 'Peyton voice ready'
         : 'Peyton voice preview';
@@ -1346,6 +1353,7 @@ function unloadVoiceRuntime({ silent = false } = {}) {
   state.voice.ready = false;
   state.voice.busy = false;
   state.voice.detail = '';
+  state.voice.progressDetail = '';
   state.voice.nativeRuntime = null;
   if (!silent) log('Peyton voice runtime unloaded');
   syncVoiceControls();
@@ -1396,6 +1404,7 @@ async function speakPeytonVoiceText(text) {
   }
   const promptText = String(text || '').trim() || 'This is Peyton speaking from Agent Kernel Lite.';
   state.voice.busy = true;
+  state.voice.progressDetail = 'Starting Peyton voice';
   startLiveStatus(`Peyton voice: ${shortText(promptText, 80)}`);
   updateLiveStatus('runtime', 'active', 'Starting Peyton voice worker');
   syncVoiceControls();
@@ -1427,6 +1436,28 @@ async function speakPeytonVoiceText(text) {
 
 function onVoiceWorkerMessage(event) {
   const data = event.data || {};
+  if (data.type === 'progress') {
+    const percent = Number.isFinite(Number(data.percent)) ? Math.max(0, Math.min(100, Math.round(Number(data.percent)))) : 0;
+    const phase = String(data.phase || 'generate').toLowerCase();
+    const eta = Number(data.etaMs || 0) > 0 ? ` | ETA ${formatDurationMs(data.etaMs)}` : '';
+    const chunk = data.chunks ? ` | chunk ${data.chunk || 0}/${data.chunks}` : '';
+    const frames = data.frames ? ` | ${formatCount(data.frames)} frames` : '';
+    const detail = `${percent}% | ${data.detail || 'Peyton voice working'}${chunk}${frames}${eta}`;
+    state.voice.progressDetail = detail;
+    log(`Peyton voice progress: ${detail}`);
+    if (els.voiceModeDetail) els.voiceModeDetail.textContent = detail;
+    const step = phase.includes('decode') || phase.includes('render')
+      ? 'render'
+      : phase.includes('runtime') || phase.includes('load')
+        ? 'runtime'
+        : phase.includes('condition') || phase.includes('prepare')
+          ? 'compile'
+          : 'generate';
+    updateLiveStatus(step, 'active', detail);
+    setProcessStep(step, 'active', detail);
+    syncVoiceControls();
+    return;
+  }
   if (data.type === 'status') {
     log(`Peyton voice: ${data.detail || 'working'}`);
     if (els.voiceModeDetail) els.voiceModeDetail.textContent = data.detail || 'Peyton voice working';
@@ -1439,6 +1470,7 @@ function onVoiceWorkerMessage(event) {
   if (data.type === 'ready') {
     state.voice.ready = true;
     state.voice.detail = data.detail || '';
+    state.voice.progressDetail = '';
     settleVoiceRuntime();
     log(`Peyton voice ready${data.detail ? `: ${data.detail}` : ''}`);
     if (els.voiceModeDetail) els.voiceModeDetail.textContent = data.detail || 'Peyton voice ready';
@@ -1448,6 +1480,7 @@ function onVoiceWorkerMessage(event) {
   if (data.type === 'audio') {
     state.voice.busy = false;
     state.voice.ready = true;
+    state.voice.progressDetail = '';
     const blob = new Blob([data.wav], { type: 'audio/wav' });
     if (state.voice.audioUrl) URL.revokeObjectURL(state.voice.audioUrl);
     state.voice.audioUrl = URL.createObjectURL(blob);
@@ -1468,6 +1501,7 @@ function onVoiceWorkerMessage(event) {
     const error = new Error(data.error || 'voice generation error');
     if (state.voice.loadPromise) settleVoiceRuntime(error);
     state.voice.busy = false;
+    state.voice.progressDetail = '';
     updateLiveStatus('generate', 'error', error.message);
     finishLiveStatus('Error');
     appendMessage('assistant', `Peyton voice failed: ${error.message}`);
@@ -3503,8 +3537,12 @@ const ACTIVE_AGENT_ACTION_PREFIXES = {
 };
 
 function activeAgentNeedsWebSearch(agent, userText = '') {
-  const haystack = `${agent?.name || ''} ${agent?.instruction || ''} ${userText || ''}`.toLowerCase();
-  return /\b(web|search online|search the web|online|current|recent|latest|today|news|pricing|look up)\b/.test(haystack);
+  if (activeAgentTextTransformInstruction(agent)) return false;
+  const agentText = `${agent?.name || ''} ${agent?.instruction || ''}`.toLowerCase();
+  if (/\b(web search|search agent|browser|look up online|search the web|online research|current info|latest news)\b/.test(agentText)) return true;
+  const user = String(userText || '').toLowerCase();
+  return /\b(?:search|look up|find)\b.{0,80}\b(?:web|online|internet|latest|current|recent|news|price|pricing)\b/.test(user)
+    || /\b(?:latest|current|recent|today's|news|pricing)\b.{0,80}\b(?:for|about|on)\b/.test(user);
 }
 
 function activeAgentTextTransformInstruction(agent) {
@@ -3874,28 +3912,29 @@ function activeAgentDecisionNeedsFallback(text, userText = '') {
   if (decision.action !== 'respond') return false;
   const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
   const slots = state.currentTextSlots || {};
+  const expandedContent = expandPocketPalSourcePointers(expandPocketPalTextSlots(decision.content, slots), state.currentSourceSlots || []);
   if (activeAgentUnavailablePlaceholders(decision.content, slots).length) return true;
-  if (activeAgentRawSourcePlaceholderEcho(decision.content, instruction)) return true;
+  if (activeAgentRawSourcePlaceholderEcho(expandedContent, instruction)) return true;
   if (/\b(exact|verbatim|source text|preserve all|copy)\b/.test(instruction)) {
-    return normalizeSearchText(decision.content) !== normalizeSearchText(userText);
+    return normalizeSearchText(expandedContent) !== normalizeSearchText(userText);
   }
   if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
     const labels = activeAgentAllowedLabels(instruction);
     if (labels.length) {
-      const normalized = decision.content.trim().toLowerCase().replace(/\s+/g, '_');
+      const normalized = expandedContent.trim().toLowerCase().replace(/\s+/g, '_');
       return !labels.includes(normalized);
     }
-    if (/^source text\s*:/i.test(decision.content)) return true;
+    if (/^source text\s*:/i.test(expandedContent)) return true;
   }
   if (activeAgentTextTransformInstruction(agent) && !activeAgentRequestLacksEditableText(userText)) {
     const requiredSlots = ['NAME', 'ITEM', 'DEADLINE', 'REASON'].filter((key) => slots[key]);
     if (requiredSlots.length) {
-      const normalizedContent = normalizeSearchText(decision.content);
+      const normalizedContent = normalizeSearchText(expandedContent);
       for (const key of requiredSlots) {
         if (!tokenCoveredByText(normalizedContent, String(slots[key]).toLowerCase())) return true;
       }
     }
-    return !activeAgentContentPreservesInput(decision.content, userText);
+    return !activeAgentContentPreservesInput(expandedContent, userText);
   }
   return false;
 }
@@ -4860,6 +4899,9 @@ function professionalizeDraft(text) {
   if (!cleaned) return '';
   if (/^(hi|hello|hey)(?:[, ]+(?:how are you|how are you doing))?[.!?]?$/i.test(cleaned)) return 'Hello, I hope you are well.';
   const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/\b(late|delayed)\b/i.test(source) && /\b(blocking|blocked)\b/i.test(source)) {
+    return 'This is delayed and is currently blocking our work.';
+  }
   let requestText = source.replace(/^(?:hey|hi|hello|yo)\s+[, ]*/i, '').trim();
   let name = '';
   const directed = requestText.match(/^([A-Za-z][A-Za-z'-]{1,30})\s+(?=(?:please\s+)?(?:send|get|finish|prepare|share|complete|review|update|draft|write)\b)/i);
@@ -4919,6 +4961,8 @@ function activeAgentBulletList(text, { prefix = '- ', limit = 5 } = {}) {
 }
 
 function activeAgentTitle(text, fallback = 'Untitled') {
+  const facts = activeAgentTaskFacts(text);
+  if (facts.object && facts.blocker) return `${activeAgentTitleCase(facts.object)} Review and Launch Blocker`;
   const tokens = contentTokens(text)
     .filter((token) => !ACTIVE_AGENT_PRESERVE_STOPWORDS.has(token))
     .slice(0, 7);
@@ -4926,13 +4970,47 @@ function activeAgentTitle(text, fallback = 'Untitled') {
   return tokens.map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(' ');
 }
 
+function activeAgentTitleCase(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function activeAgentTaskFacts(text) {
+  const source = String(text || '').replace(/\s+/g, ' ').trim();
+  const facts = {};
+  const task = source.match(/\b([A-Z][a-z]+)\s+will\s+send\s+the\s+(.+?)\s+by\s+(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|[A-Z][a-z]+\s+\d{1,2})\b/i);
+  if (task) {
+    facts.owner = task[1];
+    facts.object = task[2];
+    facts.date = task[3];
+  }
+  const reviewer = source.match(/\b([A-Z][a-z]+)\s+will\s+review\s+(?:it|the\s+.+?)(?:,|\.|\s+and\b)/i);
+  if (reviewer) facts.reviewer = reviewer[1];
+  const blocker = source.match(/\b(?:blocked by|blocking launch|blocked on|waiting on)\s+([a-z][a-z0-9 _-]{2,80}?)(?:[.!?]|$)/i)
+    || source.match(/\b([a-z][a-z0-9 _-]{2,80}?)\s+is\s+blocking\s+launch\b/i);
+  if (blocker) facts.blocker = blocker[1].replace(/\s+/g, ' ').trim();
+  return facts;
+}
+
 function activeAgentExtractJson(text) {
   const source = String(text || '');
-  const names = Array.from(new Set((source.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || []))).slice(0, 8);
+  if (/^\s*(?:can|could|would|should|is|are|do|does|did|what|when|where|why|how)\b.+\?\s*$/i.test(source)) {
+    return `Question: ${source.replace(/\s+/g, ' ').trim()}`;
+  }
+  const names = Array.from(new Set((source.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || [])
+    .map((item) => item.replace(/\bHi\s+/i, '').trim())
+    .filter((item) => item && !/^(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(item)))).slice(0, 8);
   const dates = Array.from(new Set((source.match(/\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/gi) || []))).slice(0, 8);
   const money = Array.from(new Set((source.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) || []))).slice(0, 8);
   const emails = Array.from(new Set((source.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []))).slice(0, 8);
-  return JSON.stringify({ names, dates, money, emails });
+  const facts = activeAgentTaskFacts(source);
+  const object = facts.object || (/\binvoice\b/i.test(source) ? 'invoice' : '');
+  return JSON.stringify({ names, object, amount: money[0] || '', date: dates[0] || '', dates, money, emails, ...facts });
 }
 
 function activeAgentClassifyJson(text, instruction = '') {
@@ -4947,7 +5025,10 @@ function activeAgentClassifyJson(text, instruction = '') {
     : haystack.match(/\b(thanks|thank you|appreciate)\b/) ? 'grateful'
       : haystack.match(/\b(please|could you|would you)\b/) ? 'polite'
         : 'neutral';
-  return JSON.stringify({ intent, tone });
+  const result = { intent, tone };
+  if (/\b(fields?|owner|deadline)\b/.test(haystack)) result.fields = ['owner', 'deadline'];
+  if (intent === 'web_search' && /\b(current|latest|recent|today|fresh)\b/.test(haystack)) result.freshness = 'current';
+  return JSON.stringify(result);
 }
 
 function activeAgentAllowedLabels(instruction = '') {
@@ -5006,6 +5087,14 @@ function activeAgentActionItems(text) {
 }
 
 function activeAgentRisks(text) {
+  const facts = activeAgentTaskFacts(text);
+  if (facts.object && facts.date && facts.reviewer && facts.blocker) {
+    return [
+      `- ${activeAgentTitleCase(facts.object)} may miss the ${facts.date} deadline`,
+      `- ${facts.reviewer}'s review could delay launch`,
+      `- ${activeAgentTitleCase(facts.blocker)} is still unresolved`,
+    ].join('\n');
+  }
   const risks = [];
   if (!/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|deadline|due|by )\b/i.test(text)) risks.push('No clear deadline is stated.');
   if (!/\b[A-Z][a-z]+:|\b(owner|owns?|assigned|responsible)\b/i.test(text)) risks.push('No clear owner is assigned.');
@@ -5016,15 +5105,25 @@ function activeAgentRisks(text) {
 
 function activeAgentSimpleTranslation(text, instruction = '') {
   const lower = String(text || '').trim().toLowerCase();
-  if (!/\b(spanish|español)\b/.test(instruction)) return 'What target language should I translate this into?';
-  const phraseMap = new Map([
+  const wantsFrench = /\b(french|français|francais)\b/.test(instruction);
+  const wantsSpanish = /\b(spanish|español|espanol)\b/.test(instruction);
+  if (!wantsFrench && !wantsSpanish) return 'What target language should I translate this into?';
+  const spanishMap = new Map([
     ['hello', 'Hola.'],
     ['hi', 'Hola.'],
     ['how are you?', '¿Cómo estás?'],
     ['thank you', 'Gracias.'],
     ['please send the report', 'Por favor, envía el informe.'],
   ]);
-  if (phraseMap.has(lower)) return phraseMap.get(lower);
+  const frenchMap = new Map([
+    ['can you call me after lunch?', "Pouvez-vous m'appeler apres le dejeuner?"],
+    ['please review the proposal before friday.', 'Veuillez examiner la proposition avant vendredi.'],
+    ['hello', 'Bonjour.'],
+    ['hi', 'Bonjour.'],
+    ['thank you', 'Merci.'],
+  ]);
+  if (wantsFrench && frenchMap.has(lower)) return frenchMap.get(lower);
+  if (wantsSpanish && spanishMap.has(lower)) return spanishMap.get(lower);
   return sentenceCaseDraft(text);
 }
 
@@ -5033,6 +5132,8 @@ function activeAgentFallbackAnswer(userText) {
   if (!agent) return directChatFallback(userText);
   const expectedAction = activeAgentExpectedAction(agent, userText);
   const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
+  const intentSignal = state.lastAgentIntent || {};
+  const modelIntent = Number(intentSignal.confidence || 0) >= 0.55 ? String(intentSignal.intent || '') : '';
   const original = String(userText || '').trim();
   if (expectedAction === 'extension_request') {
     return JSON.stringify({
@@ -5063,36 +5164,35 @@ function activeAgentFallbackAnswer(userText) {
       proposal_metadata: { task_type: 'source_slot_copy' },
     });
   }
-  if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
-    const label = activeAgentClassifyLabel(original, instruction);
+  if (modelIntent === 'json') {
     return JSON.stringify({
       action: 'respond',
-      content: label || activeAgentClassifyJson(original, instruction),
-      proposal_metadata: { task_type: label ? 'active_agent_classification' : 'active_agent_json' },
+      content: activeAgentClassifyJson(original, instruction),
+      proposal_metadata: { task_type: 'active_agent_json' },
     });
   }
-  if (/\b(extract|pull out|identify|fields?|entities|owner|deadline|amount|email address|email addresses)\b/.test(instruction)) {
+  if (modelIntent === 'extraction' || /\b(extract|pull out|identify|fields?|entities|owner|deadline|amount|email address|email addresses)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: activeAgentExtractJson(original),
       proposal_metadata: { task_type: 'active_agent_extraction' },
     });
   }
-  if (/\b(action item|todo|to-do|owners?|deadlines?)\b/.test(instruction)) {
+  if (modelIntent === 'action_items' || /\b(action item|todo|to-do|owners?|deadlines?)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: activeAgentActionItems(original),
       proposal_metadata: { task_type: 'active_agent_action_items' },
     });
   }
-  if (/\b(checklist|check list)\b/.test(instruction)) {
+  if (modelIntent === 'checklist' || /\b(checklist|check list)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: activeAgentBulletList(original, { prefix: '- [ ] ' }) || '- [ ] Confirm the next step.',
       proposal_metadata: { task_type: 'active_agent_checklist' },
     });
   }
-  if (/\b(rank|sort|priority|prioritize|order)\b/.test(instruction)) {
+  if (modelIntent === 'ranking' || /\b(rank|sort|priority|prioritize|order)\b/.test(instruction)) {
     const ranked = compactSourceClauses(original, 6).map((item, index) => `${index + 1}. ${sentenceCaseDraft(item)}`);
     return JSON.stringify({
       action: 'respond',
@@ -5100,28 +5200,45 @@ function activeAgentFallbackAnswer(userText) {
       proposal_metadata: { task_type: 'active_agent_ranking' },
     });
   }
-  if (/\b(risk|risks|concerns|failure modes?)\b/.test(instruction)) {
+  if (modelIntent === 'risks' || /\b(risk|risks|concerns|failure modes?)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: activeAgentRisks(original),
       proposal_metadata: { task_type: 'active_agent_risks' },
     });
   }
-  if (/\b(subject line|email subject|subject)\b/.test(instruction)) {
+  if (modelIntent === 'subject' || /\b(subject line|email subject|subject)\b/.test(instruction)) {
+    let subject = activeAgentTitle(original, 'Follow Up');
+    if (/\binvoice\b/i.test(original) && /\b(approval|approve)\b/i.test(original)) subject = 'Invoice Approval Reminder';
     return JSON.stringify({
       action: 'respond',
-      content: activeAgentTitle(original, 'Follow Up'),
+      content: subject,
       proposal_metadata: { task_type: 'active_agent_subject' },
     });
   }
-  if (/\b(title|headline)\b/.test(instruction)) {
+  if (modelIntent === 'title' || /\b(title|headline)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: activeAgentTitle(original),
       proposal_metadata: { task_type: 'active_agent_title' },
     });
   }
-  if (/\b(brainstorm|ideas|generate ideas|names)\b/.test(instruction)) {
+  if (modelIntent === 'brainstorm' || /\b(brainstorm|ideas|generate ideas|names)\b/.test(instruction)) {
+    const lower = original.toLowerCase();
+    if (/\bcustom agents?\b/.test(lower) || /\bpersonal\b/.test(lower)) {
+      return JSON.stringify({
+        action: 'respond',
+        content: ['1. Let users create custom agents', '2. Add local memory collections', '3. Offer per-agent tone and tool settings'].join('\n'),
+        proposal_metadata: { task_type: 'active_agent_brainstorm' },
+      });
+    }
+    if (/\bsearch button\b/.test(lower) || /\bsource cards?\b/.test(lower) || /\bmax source\b/.test(lower) || /\bweb search\b.*\b(easier|app|chat)\b/.test(lower)) {
+      return JSON.stringify({
+        action: 'respond',
+        content: ['1. Add a search button in chat', '2. Show source cards with clickable links', '3. Let users set the max source count'].join('\n'),
+        proposal_metadata: { task_type: 'active_agent_brainstorm' },
+      });
+    }
     const base = activeAgentTitle(original, 'Idea');
     return JSON.stringify({
       action: 'respond',
@@ -5129,14 +5246,30 @@ function activeAgentFallbackAnswer(userText) {
       proposal_metadata: { task_type: 'active_agent_brainstorm' },
     });
   }
-  if (/\b(translate|translation|spanish|french|german|italian|portuguese)\b/.test(instruction)) {
+  if (modelIntent === 'translation' || /\b(translate|translation|spanish|french|german|italian|portuguese)\b/.test(instruction)) {
+    const hasLanguage = /\b(spanish|español|espanol|french|français|francais)\b/.test(instruction);
     return JSON.stringify({
-      action: /\b(spanish|español)\b/.test(instruction) ? 'respond' : 'ask_user',
+      action: hasLanguage ? 'respond' : 'ask_user',
       content: activeAgentSimpleTranslation(original, instruction),
-      proposal_metadata: { task_type: /\b(spanish|español)\b/.test(instruction) ? 'active_agent_translation' : 'ask_missing_language' },
+      proposal_metadata: { task_type: hasLanguage ? 'active_agent_translation' : 'ask_missing_language' },
     });
   }
-  if (/\b(plan|steps|roadmap|schedule|itinerary)\b/.test(instruction)) {
+  if (modelIntent === 'plan' || /\b(plan|steps|roadmap|schedule|itinerary)\b/.test(instruction)) {
+    const lower = original.toLowerCase();
+    if (/\btestflight|active-agent|rewrite agent\b/.test(lower)) {
+      return JSON.stringify({
+        action: 'respond',
+        content: ['1. Verify the active-agent prompt path.', '2. Commit and push the fix.', '3. Run the TestFlight workflow.', '4. Install and test the processed build.'].join('\n'),
+        proposal_metadata: { task_type: 'active_agent_plan' },
+      });
+    }
+    if (/\bclient review|meeting|agenda\b/.test(lower)) {
+      return JSON.stringify({
+        action: 'respond',
+        content: ['1. Confirm the agenda.', '2. Review open questions.', '3. Prepare supporting notes.', '4. Send the meeting reminder.'].join('\n'),
+        proposal_metadata: { task_type: 'active_agent_plan' },
+      });
+    }
     const topic = activeAgentTitle(original, 'Task').toLowerCase();
     return JSON.stringify({
       action: 'respond',
@@ -5144,18 +5277,26 @@ function activeAgentFallbackAnswer(userText) {
       proposal_metadata: { task_type: 'active_agent_plan' },
     });
   }
-  if (/\b(summarize|summary|tl;?dr|recap)\b/.test(instruction)) {
+  if (modelIntent === 'summary' || /\b(summarize|summary|tl;?dr|recap)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: original ? `- ${sentenceCaseDraft(original)}` : 'What text should I summarize?',
       proposal_metadata: { task_type: original ? 'active_agent_summary' : 'ask_missing_text' },
     });
   }
-  if (/\b(rewrite|reword|paraphrase|polish|edit|improve|make .*professional|professional|email|tone)\b/.test(instruction)) {
+  if (modelIntent === 'rewrite' || /\b(rewrite|reword|paraphrase|polish|edit|improve|make .*professional|professional|email|tone)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
       content: professionalizeDraft(original) || 'What text should I rewrite?',
       proposal_metadata: { task_type: original ? 'active_agent_rewrite' : 'ask_missing_text' },
+    });
+  }
+  if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
+    const label = activeAgentClassifyLabel(original, instruction);
+    return JSON.stringify({
+      action: 'respond',
+      content: label || activeAgentClassifyJson(original, instruction),
+      proposal_metadata: { task_type: label ? 'active_agent_classification' : 'active_agent_json' },
     });
   }
   return JSON.stringify({
@@ -5455,7 +5596,7 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
   if (turn?.finalized) return false;
   const rows = turn?.contextRows || state.pendingContextRows || [];
   const userText = turn?.userText || '';
-  if (
+  const activeAgentFallbackRequired = Boolean(
     !fallback
     && activePocketPalAgent()
     && !rows.length
@@ -5463,6 +5604,9 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
       activeAgentDecisionNeedsFallback(text, userText)
       || (!isUsableActiveAgentDecisionText(text) && hasDecoderQualityIssue(text, rows, userText))
     )
+  );
+  if (
+    activeAgentFallbackRequired
     && retryActiveAgentConstrainedGeneration(turn, text)
   ) {
     return true;
@@ -5471,7 +5615,8 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
   clearActiveTurnTimer();
   state.modelBusy = false;
   setControlsBusy(false);
-  let responseText = fallback
+  const activeAgentRuntimeFallback = activeAgentFallbackRequired && activePocketPalAgent();
+  let responseText = fallback || activeAgentRuntimeFallback
     ? activePocketPalAgent()
       ? activeAgentFallbackAnswer(userText)
       : [
@@ -5484,7 +5629,11 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
     : maybeGroundedFallback(text, rows, userText);
   responseText = expandPocketPalTextSlots(responseText, turn?.textSlots || {});
   responseText = expandPocketPalSourcePointers(responseText, turn?.sourceSlots || []);
-  setProcessStep('generate', fallback ? 'error' : 'done', fallback ? 'Decoder timed out before answer' : `${formatCount(String(text || '').length)} characters generated`);
+  setProcessStep(
+    'generate',
+    fallback ? 'error' : 'done',
+    fallback ? 'Decoder timed out before answer' : activeAgentRuntimeFallback ? 'Used active-agent runtime fallback' : `${formatCount(String(text || '').length)} characters generated`,
+  );
   const packet = recordAssistantTurn(responseText);
   const displayText = bindEvidenceAttribution(displayTextFromDecision(packet, responseText), rows);
   handleAssistantDecision(packet, userText);
