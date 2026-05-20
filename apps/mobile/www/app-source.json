@@ -1,6 +1,6 @@
 {
   "schema": "agent_kernel_lite_mobile_app_source",
-  "generated_at": "2026-05-18T13:29:18.065Z",
+  "generated_at": "2026-05-20T01:05:57.607Z",
   "source": "../../web",
   "bundled_app": "./app/",
   "excluded": [
@@ -11,6 +11,7 @@
   "bundled_voice": {
     "speaker": "Peyton",
     "f5tts_q4": "./app/models/f5tts_peyton_q4_v0/manifest.json",
+    "f5tts_q4_asset_layout": "chunked-q4",
     "vocos_q4": "./app/models/vocos_mel_24khz_q4_v0/manifest.json",
     "reference_wav": "./app/voice/peyton/sample_0.wav",
     "vocab": "./app/voice/peyton/F5TTS_Base_vocab.txt"

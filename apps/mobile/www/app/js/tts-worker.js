@@ -5,8 +5,8 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260519-peyton-f5-q4-w4fpact-vocos-fp16-local';
-const SPEAK_PRESET = 'custom-wasm-f5-q4w4fpact-vocosfp16-cond256-duration-cfg2-step12';
+const RUNTIME_VERSION = '20260519-peyton-f5-q4-vocos-q4-wasm-v1';
+const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-cond256-duration-cfg2-step12';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const REFERENCE_MEL_FRAMES = 256;
 const FULL_REFERENCE_TEXT_BYTES = 42;
@@ -15,7 +15,7 @@ const MAX_DURATION_FRAMES = 1536;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
-  vocosManifest: '../models/vocos_mel_24khz_fp16_v0/manifest.json',
+  vocosManifest: '../models/vocos_mel_24khz_q4_v0/manifest.json',
   refWav: '../voice/peyton/sample_0.wav',
   vocab: '../voice/peyton/F5TTS_Base_vocab.txt',
 };
@@ -39,14 +39,16 @@ self.addEventListener('message', (event) => {
 async function loadRuntime() {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      postMessage({ type: 'status', detail: 'Loading Peyton Q4 F5TTS' });
-      const f5Bundle = await Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest));
-      postMessage({ type: 'status', detail: 'Loading Vocos FP16' });
-      const vocosBundle = await Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.vocosManifest));
-      const [refAudioBuffer, vocabText] = await Promise.all([
+      const f5Bundle = await loadStage('Loading Peyton Q4 F5TTS', () => (
+        Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest))
+      ));
+      const vocosBundle = await loadStage('Loading Vocos Q4', () => (
+        Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.vocosManifest))
+      ));
+      const [refAudioBuffer, vocabText] = await loadStage('Loading Peyton reference assets', () => Promise.all([
         fetchArrayBuffer(versionedUrl(DEFAULTS.refWav)),
         fetchText(versionedUrl(DEFAULTS.vocab)),
-      ]);
+      ]));
       const wav = decodeWavMono(refAudioBuffer);
       const vocabMap = buildVocabMap(vocabText);
       const f5Id = f5Bundle.manifest?.model_id || 'f5tts-peyton-q4';
@@ -67,6 +69,15 @@ async function loadRuntime() {
     })();
   }
   return runtimePromise;
+}
+
+async function loadStage(label, fn) {
+  postMessage({ type: 'status', detail: label });
+  try {
+    return await fn();
+  } catch (error) {
+    throw new Error(`${label} failed: ${error?.message || String(error)}`);
+  }
 }
 
 async function speak(message) {
@@ -141,7 +152,9 @@ async function speak(message) {
 
 function versionedUrl(path) {
   const url = new URL(path, import.meta.url);
-  url.searchParams.set('v', RUNTIME_VERSION);
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    url.searchParams.set('v', RUNTIME_VERSION);
+  }
   return url.href;
 }
 
@@ -158,9 +171,15 @@ async function fetchArrayBuffer(url) {
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok && response.status !== 0) throw new Error(`failed to fetch ${url}: ${response.status}`);
-  return response.text();
+  try {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (response.ok || response.status === 0) return response.text();
+    throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    return xhrText(url).catch(() => {
+      throw new Error(`failed to fetch ${url}: ${error.message || String(error)}`);
+    });
+  }
 }
 
 function xhrArrayBuffer(url) {
@@ -171,6 +190,23 @@ function xhrArrayBuffer(url) {
     request.onload = () => {
       if ((request.status >= 200 && request.status < 300) || request.status === 0) {
         resolve(request.response);
+      } else {
+        reject(new Error(`XHR ${request.status}`));
+      }
+    };
+    request.onerror = () => reject(new Error('XHR network error'));
+    request.send();
+  });
+}
+
+function xhrText(url) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('GET', url, true);
+    request.responseType = 'text';
+    request.onload = () => {
+      if ((request.status >= 200 && request.status < 300) || request.status === 0) {
+        resolve(request.responseText);
       } else {
         reject(new Error(`XHR ${request.status}`));
       }

@@ -19,32 +19,130 @@ async function ensureQ4Wasm() {
   if (!wasmModulePromise) {
     wasmModulePromise = (async () => {
       let module;
+      let moduleUrl;
       try {
-        module = await import(new URL("model_stack_bitnet_wasm.js", import.meta.url).href);
+        moduleUrl = new URL("model_stack_bitnet_wasm.js", import.meta.url);
+        module = await import(moduleUrl.href);
       } catch (error) {
-        module = await import(new URL("pkg/model_stack_bitnet_wasm.js", import.meta.url).href);
+        moduleUrl = new URL("pkg/model_stack_bitnet_wasm.js", import.meta.url);
+        module = await import(moduleUrl.href);
       }
-      await module.default();
+      const wasmUrl = new URL("model_stack_bitnet_wasm_bg.wasm", moduleUrl).href;
+      const wasmBytes = await fetchBuffer(wasmUrl, "Model Stack WASM runtime");
+      await module.default(wasmBytes);
       return module;
     })();
   }
   return wasmModulePromise;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok && response.status !== 0) {
-    throw new Error(`failed to fetch ${url}: ${response.status}`);
+async function fetchJson(url, label = "JSON asset") {
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok && response.status !== 0) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return response.json();
+  } catch (error) {
+    const text = await xhrText(url).catch((xhrError) => {
+      throw new Error(`${label} load failed: ${url}: ${error.message || String(error)}; XHR fallback: ${xhrError.message || String(xhrError)}`);
+    });
+    return JSON.parse(text);
   }
-  return response.json();
 }
 
-async function fetchBuffer(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok && response.status !== 0) {
-    throw new Error(`failed to fetch ${url}: ${response.status}`);
+async function fetchBuffer(url, label = "binary asset") {
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok && response.status !== 0) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return response.arrayBuffer();
+  } catch (error) {
+    return xhrArrayBuffer(url).catch((xhrError) => {
+      throw new Error(`${label} load failed: ${url}: ${error.message || String(error)}; XHR fallback: ${xhrError.message || String(xhrError)}`);
+    });
   }
-  return response.arrayBuffer();
+}
+
+async function fetchChunkedBuffer(baseUrl, chunks, label = "chunked binary asset", expectedBytes = null) {
+  const chunkList = chunks.map((chunk) => (typeof chunk === "string" ? { path: chunk } : chunk));
+  const totalBytes = Number.isFinite(Number(expectedBytes)) ? Number(expectedBytes) : null;
+  if (totalBytes !== null) {
+    const output = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (let i = 0; i < chunkList.length; i += 1) {
+      const chunk = chunkList[i];
+      const path = chunk.path || chunk.file || chunk.url;
+      if (!path) {
+        throw new Error(`${label} has chunk ${i} without a path`);
+      }
+      const bytes = new Uint8Array(await fetchBuffer(resolveUrl(path, baseUrl), `${label} chunk ${i + 1}/${chunkList.length}`));
+      if (offset + bytes.byteLength > output.byteLength) {
+        throw new Error(`${label} exceeded expected byte length ${totalBytes}`);
+      }
+      output.set(bytes, offset);
+      offset += bytes.byteLength;
+    }
+    if (offset !== output.byteLength) {
+      throw new Error(`${label} expected ${output.byteLength} bytes but loaded ${offset}`);
+    }
+    return output.buffer;
+  }
+
+  const loaded = [];
+  let total = 0;
+  for (let i = 0; i < chunkList.length; i += 1) {
+    const chunk = chunkList[i];
+    const path = chunk.path || chunk.file || chunk.url;
+    if (!path) {
+      throw new Error(`${label} has chunk ${i} without a path`);
+    }
+    const bytes = new Uint8Array(await fetchBuffer(resolveUrl(path, baseUrl), `${label} chunk ${i + 1}/${chunkList.length}`));
+    loaded.push(bytes);
+    total += bytes.byteLength;
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const bytes of loaded) {
+    output.set(bytes, offset);
+    offset += bytes.byteLength;
+  }
+  return output.buffer;
+}
+
+function xhrArrayBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", url, true);
+    request.responseType = "arraybuffer";
+    request.onload = () => {
+      if ((request.status >= 200 && request.status < 300) || request.status === 0) {
+        resolve(request.response);
+      } else {
+        reject(new Error(`XHR ${request.status}`));
+      }
+    };
+    request.onerror = () => reject(new Error("XHR network error"));
+    request.send();
+  });
+}
+
+function xhrText(url) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", url, true);
+    request.responseType = "text";
+    request.onload = () => {
+      if ((request.status >= 200 && request.status < 300) || request.status === 0) {
+        resolve(request.responseText);
+      } else {
+        reject(new Error(`XHR ${request.status}`));
+      }
+    };
+    request.onerror = () => reject(new Error("XHR network error"));
+    request.send();
+  });
 }
 
 export class Q4TensorBundleWASM {
@@ -63,13 +161,14 @@ export class Q4TensorBundleWASM {
   }
 
   static async fromManifestUrl(manifestUrl) {
-    const manifest = await fetchJson(manifestUrl);
-    const baseUrl = new URL(".", manifestUrl).toString();
+    const resolvedManifestUrl = new URL(manifestUrl, globalThis.location?.href || import.meta.url).href;
+    const manifest = await fetchJson(resolvedManifestUrl, "model manifest");
+    const baseUrl = new URL(".", resolvedManifestUrl).toString();
     if (manifest.files?.index && manifest.files?.tensors && !manifest.files?.q4) {
       const [wasm, denseIndex, denseBuffer] = await Promise.all([
         ensureQ4Wasm(),
-        fetchJson(resolveUrl(manifest.files.index, baseUrl)),
-        fetchBuffer(resolveUrl(manifest.files.tensors, baseUrl)),
+        fetchJson(resolveUrl(manifest.files.index, baseUrl), "dense tensor index"),
+        fetchBuffer(resolveUrl(manifest.files.tensors, baseUrl), "dense tensor buffer"),
       ]);
       return new Q4TensorBundleWASM({
         manifest,
@@ -82,10 +181,12 @@ export class Q4TensorBundleWASM {
     }
     const [wasm, q4Index, denseIndex, q4Buffer, denseBuffer] = await Promise.all([
       ensureQ4Wasm(),
-      fetchJson(resolveUrl(manifest.files.q4_index, baseUrl)),
-      fetchJson(resolveUrl(manifest.files.dense_index, baseUrl)),
-      fetchBuffer(resolveUrl(manifest.files.q4, baseUrl)),
-      fetchBuffer(resolveUrl(manifest.files.dense, baseUrl)),
+      fetchJson(resolveUrl(manifest.files.q4_index, baseUrl), "Q4 tensor index"),
+      fetchJson(resolveUrl(manifest.files.dense_index, baseUrl), "dense tensor index"),
+      Array.isArray(manifest.files.q4_chunks)
+        ? fetchChunkedBuffer(baseUrl, manifest.files.q4_chunks, "Q4 tensor buffer", manifest.files.q4_nbytes)
+        : fetchBuffer(resolveUrl(manifest.files.q4, baseUrl), "Q4 tensor buffer"),
+      fetchBuffer(resolveUrl(manifest.files.dense, baseUrl), "dense tensor buffer"),
     ]);
     return new Q4TensorBundleWASM({ manifest, q4Index, denseIndex, q4Buffer, denseBuffer, wasm });
   }
@@ -357,6 +458,25 @@ export class Q4TensorBundleWASM {
       bias,
       seqLen,
       channels,
+      kernel,
+      padding,
+    );
+  }
+
+  runQ4Conv1d(weightName, biasName, input, seqLen, inChannels, outChannels, kernel, padding) {
+    if (!this.wasm?.q4_conv1d_f32) {
+      throw new Error("q4_conv1d_f32 is not available in the WASM runtime");
+    }
+    const { packedWeight, rowScalesF16 } = this.q4Tensor(weightName);
+    const bias = biasName ? this.denseF32Tensor(biasName) : new Float32Array(0);
+    return this.wasm.q4_conv1d_f32(
+      input instanceof Float32Array ? input : new Float32Array(input),
+      packedWeight,
+      rowScalesF16,
+      bias,
+      seqLen,
+      inChannels,
+      outChannels,
       kernel,
       padding,
     );

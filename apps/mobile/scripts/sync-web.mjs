@@ -1,5 +1,5 @@
-import { createWriteStream } from 'node:fs';
-import { access, cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { access, cp, mkdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
@@ -12,7 +12,7 @@ const sourceWeb = resolve(repoRoot, 'web');
 const bundledApp = resolve(mobileRoot, 'www', 'app');
 const bundledModelName = 'agentkernel_lite_100m_bitnet_12000';
 const sourceModel = resolve(sourceWeb, 'models', bundledModelName);
-const bundledExtraModelNames = ['vocos_mel_24khz_fp16_v0'];
+const bundledExtraModelNames = ['vocos_mel_24khz_q4_v0'];
 const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
 const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
@@ -66,6 +66,18 @@ if (await exists(packagedVoice)) {
   console.warn('Peyton voice assets were not bundled; AGENT_KERNEL_LITE_VOICE_Q4_URL is empty.');
 }
 
+const f5VoiceModel = resolve(bundledApp, 'models', 'f5tts_peyton_q4_v0');
+if (await exists(f5VoiceModel)) {
+  await chunkQ4ModelBuffer(f5VoiceModel, {
+    fileKey: 'q4',
+    chunksKey: 'q4_chunks',
+    nbytesKey: 'q4_nbytes',
+    chunkDir: 'chunks',
+    chunkPrefix: 'tensors.q4',
+    chunkBytes: 8 * 1024 * 1024,
+  });
+}
+
 if (await exists(packagedPapers)) {
   await mkdir(resolve(bundledApp, 'packed-data'), { recursive: true });
   await cp(packagedPapers, resolve(bundledApp, 'packed-data', 'papers_50000.json'));
@@ -89,8 +101,8 @@ await writeFile(
     bundled_voice: {
       speaker: 'Peyton',
       f5tts_q4: './app/models/f5tts_peyton_q4_v0/manifest.json',
+      f5tts_q4_asset_layout: 'chunked-q4',
       vocos_q4: './app/models/vocos_mel_24khz_q4_v0/manifest.json',
-      vocos_fp16: './app/models/vocos_mel_24khz_fp16_v0/manifest.json',
       reference_wav: './app/voice/peyton/sample_0.wav',
       vocab: './app/voice/peyton/F5TTS_Base_vocab.txt',
     },
@@ -111,4 +123,38 @@ function untar(archive, destination) {
       else rejectPromise(new Error(`tar exited with ${code}`));
     });
   });
+}
+
+async function chunkQ4ModelBuffer(modelDir, options) {
+  const manifestPath = resolve(modelDir, 'manifest.json');
+  if (!(await exists(manifestPath))) return;
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const files = manifest.files || {};
+  if (Array.isArray(files[options.chunksKey])) return;
+  if (!files[options.fileKey]) return;
+
+  const sourcePath = resolve(modelDir, files[options.fileKey]);
+  if (!(await exists(sourcePath))) return;
+  const sourceStat = await stat(sourcePath);
+  if (sourceStat.size <= options.chunkBytes) return;
+
+  const outputDir = resolve(modelDir, options.chunkDir);
+  await rm(outputDir, { recursive: true, force: true });
+  await mkdir(outputDir, { recursive: true });
+
+  const chunks = [];
+  for (let offset = 0, index = 0; offset < sourceStat.size; offset += options.chunkBytes, index += 1) {
+    const end = Math.min(offset + options.chunkBytes, sourceStat.size) - 1;
+    const relativePath = `${options.chunkDir}/${options.chunkPrefix}.${String(index).padStart(4, '0')}.bin`;
+    await pipeline(createReadStream(sourcePath, { start: offset, end }), createWriteStream(resolve(modelDir, relativePath)));
+    chunks.push(relativePath);
+  }
+
+  files[options.chunksKey] = chunks;
+  files[options.nbytesKey] = sourceStat.size;
+  delete files[options.fileKey];
+  manifest.files = files;
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  await unlink(sourcePath);
+  console.log(`Chunked ${sourcePath} into ${chunks.length} files of up to ${options.chunkBytes} bytes`);
 }
