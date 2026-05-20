@@ -103,6 +103,7 @@ const seqLen = Number(process.argv[3] || 347);
 const genText = process.argv[4] || "Hi, I'm recording this sample to create a This is Peyton.";
 const detailBlockArg = process.argv.find((arg) => arg.startsWith('--detail-block='));
 const detailBlock = detailBlockArg ? Number(detailBlockArg.split('=')[1]) : null;
+const detailInput = process.argv.includes('--detail-input');
 
 await initWasm({ module_or_path: fs.readFileSync('/data/agent_kernel_lite/model-stack/browser/bitnet/pkg/model_stack_bitnet_wasm_bg.wasm') });
 const session = new NodeQ4Bundle(bundleDir).f5Session();
@@ -124,6 +125,7 @@ const totalStarted = performance.now();
 const t = timed('time_embedding', () => session.debug_time_embedding(0.5), reports);
 for (let i = 0; i < t.length; i += 1) t[i] = t[i] / (1 + Math.exp(-t[i]));
 const text = timed('text_embedding', () => session.debug_text_embedding(textIds, seqLen, false), reports);
+const inputDetail = detailInput ? JSON.parse(session.debug_input_embedding_profile_json(x, cond, text, seqLen, false)) : null;
 let hidden = timed('input_embedding', () => session.debug_input_embedding(x, cond, text, seqLen, false), reports);
 let blockDetail = null;
 for (let block = 0; block < 22; block += 1) {
@@ -133,4 +135,4 @@ for (let block = 0; block < 22; block += 1) {
   hidden = timed(`block_${block}`, () => session.debug_dit_block(block, hidden, t, seqLen), reports);
 }
 timed('final_norm', () => session.debug_final_ada_norm(hidden, t, seqLen), reports);
-console.log(JSON.stringify({ bundleDir, seqLen, totalMs: Math.round(performance.now() - totalStarted), reports, blockDetail }, null, 2));
+console.log(JSON.stringify({ bundleDir, seqLen, totalMs: Math.round(performance.now() - totalStarted), reports, inputDetail, blockDetail }, null, 2));

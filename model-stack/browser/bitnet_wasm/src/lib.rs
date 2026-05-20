@@ -4221,6 +4221,65 @@ impl F5Q4DiTSession {
         self.input_embedding(x, cond, text, seq_len, drop_audio_cond)
     }
 
+    pub fn debug_input_embedding_profile_json(
+        &self,
+        x: &[f32],
+        cond: &[f32],
+        text: &[f32],
+        seq_len: usize,
+        drop_audio_cond: bool,
+    ) -> Result<String, JsValue> {
+        if x.len() != seq_len * self.mel_dim || cond.len() != x.len() || text.len() != seq_len * self.text_dim {
+            return Err(JsValue::from_str("F5 debug input embedding profile shape mismatch"));
+        }
+        let mut marks: Vec<(&str, f64)> = Vec::new();
+        let started = date_now();
+
+        let joined_dim = self.mel_dim * 2 + self.text_dim;
+        let mut joined = vec![0.0f32; seq_len * joined_dim];
+        for row in 0..seq_len {
+            let dst = row * joined_dim;
+            joined[dst..dst + self.mel_dim].copy_from_slice(&x[row * self.mel_dim..(row + 1) * self.mel_dim]);
+            if !drop_audio_cond {
+                joined[dst + self.mel_dim..dst + self.mel_dim * 2].copy_from_slice(&cond[row * self.mel_dim..(row + 1) * self.mel_dim]);
+            }
+            joined[dst + self.mel_dim * 2..dst + joined_dim].copy_from_slice(&text[row * self.text_dim..(row + 1) * self.text_dim]);
+        }
+        marks.push(("join", date_now()));
+
+        let projected = self.linear("transformer.input_embed.proj.weight", &joined, seq_len)?;
+        marks.push(("projection", date_now()));
+
+        let mut pos = self.grouped_conv1d("transformer.input_embed.conv_pos_embed.conv1d.0.weight", &projected, seq_len, self.dim, 31, 15, 16)?;
+        marks.push(("conv0", date_now()));
+        for value in &mut pos {
+            *value = mish_scalar(*value);
+        }
+        marks.push(("mish0", date_now()));
+
+        pos = self.grouped_conv1d("transformer.input_embed.conv_pos_embed.conv1d.2.weight", &pos, seq_len, self.dim, 31, 15, 16)?;
+        marks.push(("conv2", date_now()));
+        for idx in 0..pos.len() {
+            pos[idx] = mish_scalar(pos[idx]) + projected[idx];
+        }
+        marks.push(("mish2_residual", date_now()));
+
+        let mut previous = started;
+        let mut fields = Vec::new();
+        for (name, at) in marks {
+            fields.push(format!("\"{}\":{:.3}", name, at - previous));
+            previous = at;
+        }
+        let checksum: f64 = pos.iter().take(4096).map(|value| *value as f64).sum();
+        Ok(format!(
+            "{{\"seqLen\":{},\"totalMs\":{:.3},\"checksum\":{:.6},\"timings\":{{{}}}}}",
+            seq_len,
+            previous - started,
+            checksum,
+            fields.join(",")
+        ))
+    }
+
     pub fn debug_dit_block(
         &self,
         block: usize,
@@ -4711,18 +4770,22 @@ impl F5Q4DiTSession {
                         for k in k_start..k_end {
                             let src_pos = pos + k - padding;
                             let col = local_in * kernel + k;
-                            let value = input[src_pos * channels + input_base];
-                            sum += value * weight_row[col] as f32 * scale;
-                            sum_b += value * weight_b[col] as f32 * scale_b;
-                            sum_c += value * weight_c[col] as f32 * scale_c;
-                            sum_d += value * weight_d[col] as f32 * scale_d;
+                            unsafe {
+                                let value = *input.get_unchecked(src_pos * channels + input_base);
+                                sum += value * *weight_row.get_unchecked(col) as f32 * scale;
+                                sum_b += value * *weight_b.get_unchecked(col) as f32 * scale_b;
+                                sum_c += value * *weight_c.get_unchecked(col) as f32 * scale_c;
+                                sum_d += value * *weight_d.get_unchecked(col) as f32 * scale_d;
+                            }
                         }
                     }
                     let dst = pos * channels + out_ch;
-                    output[dst] = sum;
-                    output[dst + 1] = sum_b;
-                    output[dst + 2] = sum_c;
-                    output[dst + 3] = sum_d;
+                    unsafe {
+                        *output.get_unchecked_mut(dst) = sum;
+                        *output.get_unchecked_mut(dst + 1) = sum_b;
+                        *output.get_unchecked_mut(dst + 2) = sum_c;
+                        *output.get_unchecked_mut(dst + 3) = sum_d;
+                    }
                 }
                 out_ch += 4;
                 continue;

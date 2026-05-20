@@ -417,6 +417,38 @@ export class F5Q4DiTSession {
         return v4;
     }
     /**
+     * @param {Float32Array} x
+     * @param {Float32Array} cond
+     * @param {Float32Array} text
+     * @param {number} seq_len
+     * @param {boolean} drop_audio_cond
+     * @returns {string}
+     */
+    debug_input_embedding_profile_json(x, cond, text, seq_len, drop_audio_cond) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passArrayF32ToWasm0(x, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArrayF32ToWasm0(cond, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passArrayF32ToWasm0(text, wasm.__wbindgen_malloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ret = wasm.f5q4ditsession_debug_input_embedding_profile_json(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, seq_len, drop_audio_cond);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
+    }
+    /**
      * @param {Int32Array} text_ids
      * @param {number} seq_len
      * @param {boolean} drop_text
