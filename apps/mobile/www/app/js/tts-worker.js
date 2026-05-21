@@ -7,8 +7,8 @@ let runtimePromise = null;
 const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
-const RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-quality-wasm-ref256-gen92-step8-cfg2-speed115';
-const SPEAK_PRESET = 'custom-f5-hf-q4-distill-quality-wasm-vocos-q4-peyton-ref256-cfg2-step8-speed115';
+const RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-webgpu-ditgraph-ref256-gen93-step8-cfg2-speed115';
+const SPEAK_PRESET = 'custom-f5-hf-q4-distill-webgpu-ditgraph-vocos-q4-peyton-ref256-cfg2-step8-speed115';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
@@ -61,6 +61,7 @@ async function loadRuntime() {
         fallbackLabel: 'Loading packaged evaluated ' + VOICE_NAME + ' Q4 F5TTS fallback',
         fallbackManifestUrl: DEFAULTS.f5FallbackManifest,
         preferWasm: true,
+        preferF5Graph: true,
       });
       postProgress({ phase: 'runtime', detail: 'Loading Vocos Q4 weights', percent: 9 });
       const vocosBundle = await loadStage('Loading Vocos Q4', () => (
@@ -112,6 +113,7 @@ async function loadRuntime() {
         refSamples: wav.samples,
         refMelCache: new Map(),
         vocabMap,
+        f5Mode: `${f5Backend.toLowerCase()}:${sessionMode}`,
         detail: `${RUNTIME_VERSION} | ${f5Id} | ${vocosId} | ${SPEAK_PRESET}`,
       };
     })();
@@ -134,29 +136,32 @@ async function selectFastestF5Session(gpuBundle, gpuF5) {
     textIds,
     duration,
     steps: 1,
-    cfgStrength: 0.0,
+    cfgStrength: 2.0,
     swaySamplingCoef: -1.0,
     seed: 17,
   };
   const wasmF5 = new F5TTSQ4DiTRuntime(gpuBundle.base);
   wasmF5.prepareSession();
   try {
-    await gpuF5.sampleMel(args);
-    wasmF5.sampleMel(args);
+    const gpuWarm = await gpuF5.sampleMel(args);
+    const wasmWarm = wasmF5.sampleMel(args);
+    const parity = compareFloatOutputs(gpuWarm, wasmWarm);
+    const parityOk = parity.maxAbs <= 0.08 && parity.meanAbs <= 0.01;
     const gpuMs = await medianTiming(1, () => gpuF5.sampleMel(args));
     const wasmMs = await medianTiming(1, () => wasmF5.sampleMel(args));
     const speedup = wasmMs / Math.max(0.001, gpuMs);
-    const useGpu = speedup >= WEBGPU_F5_MIN_SPEEDUP;
+    const useGpu = parityOk && speedup >= WEBGPU_F5_MIN_SPEEDUP;
     const selected = useGpu ? gpuBundle : gpuBundle.base;
     selected.runtimeSelection = {
       wasmMs,
       gpuMs,
       speedup,
-      selected: useGpu ? 'webgpu-f5' : 'fused-wasm-f5',
+      parity,
+      selected: useGpu ? 'webgpu-f5-dit-graph' : 'fused-wasm-f5',
     };
     postMessage({
       type: 'status',
-      detail: `F5 backend selected: ${selected.runtimeSelection.selected.toUpperCase()} (WASM ${wasmMs.toFixed(1)} ms, WebGPU ${gpuMs.toFixed(1)} ms)`,
+      detail: `F5 backend selected: ${selected.runtimeSelection.selected.toUpperCase()} (WASM ${wasmMs.toFixed(1)} ms, WebGPU ${gpuMs.toFixed(1)} ms, parity max ${parity.maxAbs.toFixed(5)}, mean ${parity.meanAbs.toFixed(5)})`,
     });
     if (!useGpu && gpuBundle.f5GpuSession) {
       gpuBundle.f5GpuSession.remainingCpuOps = [...new Set([...(gpuBundle.f5GpuSession.remainingCpuOps || []), 'full-sampler-slower-than-wasm'])];
@@ -177,12 +182,12 @@ async function loadStage(label, fn) {
   }
 }
 
-async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '', preferWasm = false }) {
+async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '', preferWasm = false, preferF5Graph = false }) {
   async function loadPreferred(stageLabel, url) {
     if (!preferWasm && globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU) {
       try {
         const gpuBundle = await loadStage(`${stageLabel} with WebGPU`, () => Q4Runtime.Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
-        return await selectFastestQ4Bundle(gpuBundle, stageLabel);
+        return preferF5Graph ? gpuBundle : await selectFastestQ4Bundle(gpuBundle, stageLabel);
       } catch (error) {
         postMessage({ type: 'status', detail: `${stageLabel} WebGPU failed; falling back to WASM (${error.message || String(error)})` });
       }
@@ -437,6 +442,7 @@ async function speak(message) {
     bytes: wav.byteLength,
     preset,
     runtimeVersion: message.runtimeVersion || RUNTIME_VERSION,
+    runtimeMode: runtime.f5Mode || '',
     chunks: chunks.length,
     timing: {
       loadMs: Math.round(loadedAt - startedAt),
@@ -450,7 +456,9 @@ async function speak(message) {
 }
 
 function formatDurationMs(ms) {
-  const seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  const value = Math.max(0, Number(ms || 0));
+  if (value > 0 && value < 1000) return `${Math.max(1, Math.round(value))}ms`;
+  const seconds = Math.max(0, Math.round(value / 1000));
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }

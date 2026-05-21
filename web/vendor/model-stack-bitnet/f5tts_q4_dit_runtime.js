@@ -279,13 +279,20 @@ export class F5TTSQ4DiTRuntime {
       const t = times[step];
       const dt = times[step + 1] - times[step];
       const pred = await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: false, dropText: false });
-      let flow = pred;
-      if (cfgStrength >= 1e-5) {
-        const nullPred = await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: true, dropText: true });
-        flow = pred.slice();
-        for (let i = 0; i < flow.length; i += 1) flow[i] = pred[i] + (pred[i] - nullPred[i]) * cfgStrength;
+      if (this.bundle.runSamplerUpdateGpu) {
+        const nullPred = cfgStrength >= 1e-5
+          ? await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: true, dropText: true })
+          : null;
+        y = await this.bundle.runSamplerUpdateGpu(y, pred, nullPred, dt, cfgStrength).readback();
+      } else {
+        let flow = pred;
+        if (cfgStrength >= 1e-5) {
+          const nullPred = await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: true, dropText: true });
+          flow = pred.slice();
+          for (let i = 0; i < flow.length; i += 1) flow[i] = pred[i] + (pred[i] - nullPred[i]) * cfgStrength;
+        }
+        for (let i = 0; i < y.length; i += 1) y[i] += dt * flow[i];
       }
-      for (let i = 0; i < y.length; i += 1) y[i] += dt * flow[i];
       if (typeof onProgress === "function") onProgress(step + 1, steps);
     }
     y.set(cond.subarray(0, condSeqLen * this.melDim), 0);
@@ -371,6 +378,9 @@ export class F5TTSQ4DiTRuntime {
   }
 
   async ditBlockAsync(block, input, t, seqLen) {
+    if (this.bundle.runF5DiTBlockAsync) {
+      return this.bundle.runF5DiTBlockAsync(block, input, t, seqLen, this.dim, this.heads, this.headDim, EPS);
+    }
     const prefix = `transformer.transformer_blocks.${block}`;
     const mod = await this.linearAsync(`${prefix}.attn_norm.linear.weight`, `${prefix}.attn_norm.linear.bias`, siluCopy(t), 1);
     const shiftMsa = mod.subarray(0, this.dim);

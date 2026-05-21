@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v24-peyton-f5-vocos-q4';
-const VOICE_RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-quality-wasm-ref256-gen92-step8-cfg2-speed115';
+const VOICE_RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-webgpu-ditgraph-ref256-gen93-step8-cfg2-speed115';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -685,7 +685,9 @@ function formatCount(value) {
 }
 
 function formatDurationMs(ms) {
-  const seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+  const value = Math.max(0, Number(ms || 0));
+  if (value > 0 && value < 1000) return `${Math.max(1, Math.round(value))}ms`;
+  const seconds = Math.max(0, Math.round(value / 1000));
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
@@ -5852,11 +5854,12 @@ function appendVoiceMessage(result, audioUrl) {
     'Vocos Q4',
     result.preset || '',
     result.runtimeVersion || '',
+    result.runtimeMode || '',
     result.samples ? `${formatCount(result.samples)} samples` : '',
     result.bytes ? formatBytes(result.bytes) : '',
-    result.timing?.generationMs ? `gen ${Math.round(result.timing.generationMs / 1000)}s` : '',
-    result.timing?.decodeMs ? `decode ${Math.round(result.timing.decodeMs / 1000)}s` : '',
-    result.timing?.totalMs ? `total ${Math.round(result.timing.totalMs / 1000)}s` : '',
+    result.timing?.generationMs ? `gen ${formatDurationMs(result.timing.generationMs)}` : '',
+    result.timing?.decodeMs ? `decode ${formatDurationMs(result.timing.decodeMs)}` : '',
+    result.timing?.totalMs ? `total ${formatDurationMs(result.timing.totalMs)}` : '',
   ].filter(Boolean).join(' | ');
   body.append(prompt, audio, meta);
   node.append(roleNode, body);

@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const root = '/data/agent_kernel_lite';
 const args = process.argv.slice(2);
@@ -9,6 +11,43 @@ const f5Bundle = positionals[0] || 'apps/mobile/packaged-assets/peyton_voice_q4/
 const vocosBundle = positionals[1] || 'apps/mobile/packaged-assets/peyton_voice_q4/models/vocos_mel_24khz_q4_v0';
 const refWav = positionals[2] || 'apps/mobile/packaged-assets/peyton_voice_q4/voice/peyton/sample_0.wav';
 const fixtureDir = positionals[3] || `${root}/tmp/f5tts_q4_forward_fixture`;
+const hfReleaseDir = `${root}/artifacts/hf_releases/f5tts-4bit-distill`;
+const hfQualitySample = `${hfReleaseDir}/samples/BF_fullq4_surface_v2_best_nfe8_cfg2_speed115.wav`;
+const hfQualitySampleSha256 = 'ca0ffaa08b99f049ded6a85fb117a3ef95cd7994b4900860dd3bb3caf668ffa3';
+
+function resolveRepoPath(item) {
+  return path.isAbsolute(item) ? item : path.join(root, item);
+}
+
+function sha256File(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+function requireSameSha(label, left, right) {
+  const leftSha = sha256File(left);
+  const rightSha = sha256File(right);
+  if (leftSha !== rightSha) {
+    throw new Error(`${label} drifted from Hugging Face release: ${leftSha} != ${rightSha}`);
+  }
+}
+
+const releaseMetadata = JSON.parse(readFileSync(`${hfReleaseDir}/release_metadata.json`, 'utf8'));
+if (releaseMetadata.quality_reference_sample !== 'samples/BF_fullq4_surface_v2_best_nfe8_cfg2_speed115.wav') {
+  throw new Error('Hugging Face release metadata no longer points at the expected Peyton quality sample');
+}
+if (sha256File(hfQualitySample) !== hfQualitySampleSha256) {
+  throw new Error('Hugging Face Peyton quality sample checksum changed locally');
+}
+if (Number(releaseMetadata.recommended_probe_settings?.nfe_steps) !== 8
+    || Number(releaseMetadata.recommended_probe_settings?.cfg_strength) !== 2.0
+    || Number(releaseMetadata.recommended_probe_settings?.speed) !== 1.15) {
+  throw new Error('Hugging Face release probe settings must remain nfe=8 cfg=2 speed=1.15');
+}
+
+const resolvedF5Bundle = resolveRepoPath(f5Bundle);
+for (const file of ['manifest.json', 'tensors.q4.bin', 'tensors.fp16.bin']) {
+  requireSameSha(`packaged F5 ${file}`, path.join(resolvedF5Bundle, file), path.join(hfReleaseDir, file));
+}
 
 for (const appFile of ['web/js/agent-kernel-app.js', 'apps/mobile/www/app/js/agent-kernel-app.js']) {
   const source = readFileSync(`${root}/${appFile}`, 'utf8');
