@@ -79,11 +79,21 @@ for (const workerFile of ['web/js/tts-worker.js', 'apps/mobile/www/app/js/tts-wo
   if (/speed100|const SPEECH_SPEED\s*=\s*1\.0\b/.test(source)) {
     throw new Error(`${workerFile} still contains stale Peyton voice speed metadata/defaults`);
   }
-  if (!/GENERATED_FRAMES_PER_TEXT_BYTE\s*=\s*2\.25\b/.test(source)) {
-    throw new Error(`${workerFile} must use calibrated generated-frame duration, not conditioning-frame duration`);
+  if (!/GENERATED_FRAMES_PER_TEXT_BYTE\s*=\s*6\.33\b/.test(source)) {
+    throw new Error(`${workerFile} must use Hugging Face quality-sample calibrated generated-frame duration`);
   }
   if (/framesPerTextByte:\s*condSeqLen\s*\//.test(source)) {
     throw new Error(`${workerFile} regressed to conditioning length as generated duration`);
+  }
+  const defaultProbeBytes = 47;
+  const defaultProbeFrames = Math.ceil(6.33 * defaultProbeBytes / 1.15);
+  if (defaultProbeFrames < 250) {
+    throw new Error(`${workerFile} default Peyton probe would truncate: ${defaultProbeFrames} frames`);
+  }
+  const hfProbeBytes = 105;
+  const hfProbeFrames = Math.ceil(6.33 * hfProbeBytes / 1.15);
+  if (Math.abs(hfProbeFrames - 578) > 2) {
+    throw new Error(`${workerFile} no longer matches Hugging Face quality sample frame budget: ${hfProbeFrames}`);
   }
   if (!/preferWasm:\s*true/.test(source) || !/with fused WASM/.test(source)) {
     throw new Error(`${workerFile} must load Peyton F5TTS through the fused WASM bundle path`);

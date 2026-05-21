@@ -7,14 +7,14 @@ let runtimePromise = null;
 const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
-const RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-webgpu-ditgraph-ref256-gen93-step8-cfg2-speed115';
-const SPEAK_PRESET = 'custom-f5-hf-q4-distill-webgpu-ditgraph-vocos-q4-peyton-ref256-cfg2-step8-speed115';
+const RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-wasm-ref256-framecal260-step8-cfg2-speed115';
+const SPEAK_PRESET = 'custom-f5-hf-q4-distill-wasm-framecal-vocos-q4-peyton-ref256-cfg2-step8-speed115';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
 const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
-const GENERATED_FRAMES_PER_TEXT_BYTE = 2.25;
+const GENERATED_FRAMES_PER_TEXT_BYTE = 6.33;
 const SHORT_TEXT_SPEED = 0.3;
 const MIN_GEN_FRAMES_SHORT = 32;
 const MIN_GEN_FRAMES_MEDIUM = 64;
