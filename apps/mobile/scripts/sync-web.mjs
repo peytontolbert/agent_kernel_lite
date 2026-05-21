@@ -55,13 +55,19 @@ if (await exists(packagedVoice)) {
   await cp(packagedVoice, bundledApp, { recursive: true });
 } else if (voiceAssetUrl) {
   const tmpTar = resolve(packagedAssets, 'peyton_voice_q4.tar');
+  const tmpExtract = resolve(packagedAssets, 'peyton_voice_q4_extract');
   await mkdir(packagedAssets, { recursive: true });
   const response = await fetch(voiceAssetUrl, { redirect: 'follow' });
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download Peyton voice assets: HTTP ${response.status}`);
   }
   await pipeline(response.body, createWriteStream(tmpTar));
-  await untar(tmpTar, bundledApp);
+  await rm(tmpExtract, { recursive: true, force: true });
+  await mkdir(tmpExtract, { recursive: true });
+  await untar(tmpTar, tmpExtract);
+  const nestedVoiceRoot = resolve(tmpExtract, 'peyton_voice_q4');
+  await cp((await exists(nestedVoiceRoot)) ? nestedVoiceRoot : tmpExtract, bundledApp, { recursive: true });
+  await rm(tmpExtract, { recursive: true, force: true });
 } else {
   console.warn('Peyton voice assets were not bundled; AGENT_KERNEL_LITE_VOICE_Q4_URL is empty.');
 }
