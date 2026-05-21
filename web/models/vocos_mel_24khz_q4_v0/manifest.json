@@ -1,0 +1,26 @@
+{
+  "format": "vocos-mel-24khz-q4-bundle-v0",
+  "model_id": "charactr/vocos-mel-24khz-q4",
+  "source_snapshot": "/data/.cache/huggingface/hub/models--charactr--vocos-mel-24khz/snapshots/0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21",
+  "architecture": {
+    "input_channels": 100,
+    "dim": 512,
+    "intermediate_dim": 1536,
+    "num_layers": 8,
+    "n_fft": 1024,
+    "hop_length": 256,
+    "padding": "center",
+    "sample_rate": 24000
+  },
+  "quantization": {
+    "scheme": "q4_symmetric_row_scale_f16",
+    "q4_parameter_count": 13495296,
+    "dense_parameter_count": 89702
+  },
+  "files": {
+    "dense": "tensors.fp16.bin",
+    "dense_index": "tensor_fp16_index.json",
+    "q4": "tensors.q4.bin",
+    "q4_index": "tensor_q4_index.json"
+  }
+}

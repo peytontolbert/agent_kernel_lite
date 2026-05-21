@@ -1,0 +1,459 @@
+{
+  "backbone.convnext.0.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 0,
+    "nbytes": 1024
+  },
+  "backbone.convnext.0.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 1024,
+    "nbytes": 1024
+  },
+  "backbone.convnext.0.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 2048,
+    "nbytes": 1024
+  },
+  "backbone.convnext.0.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 3072,
+    "nbytes": 1024
+  },
+  "backbone.convnext.0.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 4096,
+    "nbytes": 3072
+  },
+  "backbone.convnext.0.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 7168,
+    "nbytes": 1024
+  },
+  "backbone.convnext.1.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 8192,
+    "nbytes": 1024
+  },
+  "backbone.convnext.1.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 9216,
+    "nbytes": 1024
+  },
+  "backbone.convnext.1.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 10240,
+    "nbytes": 1024
+  },
+  "backbone.convnext.1.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 11264,
+    "nbytes": 1024
+  },
+  "backbone.convnext.1.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 12288,
+    "nbytes": 3072
+  },
+  "backbone.convnext.1.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 15360,
+    "nbytes": 1024
+  },
+  "backbone.convnext.2.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 16384,
+    "nbytes": 1024
+  },
+  "backbone.convnext.2.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 17408,
+    "nbytes": 1024
+  },
+  "backbone.convnext.2.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 18432,
+    "nbytes": 1024
+  },
+  "backbone.convnext.2.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 19456,
+    "nbytes": 1024
+  },
+  "backbone.convnext.2.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 20480,
+    "nbytes": 3072
+  },
+  "backbone.convnext.2.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 23552,
+    "nbytes": 1024
+  },
+  "backbone.convnext.3.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 24576,
+    "nbytes": 1024
+  },
+  "backbone.convnext.3.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 25600,
+    "nbytes": 1024
+  },
+  "backbone.convnext.3.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 26624,
+    "nbytes": 1024
+  },
+  "backbone.convnext.3.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 27648,
+    "nbytes": 1024
+  },
+  "backbone.convnext.3.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 28672,
+    "nbytes": 3072
+  },
+  "backbone.convnext.3.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 31744,
+    "nbytes": 1024
+  },
+  "backbone.convnext.4.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 32768,
+    "nbytes": 1024
+  },
+  "backbone.convnext.4.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 33792,
+    "nbytes": 1024
+  },
+  "backbone.convnext.4.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 34816,
+    "nbytes": 1024
+  },
+  "backbone.convnext.4.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 35840,
+    "nbytes": 1024
+  },
+  "backbone.convnext.4.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 36864,
+    "nbytes": 3072
+  },
+  "backbone.convnext.4.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 39936,
+    "nbytes": 1024
+  },
+  "backbone.convnext.5.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 40960,
+    "nbytes": 1024
+  },
+  "backbone.convnext.5.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 41984,
+    "nbytes": 1024
+  },
+  "backbone.convnext.5.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 43008,
+    "nbytes": 1024
+  },
+  "backbone.convnext.5.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 44032,
+    "nbytes": 1024
+  },
+  "backbone.convnext.5.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 45056,
+    "nbytes": 3072
+  },
+  "backbone.convnext.5.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 48128,
+    "nbytes": 1024
+  },
+  "backbone.convnext.6.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 49152,
+    "nbytes": 1024
+  },
+  "backbone.convnext.6.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 50176,
+    "nbytes": 1024
+  },
+  "backbone.convnext.6.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 51200,
+    "nbytes": 1024
+  },
+  "backbone.convnext.6.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 52224,
+    "nbytes": 1024
+  },
+  "backbone.convnext.6.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 53248,
+    "nbytes": 3072
+  },
+  "backbone.convnext.6.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 56320,
+    "nbytes": 1024
+  },
+  "backbone.convnext.7.dwconv.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 57344,
+    "nbytes": 1024
+  },
+  "backbone.convnext.7.gamma": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 58368,
+    "nbytes": 1024
+  },
+  "backbone.convnext.7.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 59392,
+    "nbytes": 1024
+  },
+  "backbone.convnext.7.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 60416,
+    "nbytes": 1024
+  },
+  "backbone.convnext.7.pwconv1.bias": {
+    "dtype": "float16",
+    "shape": [
+      1536
+    ],
+    "offset": 61440,
+    "nbytes": 3072
+  },
+  "backbone.convnext.7.pwconv2.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 64512,
+    "nbytes": 1024
+  },
+  "backbone.embed.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 65536,
+    "nbytes": 1024
+  },
+  "backbone.final_layer_norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 66560,
+    "nbytes": 1024
+  },
+  "backbone.final_layer_norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 67584,
+    "nbytes": 1024
+  },
+  "backbone.norm.bias": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 68608,
+    "nbytes": 1024
+  },
+  "backbone.norm.weight": {
+    "dtype": "float16",
+    "shape": [
+      512
+    ],
+    "offset": 69632,
+    "nbytes": 1024
+  },
+  "feature_extractor.mel_spec.mel_scale.fb": {
+    "dtype": "float16",
+    "shape": [
+      513,
+      100
+    ],
+    "offset": 70656,
+    "nbytes": 102600
+  },
+  "feature_extractor.mel_spec.spectrogram.window": {
+    "dtype": "float16",
+    "shape": [
+      1024
+    ],
+    "offset": 173256,
+    "nbytes": 2048
+  },
+  "head.istft.window": {
+    "dtype": "float16",
+    "shape": [
+      1024
+    ],
+    "offset": 175304,
+    "nbytes": 2048
+  },
+  "head.out.bias": {
+    "dtype": "float16",
+    "shape": [
+      1026
+    ],
+    "offset": 177352,
+    "nbytes": 2052
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "manifest_path": "/data/resumebot/checkpoints/vocos_mel_24khz_q4_v0/manifest.json",
+  "dense_tensors": 57,
+  "q4_tensors": 26,
+  "dense_bytes": 179404,
+  "q4_bytes": 6791684,
+  "total_mib": 6.648
+}

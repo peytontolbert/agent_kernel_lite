@@ -1,0 +1,349 @@
+{
+  "backbone.convnext.0.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 0,
+    "nbytes": 1792,
+    "scale_offset": 1792,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.0.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 2816,
+    "nbytes": 393216,
+    "scale_offset": 396032,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.0.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 399104,
+    "nbytes": 393216,
+    "scale_offset": 792320,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.1.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 793344,
+    "nbytes": 1792,
+    "scale_offset": 795136,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.1.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 796160,
+    "nbytes": 393216,
+    "scale_offset": 1189376,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.1.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 1192448,
+    "nbytes": 393216,
+    "scale_offset": 1585664,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.2.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 1586688,
+    "nbytes": 1792,
+    "scale_offset": 1588480,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.2.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 1589504,
+    "nbytes": 393216,
+    "scale_offset": 1982720,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.2.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 1985792,
+    "nbytes": 393216,
+    "scale_offset": 2379008,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.3.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 2380032,
+    "nbytes": 1792,
+    "scale_offset": 2381824,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.3.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 2382848,
+    "nbytes": 393216,
+    "scale_offset": 2776064,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.3.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 2779136,
+    "nbytes": 393216,
+    "scale_offset": 3172352,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.4.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 3173376,
+    "nbytes": 1792,
+    "scale_offset": 3175168,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.4.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 3176192,
+    "nbytes": 393216,
+    "scale_offset": 3569408,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.4.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 3572480,
+    "nbytes": 393216,
+    "scale_offset": 3965696,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.5.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 3966720,
+    "nbytes": 1792,
+    "scale_offset": 3968512,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.5.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 3969536,
+    "nbytes": 393216,
+    "scale_offset": 4362752,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.5.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 4365824,
+    "nbytes": 393216,
+    "scale_offset": 4759040,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.6.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 4760064,
+    "nbytes": 1792,
+    "scale_offset": 4761856,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.6.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 4762880,
+    "nbytes": 393216,
+    "scale_offset": 5156096,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.6.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 5159168,
+    "nbytes": 393216,
+    "scale_offset": 5552384,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.7.dwconv.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1,
+      7
+    ],
+    "offset": 5553408,
+    "nbytes": 1792,
+    "scale_offset": 5555200,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.7.pwconv1.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1536,
+      512
+    ],
+    "offset": 5556224,
+    "nbytes": 393216,
+    "scale_offset": 5949440,
+    "scale_nbytes": 3072,
+    "row_count": 1536,
+    "values_per_byte": 2
+  },
+  "backbone.convnext.7.pwconv2.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      1536
+    ],
+    "offset": 5952512,
+    "nbytes": 393216,
+    "scale_offset": 6345728,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "backbone.embed.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      512,
+      100,
+      7
+    ],
+    "offset": 6346752,
+    "nbytes": 179200,
+    "scale_offset": 6525952,
+    "scale_nbytes": 1024,
+    "row_count": 512,
+    "values_per_byte": 2
+  },
+  "head.out.weight": {
+    "dtype": "q4_symmetric_row_scale_f16",
+    "shape": [
+      1026,
+      512
+    ],
+    "offset": 6526976,
+    "nbytes": 262656,
+    "scale_offset": 6789632,
+    "scale_nbytes": 2052,
+    "row_count": 1026,
+    "values_per_byte": 2
+  }
+}

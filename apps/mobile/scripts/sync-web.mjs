@@ -85,6 +85,18 @@ if (await exists(f5VoiceModel)) {
   });
 }
 
+const requiredTtsAssets = [
+  resolve(bundledApp, 'models', 'vocos_mel_24khz_q4_v0', 'manifest.json'),
+  resolve(bundledApp, 'models', 'vocos_mel_24khz_q4_v0', 'tensors.q4.bin'),
+  resolve(bundledApp, 'voice', 'peyton', 'sample_0.wav'),
+  resolve(bundledApp, 'voice', 'peyton', 'F5TTS_Base_vocab.txt'),
+];
+for (const asset of requiredTtsAssets) {
+  if (!(await exists(asset))) {
+    throw new Error(`Missing required bundled TTS asset: ${asset}`);
+  }
+}
+
 if (await exists(packagedPapers)) {
   await mkdir(resolve(bundledApp, 'packed-data'), { recursive: true });
   await cp(packagedPapers, resolve(bundledApp, 'packed-data', 'papers_50000.json'));
@@ -107,15 +119,15 @@ await writeFile(
     bundled_model: `./app/models/${bundledModelName}/manifest.json`,
     bundled_voice: {
       speaker: 'Peyton',
-      f5tts_q4: './app/models/f5tts_peyton_q4_v0/manifest.json',
-      f5tts_q4_asset_layout: 'chunked-q4',
+      f5tts_q4: 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/manifest.json',
+      f5tts_q4_asset_layout: shouldBundlePeytonF5 ? 'bundled-chunked-q4' : 'remote-huggingface-q4',
       vocos_q4: './app/models/vocos_mel_24khz_q4_v0/manifest.json',
       reference_wav: './app/voice/peyton/sample_0.wav',
       vocab: './app/voice/peyton/F5TTS_Base_vocab.txt',
     },
     bundled_native_tts: null,
     bundled_paper_pack: (await exists(packagedPapers)) ? './app/packed-data/papers_50000.json' : null,
-    remote_asset_policy: 'Native builds bundle the default model and 50k paper pack. Hugging Face remains the upstream source for refreshed or larger packs.',
+    remote_asset_policy: 'Native builds bundle the default chat model, Vocos Q4, Peyton reference assets, and the 50k paper pack. F5 Q4 weights load from Hugging Face unless AGENT_KERNEL_LITE_BUNDLE_VOICE_Q4=1 is set.',
   }, null, 2) + '\n',
 );
 
