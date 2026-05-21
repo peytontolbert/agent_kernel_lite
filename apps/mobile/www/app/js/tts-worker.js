@@ -1,12 +1,13 @@
 import { decodeWavMono, vocosMelFromMono } from '../vendor/model-stack-bitnet/audio_mel_runtime.js';
 import { F5TTSQ4DiTRuntime } from '../vendor/model-stack-bitnet/f5tts_q4_dit_runtime.js';
-import { Q4TensorBundleWASM } from '../vendor/model-stack-bitnet/q4_wasm_runtime.js';
+import { Q4TensorBundleWASM, Q4TensorBundleWebGPU } from '../vendor/model-stack-bitnet/q4_wasm_runtime.js';
 import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/vocos_fp16_runtime.js';
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260521-peyton-q4-fullq4-surface-v2';
-const SPEAK_PRESET = 'custom-wasm-f5-fullq4-surface-v2-vocos-q4-dynamic-ref-duration-cfg2-step8-speed115-limited';
+const VOICE_NAME = 'Peyton';
+const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-webgpu-session';
+const SPEAK_PRESET = 'custom-f5-fullq4-surface-v2-webgpu-session-wasmfallback-vocos-q4-peyton-ref256-cfg2-step8-speed115';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
@@ -14,11 +15,14 @@ const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
 const SHORT_TEXT_SPEED = 0.3;
 const SPEECH_SPEED = 1.15;
+const DEFAULT_STEPS = 8;
+const DEFAULT_CFG_STRENGTH = 2.0;
 const CROSS_FADE_SECONDS = 0.15;
 const OUTPUT_PEAK = 0.82;
 
 const DEFAULTS = {
-  f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
+  f5Manifest: 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/manifest.json',
+  f5FallbackManifest: '../models/f5tts_peyton_q4_v0/manifest.json',
   vocosManifest: '../models/vocos_mel_24khz_q4_v0/manifest.json',
   refWav: '../voice/peyton/sample_0.wav',
   vocab: '../voice/peyton/F5TTS_Base_vocab.txt',
@@ -43,35 +47,52 @@ self.addEventListener('message', (event) => {
 async function loadRuntime() {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      postProgress({ phase: 'runtime', detail: 'Loading Peyton Q4 F5TTS weights', percent: 4 });
-      const f5Bundle = await loadStage('Loading Peyton Q4 F5TTS', () => (
-        Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest))
-      ));
+      postProgress({ phase: 'runtime', detail: 'Loading ' + VOICE_NAME + ' Q4 F5TTS weights', percent: 4 });
+      let f5Bundle = await loadModelBundle({
+        label: 'Loading ' + VOICE_NAME + ' Q4 F5TTS from Hugging Face',
+        manifestUrl: DEFAULTS.f5Manifest,
+        fallbackLabel: 'Loading packaged ' + VOICE_NAME + ' Q4 F5TTS fallback',
+        fallbackManifestUrl: DEFAULTS.f5FallbackManifest,
+      });
       postProgress({ phase: 'runtime', detail: 'Loading Vocos Q4 weights', percent: 9 });
       const vocosBundle = await loadStage('Loading Vocos Q4', () => (
         Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.vocosManifest))
       ));
-      postProgress({ phase: 'runtime', detail: 'Loading Peyton reference audio and vocab', percent: 13 });
-      const [refAudioBuffer, vocabText] = await loadStage('Loading Peyton reference assets', () => Promise.all([
+      postProgress({ phase: 'runtime', detail: 'Loading ' + VOICE_NAME + ' reference audio and vocab', percent: 13 });
+      const [refAudioBuffer, vocabText] = await loadStage('Loading ' + VOICE_NAME + ' reference assets', () => Promise.all([
         fetchArrayBuffer(versionedUrl(DEFAULTS.refWav)),
         fetchText(versionedUrl(DEFAULTS.vocab)),
       ]));
       const wav = decodeWavMono(refAudioBuffer);
       const vocabMap = buildVocabMap(vocabText);
-      const f5Id = f5Bundle.manifest?.model_id || 'f5tts-peyton-q4';
+      let f5Id = f5Bundle.manifest?.model_id || 'f5tts-q4';
       const vocosId = vocosBundle.manifest?.model_id || 'vocos-q4';
-      const f5 = new F5TTSQ4DiTRuntime(f5Bundle);
-      postMessage({ type: 'status', detail: 'Preparing F5 WASM session' });
-      postProgress({ phase: 'runtime', detail: 'Preparing F5 WASM session', percent: 17 });
-      const sessionStartedAt = performance.now();
-      f5.prepareSession();
-      postMessage({ type: 'status', detail: `F5 WASM session ready (${Math.round(performance.now() - sessionStartedAt)} ms)` });
-      postProgress({ phase: 'runtime', detail: 'Peyton voice runtime ready', percent: 20 });
+      let f5 = new F5TTSQ4DiTRuntime(f5Bundle);
+      let f5Backend = f5Bundle.backend === 'webgpu' ? 'WebGPU' : 'WASM';
+      postMessage({ type: 'status', detail: `Preparing F5 ${f5Backend} session` });
+      postProgress({ phase: 'runtime', detail: `Preparing F5 ${f5Backend} session`, percent: 17 });
+      let sessionStartedAt = performance.now();
+      try {
+        f5.prepareSession();
+      } catch (error) {
+        if (f5Bundle.backend !== 'webgpu') throw error;
+        postMessage({ type: 'status', detail: `F5 WebGPU session failed; reloading WASM fallback (${error.message || String(error)})` });
+        f5Bundle = await loadStage('Reloading F5 Q4 with WASM fallback', () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest)));
+        f5Id = f5Bundle.manifest?.model_id || 'f5tts-q4';
+        f5 = new F5TTSQ4DiTRuntime(f5Bundle);
+        f5Backend = 'WASM';
+        sessionStartedAt = performance.now();
+        f5.prepareSession();
+      }
+      const sessionMode = f5Bundle.f5GpuSession?.linearKernel || (f5Backend === 'WASM' ? 'fused-wasm' : 'webgpu');
+      postMessage({ type: 'status', detail: `F5 ${f5Backend} session ready (${sessionMode}, ${Math.round(performance.now() - sessionStartedAt)} ms)` });
+      postProgress({ phase: 'runtime', detail: VOICE_NAME + ' voice runtime ready', percent: 20 });
       return {
         f5,
         vocos: new VocosMel24khzRuntime(vocosBundle),
         vocosBundle,
         refSamples: wav.samples,
+        refMelCache: new Map(),
         vocabMap,
         detail: `${RUNTIME_VERSION} | ${f5Id} | ${vocosId} | ${SPEAK_PRESET}`,
       };
@@ -89,6 +110,27 @@ async function loadStage(label, fn) {
   }
 }
 
+async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '' }) {
+  async function loadPreferred(stageLabel, url) {
+    if (globalThis.navigator?.gpu) {
+      try {
+        return await loadStage(`${stageLabel} with WebGPU`, () => Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
+      } catch (error) {
+        postMessage({ type: 'status', detail: `${stageLabel} WebGPU failed; falling back to WASM (${error.message || String(error)})` });
+      }
+    }
+    return loadStage(`${stageLabel} with WASM`, () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(url)));
+  }
+
+  try {
+    return await loadPreferred(label, manifestUrl);
+  } catch (error) {
+    if (!fallbackManifestUrl) throw error;
+    postMessage({ type: 'status', detail: `${label} failed; trying local fallback (${error.message || String(error)})` });
+    return loadPreferred(fallbackLabel || 'Loading local model fallback', fallbackManifestUrl);
+  }
+}
+
 function postProgress(progress) {
   const percent = Number.isFinite(Number(progress.percent))
     ? Math.max(0, Math.min(100, Math.round(Number(progress.percent))))
@@ -96,7 +138,7 @@ function postProgress(progress) {
   postMessage({
     type: 'progress',
     phase: progress.phase || 'generate',
-    detail: progress.detail || 'Peyton voice working',
+    detail: progress.detail || VOICE_NAME + ' voice working',
     percent,
     chunk: progress.chunk || 0,
     chunks: progress.chunks || 0,
@@ -109,13 +151,13 @@ function postProgress(progress) {
 
 async function speak(message) {
   const startedAt = performance.now();
-  postProgress({ phase: 'runtime', detail: 'Starting Peyton voice request', percent: 1 });
+  postProgress({ phase: 'runtime', detail: 'Starting ' + VOICE_NAME + ' voice request', percent: 1 });
   const runtime = await loadRuntime();
   const loadedAt = performance.now();
-  const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
+  const text = String(message.text || 'This is ' + VOICE_NAME + ' speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
-  const steps = clampInt(message.steps, 8, 1, 32);
-  const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
+  const steps = clampInt(message.steps, DEFAULT_STEPS, 1, 32);
+  const cfgStrength = clampNumber(message.cfgStrength, DEFAULT_CFG_STRENGTH, 0, 4);
   const speechSpeed = clampNumber(message.speed, SPEECH_SPEED, 0.5, 2.0);
   const reference = referenceProfile(condSeqLen);
   const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;
@@ -125,14 +167,19 @@ async function speak(message) {
 
   postProgress({
     phase: 'condition',
-    detail: `Extracting Peyton reference mel (${condSeqLen} frames)`,
+    detail: 'Extracting ' + VOICE_NAME + ` reference mel (${condSeqLen} frames)`,
     percent: 22,
     chunks: chunks.length,
     steps,
     elapsedMs: performance.now() - startedAt,
   });
-  postMessage({ type: 'status', detail: `Extracting Peyton reference mel (${preset})` });
-  const { mel: condMel } = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
+  postMessage({ type: 'status', detail: 'Extracting ' + VOICE_NAME + ` reference mel (${preset})` });
+  let condMel = runtime.refMelCache.get(condSeqLen);
+  if (!condMel) {
+    const referenceMel = vocosMelFromMono(runtime.refSamples, runtime.vocosBundle, { maxFrames: condSeqLen });
+    condMel = referenceMel.mel;
+    runtime.refMelCache.set(condSeqLen, condMel);
+  }
   const conditionedAt = performance.now();
   const audioParts = [];
   let totalSamples = 0;
@@ -178,7 +225,7 @@ async function speak(message) {
       etaMs: estimatedChunkMs,
     });
     const generateStartedAt = performance.now();
-    const mel = runtime.f5.sampleMel({
+    const mel = await runtime.f5.sampleMel({
       condMel,
       condSeqLen,
       textIds,
@@ -248,7 +295,7 @@ async function speak(message) {
   const wav = encodeWav(audio, SAMPLE_RATE);
   postProgress({
     phase: 'render',
-    detail: `Peyton voice ready (${formatDurationMs(performance.now() - startedAt)})`,
+    detail: VOICE_NAME + ` voice ready (${formatDurationMs(performance.now() - startedAt)})`,
     percent: 100,
     chunks: chunks.length,
     steps,
@@ -290,7 +337,7 @@ function versionedUrl(path) {
 
 async function fetchArrayBuffer(url) {
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(url, { cache: 'force-cache' });
     if (response.ok || response.status === 0) return response.arrayBuffer();
     throw new Error(`HTTP ${response.status}`);
   } catch (error) {
@@ -302,7 +349,7 @@ async function fetchArrayBuffer(url) {
 
 async function fetchText(url) {
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(url, { cache: 'force-cache' });
     if (response.ok || response.status === 0) return response.text();
     throw new Error(`HTTP ${response.status}`);
   } catch (error) {
@@ -386,7 +433,7 @@ function referenceTextForFrames(condSeqLen) {
 
 function splitTextForSpeech(text, framesPerTextByte, maxGenFrames) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!normalized) return ['This is Peyton speaking from Agent Kernel Lite.'];
+  if (!normalized) return ['This is ' + VOICE_NAME + ' speaking from Agent Kernel Lite.'];
   const sentences = normalized.match(/[^.!?]+[.!?]*/g) || [normalized];
   const chunks = [];
   let current = '';

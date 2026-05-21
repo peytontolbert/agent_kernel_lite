@@ -16,8 +16,9 @@ const bundledExtraModelNames = ['vocos_mel_24khz_q4_v0'];
 const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
 const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
+const shouldBundlePeytonF5 = process.env.AGENT_KERNEL_LITE_BUNDLE_VOICE_Q4 === '1';
 const voiceAssetUrl = process.env.AGENT_KERNEL_LITE_VOICE_Q4_URL
-  || 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/peyton_voice_q4.tar';
+  || (shouldBundlePeytonF5 ? 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/peyton_voice_q4.tar' : '');
 
 async function exists(path) {
   try {
@@ -51,9 +52,9 @@ for (const modelName of bundledExtraModelNames) {
   }
 }
 
-if (await exists(packagedVoice)) {
+if (shouldBundlePeytonF5 && await exists(packagedVoice)) {
   await cp(packagedVoice, bundledApp, { recursive: true });
-} else if (voiceAssetUrl) {
+} else if (shouldBundlePeytonF5 && voiceAssetUrl) {
   const tmpTar = resolve(packagedAssets, 'peyton_voice_q4.tar');
   const tmpExtract = resolve(packagedAssets, 'peyton_voice_q4_extract');
   await mkdir(packagedAssets, { recursive: true });
@@ -69,7 +70,7 @@ if (await exists(packagedVoice)) {
   await cp((await exists(nestedVoiceRoot)) ? nestedVoiceRoot : tmpExtract, bundledApp, { recursive: true });
   await rm(tmpExtract, { recursive: true, force: true });
 } else {
-  console.warn('Peyton voice assets were not bundled; AGENT_KERNEL_LITE_VOICE_Q4_URL is empty.');
+  console.log('Peyton F5 Q4 weights are not bundled; runtime will load the default F5 manifest from Hugging Face.');
 }
 
 const f5VoiceModel = resolve(bundledApp, 'models', 'f5tts_peyton_q4_v0');
