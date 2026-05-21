@@ -7,20 +7,21 @@ let runtimePromise = null;
 const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
-const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-fused-wasm-ref256';
-const SPEAK_PRESET = 'custom-f5-hf-q4-distill-fused-wasm-vocos-q4-peyton-ref256-cfg2-step8-speed115';
+const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v4-step8-cfgfree-fused-wasm-ref256-gen92';
+const SPEAK_PRESET = 'custom-f5-hf-q4-distill-fused-wasm-vocos-q4-peyton-ref256-cfgfree-step8-speed115';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
 const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
+const GENERATED_FRAMES_PER_TEXT_BYTE = 2.25;
 const SHORT_TEXT_SPEED = 0.3;
 const MIN_GEN_FRAMES_SHORT = 32;
 const MIN_GEN_FRAMES_MEDIUM = 64;
 const MIN_GEN_FRAMES_LONG = 96;
 const SPEECH_SPEED = 1.15;
 const DEFAULT_STEPS = 8;
-const DEFAULT_CFG_STRENGTH = 2.0;
+const DEFAULT_CFG_STRENGTH = 0.0;
 const CROSS_FADE_SECONDS = 0.15;
 const OUTPUT_PEAK = 0.82;
 const WEBGPU_MIN_SPEEDUP = 1.08;
@@ -542,7 +543,7 @@ function referenceProfile(condSeqLen) {
   return {
     text,
     textBytes,
-    framesPerTextByte: condSeqLen / Math.max(1, textBytes),
+    framesPerTextByte: GENERATED_FRAMES_PER_TEXT_BYTE,
   };
 }
 

@@ -18,8 +18,8 @@ for (const appFile of ['web/js/agent-kernel-app.js', 'apps/mobile/www/app/js/age
   if (/steps:\s*12\b/.test(source)) {
     throw new Error(`${appFile} still contains a 12-step Peyton voice override`);
   }
-  if (!/cfgStrength:\s*2(?:\.0)?\b/.test(source)) {
-    throw new Error(`${appFile} must request the clarity-first CFG2 F5TTS path`);
+  if (!/cfgStrength:\s*0(?:\.0)?\b/.test(source)) {
+    throw new Error(`${appFile} must request the release-card CFG-free F5TTS path`);
   }
   if (!/speed:\s*1\.15\b/.test(source)) {
     throw new Error(`${appFile} must request speed 1.15 for the current clarity preset`);
@@ -31,14 +31,20 @@ for (const workerFile of ['web/js/tts-worker.js', 'apps/mobile/www/app/js/tts-wo
   if (!/const DEFAULT_STEPS\s*=\s*8\b/.test(source)) {
     throw new Error(`${workerFile} must default Peyton F5TTS to 8 steps`);
   }
-  if (!/const DEFAULT_CFG_STRENGTH\s*=\s*2(?:\.0)?\b/.test(source)) {
-    throw new Error(`${workerFile} must default Peyton F5TTS to CFG2`);
+  if (!/const DEFAULT_CFG_STRENGTH\s*=\s*0(?:\.0)?\b/.test(source)) {
+    throw new Error(`${workerFile} must default Peyton F5TTS to the release-card CFG-free path`);
   }
   if (!/const SPEECH_SPEED\s*=\s*1\.15\b/.test(source)) {
     throw new Error(`${workerFile} must default Peyton F5TTS to speed 1.15`);
   }
-  if (/cfgfree|speed100|DEFAULT_CFG_STRENGTH\s*=\s*0(?:\.0)?\b|const SPEECH_SPEED\s*=\s*1\.0\b/.test(source)) {
-    throw new Error(`${workerFile} still contains stale cfg-free Peyton voice metadata/defaults`);
+  if (/speed100|const SPEECH_SPEED\s*=\s*1\.0\b/.test(source)) {
+    throw new Error(`${workerFile} still contains stale Peyton voice speed metadata/defaults`);
+  }
+  if (!/GENERATED_FRAMES_PER_TEXT_BYTE\s*=\s*2\.25\b/.test(source)) {
+    throw new Error(`${workerFile} must use calibrated generated-frame duration, not conditioning-frame duration`);
+  }
+  if (/framesPerTextByte:\s*condSeqLen\s*\//.test(source)) {
+    throw new Error(`${workerFile} regressed to conditioning length as generated duration`);
   }
   if (!/preferWasm:\s*true/.test(source) || !/with fused WASM/.test(source)) {
     throw new Error(`${workerFile} must load Peyton F5TTS through the fused WASM bundle path`);
@@ -147,7 +153,7 @@ if (Math.abs(smoke1.checksum - 73.719445) > 0.001) {
 
 let smoke2 = null;
 if (full) {
-  smoke2 = runJson('peyton 2-step cfg smoke', [
+  smoke2 = runJson('peyton 2-step cfg-free smoke', [
     'node',
     'examples/18_f5tts_q4_peyton_ref_smoke/run.mjs',
     f5Bundle,
@@ -157,13 +163,13 @@ if (full) {
     '256',
     '91',
     '2',
-    '2',
+    '0',
     "Hi, I'm recording this sample to create a ",
   ]);
   if (!smoke2.finite || smoke2.audioSamples !== 23040 || smoke2.generationMs > 45000) {
     throw new Error(`2-step smoke failed: finite=${smoke2.finite} samples=${smoke2.audioSamples} generationMs=${smoke2.generationMs}`);
   }
-  if (Math.abs(smoke2.checksum - -590.153) > 0.001) {
+  if (Math.abs(smoke2.checksum - 94.698905) > 0.001) {
     throw new Error(`2-step smoke checksum drift: checksum=${smoke2.checksum}`);
   }
 }
