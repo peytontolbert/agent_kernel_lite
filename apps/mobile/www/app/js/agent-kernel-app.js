@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v24-peyton-f5-vocos-q4';
-const VOICE_RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-fast-v6';
+const VOICE_RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-fused-wasm-ref256';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1327,9 +1327,11 @@ function ensureVoiceWorker() {
   state.voice.worker.addEventListener('error', (event) => {
     state.voice.busy = false;
     state.voice.ready = false;
-    settleVoiceRuntime(new Error(event.message || 'voice worker error'));
-    appendMessage('assistant', `Peyton voice failed: ${event.message || 'worker error'}`);
-    log(`Peyton voice worker failed: ${event.message || 'worker error'}`);
+    const location = event.filename ? ` (${event.filename}:${event.lineno || 0}:${event.colno || 0})` : '';
+    const detail = `${event.message || 'worker error'}${location}`;
+    settleVoiceRuntime(new Error(detail));
+    appendMessage('assistant', `Peyton voice failed: ${detail}`);
+    log(`Peyton voice worker failed: ${detail}`);
     syncVoiceControls();
     syncModelControls();
   });
@@ -1420,8 +1422,9 @@ async function speakPeytonVoiceText(text) {
       text: promptText,
       runtimeVersion: VOICE_RUNTIME_VERSION,
       condSeqLen: 256,
-      steps: 12,
+      steps: 8,
       cfgStrength: 2.0,
+      speed: 1.15,
     });
   } catch (error) {
     state.voice.busy = false;
