@@ -17,7 +17,7 @@ const packagedAssets = resolve(mobileRoot, 'packaged-assets');
 const packagedPapers = resolve(packagedAssets, 'papers_50000.json');
 const packagedVoice = resolve(packagedAssets, 'peyton_voice_q4');
 const voiceAssetUrl = process.env.AGENT_KERNEL_LITE_VOICE_Q4_URL
-  || 'https://github.com/peytontolbert/agent_kernel_lite/releases/download/voice-q4-v0/agent-kernel-lite-peyton-voice-q4-v0.tar';
+  || 'https://github.com/peytontolbert/agent_kernel_lite/releases/download/voice-q4-fullq4-surface-v2/peyton_voice_q4.tar';
 
 async function exists(path) {
   try {

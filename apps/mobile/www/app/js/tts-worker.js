@@ -5,15 +5,17 @@ import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/
 
 let runtimePromise = null;
 
-const RUNTIME_VERSION = '20260520-peyton-f5-q4-vocos-q4-fast-v6';
-const SPEAK_PRESET = 'custom-wasm-f5-q4-vocos-q4-dynamic-ref-duration-cfg2-step2';
+const RUNTIME_VERSION = '20260521-peyton-q4-fullq4-surface-v2';
+const SPEAK_PRESET = 'custom-wasm-f5-fullq4-surface-v2-vocos-q4-dynamic-ref-duration-cfg2-step8-speed115-limited';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
 const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
 const SHORT_TEXT_SPEED = 0.3;
+const SPEECH_SPEED = 1.15;
 const CROSS_FADE_SECONDS = 0.15;
+const OUTPUT_PEAK = 0.82;
 
 const DEFAULTS = {
   f5Manifest: '../models/f5tts_peyton_q4_v0/manifest.json',
@@ -112,13 +114,14 @@ async function speak(message) {
   const loadedAt = performance.now();
   const text = String(message.text || 'This is Peyton speaking from Agent Kernel Lite.').trim();
   const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
-  const steps = clampInt(message.steps, 2, 1, 32);
+  const steps = clampInt(message.steps, 8, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, 2.0, 0, 4);
+  const speechSpeed = clampNumber(message.speed, SPEECH_SPEED, 0.5, 2.0);
   const reference = referenceProfile(condSeqLen);
   const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;
   const chunks = splitTextForSpeech(text, reference.framesPerTextByte, maxGenFrames);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `custom-wasm-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}`;
+  const preset = `custom-wasm-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}-speed${formatPresetNumber(speechSpeed)}`;
 
   postProgress({
     phase: 'condition',
@@ -135,7 +138,7 @@ async function speak(message) {
   let totalSamples = 0;
   let generationMs = 0;
   let decodeMs = 0;
-  const generationPlan = chunks.map((chunk) => clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte), 96, maxGenFrames));
+  const generationPlan = chunks.map((chunk) => clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte, speechSpeed), 96, maxGenFrames));
   const totalPlannedFrames = generationPlan.reduce((sum, frames) => sum + frames, 0);
   let completedFrames = 0;
 
@@ -241,7 +244,7 @@ async function speak(message) {
     steps,
     elapsedMs: performance.now() - startedAt,
   });
-  const audio = concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS);
+  const audio = normalizePeak(concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS), OUTPUT_PEAK);
   const wav = encodeWav(audio, SAMPLE_RATE);
   postProgress({
     phase: 'render',
@@ -407,10 +410,10 @@ function splitTextForSpeech(text, framesPerTextByte, maxGenFrames) {
   return chunks;
 }
 
-function estimateTargetFrames(text, framesPerTextByte) {
+function estimateTargetFrames(text, framesPerTextByte, speechSpeed = 1) {
   const bytes = utf8Length(String(text || '').trim());
   const speed = bytes < 10 ? SHORT_TEXT_SPEED : 1;
-  return Math.ceil(framesPerTextByte * bytes / speed);
+  return Math.ceil(framesPerTextByte * bytes / speed / Math.max(0.5, speechSpeed));
 }
 
 function maxChunkChars(framesPerTextByte, maxGenFrames) {
@@ -453,6 +456,19 @@ function concatFloat32(parts, totalLength) {
     out.set(part, offset);
     offset += part.length;
   }
+  return out;
+}
+
+function normalizePeak(samples, targetPeak = OUTPUT_PEAK) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const abs = Math.abs(samples[i]);
+    if (abs > peak) peak = abs;
+  }
+  if (!(peak > targetPeak) || !Number.isFinite(peak)) return samples;
+  const gain = targetPeak / peak;
+  const out = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) out[i] = samples[i] * gain;
   return out;
 }
 
