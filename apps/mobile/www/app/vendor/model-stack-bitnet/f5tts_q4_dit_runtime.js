@@ -77,31 +77,7 @@ export class F5TTSQ4DiTRuntime {
         onProgress,
       });
     }
-
-    const cond = new Float32Array(duration * this.melDim);
-    cond.set(condMel);
-    let y = gaussianArray(duration * this.melDim, seed);
-    const times = makeTimeGrid(steps, swaySamplingCoef);
-
-    for (let step = 0; step < steps; step += 1) {
-      const t = times[step];
-      const dt = times[step + 1] - times[step];
-      const pred = this.forward({ x: y, cond, textIds, time: t, dropAudioCond: false, dropText: false });
-      let flow = pred;
-      if (cfgStrength >= 1e-5) {
-        const nullPred = this.forward({ x: y, cond, textIds, time: t, dropAudioCond: true, dropText: true });
-        flow = pred.slice();
-        for (let i = 0; i < flow.length; i += 1) {
-          flow[i] = pred[i] + (pred[i] - nullPred[i]) * cfgStrength;
-        }
-      }
-      for (let i = 0; i < y.length; i += 1) {
-        y[i] += dt * flow[i];
-      }
-    }
-
-    y.set(cond.subarray(0, condSeqLen * this.melDim), 0);
-    return y;
+    throw new Error("F5TTS Q4 requires the fused WASM sample_mel kernel; JavaScript model fallback is disabled.");
   }
 
   timeEmbedding(time) {
@@ -278,6 +254,191 @@ export class F5TTSQ4DiTRuntime {
     return this.bundle.runLayerNormAffine
       ? this.bundle.runLayerNormAffine(input, shift, scale, seqLen, this.dim, EPS)
       : layerNormAffineRows(input, shift, scale, seqLen, this.dim);
+  }
+
+
+
+  async sampleMelAsync({
+    condMel,
+    condSeqLen,
+    textIds,
+    duration,
+    steps = 8,
+    cfgStrength = 2.0,
+    swaySamplingCoef = -1.0,
+    seed = 1337,
+    onProgress = null,
+  }) {
+    if (duration < condSeqLen) throw new Error("duration must be >= condSeqLen");
+    if (condMel.length !== condSeqLen * this.melDim) throw new Error("condMel length must match condSeqLen * melDim");
+    const cond = new Float32Array(duration * this.melDim);
+    cond.set(condMel);
+    let y = gaussianArray(duration * this.melDim, seed);
+    const times = makeTimeGrid(steps, swaySamplingCoef);
+    for (let step = 0; step < steps; step += 1) {
+      const t = times[step];
+      const dt = times[step + 1] - times[step];
+      const pred = await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: false, dropText: false });
+      let flow = pred;
+      if (cfgStrength >= 1e-5) {
+        const nullPred = await this.forwardAsync({ x: y, cond, textIds, time: t, dropAudioCond: true, dropText: true });
+        flow = pred.slice();
+        for (let i = 0; i < flow.length; i += 1) flow[i] = pred[i] + (pred[i] - nullPred[i]) * cfgStrength;
+      }
+      for (let i = 0; i < y.length; i += 1) y[i] += dt * flow[i];
+      if (typeof onProgress === "function") onProgress(step + 1, steps);
+    }
+    y.set(cond.subarray(0, condSeqLen * this.melDim), 0);
+    return y;
+  }
+
+  async forwardAsync({ x, cond, textIds, time = 0.5, dropAudioCond = false, dropText = false }) {
+    const seqLen = x.length / this.melDim;
+    if (!Number.isInteger(seqLen) || seqLen <= 0) throw new Error("x must be a flat Float32Array with shape [seqLen, 100]");
+    if (cond.length !== x.length) throw new Error("cond must match x shape");
+    const t = await this.timeEmbeddingAsync(time);
+    const text = await this.textEmbeddingAsync(textIds, seqLen, dropText);
+    let hidden = await this.inputEmbeddingAsync(x, cond, text, seqLen, dropAudioCond);
+    for (let block = 0; block < this.depth; block += 1) hidden = await this.ditBlockAsync(block, hidden, t, seqLen);
+    hidden = await this.finalAdaNormAsync(hidden, t, seqLen);
+    return this.linearAsync("transformer.proj_out.weight", "transformer.proj_out.bias", hidden, seqLen);
+  }
+
+  async timeEmbeddingAsync(time) {
+    const freqDim = 256;
+    const half = freqDim / 2;
+    const emb = new Float32Array(freqDim);
+    const factor = Math.log(10000) / (half - 1);
+    for (let i = 0; i < half; i += 1) {
+      const value = 1000 * time * Math.exp(i * -factor);
+      emb[i] = Math.sin(value);
+      emb[i + half] = Math.cos(value);
+    }
+    let out = await this.linearAsync("transformer.time_embed.time_mlp.0.weight", "transformer.time_embed.time_mlp.0.bias", emb, 1);
+    siluInPlace(out);
+    out = await this.linearAsync("transformer.time_embed.time_mlp.2.weight", "transformer.time_embed.time_mlp.2.bias", out, 1);
+    return out;
+  }
+
+  async textEmbeddingAsync(textIds, seqLen, dropText) {
+    const weight = this.bundle.denseF32Tensor("transformer.text_embed.text_embed.weight");
+    const out = new Float32Array(seqLen * this.textDim);
+    for (let pos = 0; pos < seqLen; pos += 1) {
+      const rawId = pos < textIds.length ? textIds[pos] : -1;
+      const token = dropText ? 0 : Math.max(0, rawId + 1);
+      const src = Math.min(token, weight.length / this.textDim - 1) * this.textDim;
+      out.set(weight.subarray(src, src + this.textDim), pos * this.textDim);
+    }
+    addTextSinusoidalPos(out, seqLen, this.textDim);
+    let hidden = out;
+    for (let block = 0; block < 4; block += 1) hidden = await this.convNeXtTextBlockAsync(block, hidden, seqLen);
+    return hidden;
+  }
+
+  async convNeXtTextBlockAsync(block, input, seqLen) {
+    const prefix = `transformer.text_embed.text_blocks.${block}`;
+    let x = this.bundle.runQ4DepthwiseConv1dAsync
+      ? await this.bundle.runQ4DepthwiseConv1dAsync(`${prefix}.dwconv.weight`, `${prefix}.dwconv.bias`, input, seqLen, this.textDim, 7, 3)
+      : depthwiseConv1dQ4(this.bundle, `${prefix}.dwconv.weight`, `${prefix}.dwconv.bias`, input, seqLen, this.textDim, 7, 3);
+    x = layerNormRows(x, this.bundle.denseF32Tensor(`${prefix}.norm.weight`), this.bundle.denseF32Tensor(`${prefix}.norm.bias`), seqLen, this.textDim);
+    x = await this.linearAsync(`${prefix}.pwconv1.weight`, `${prefix}.pwconv1.bias`, x, seqLen);
+    geluInPlace(x);
+    applyGRN(x, seqLen, this.textDim * 2, this.bundle.denseF32Tensor(`${prefix}.grn.gamma`), this.bundle.denseF32Tensor(`${prefix}.grn.beta`));
+    x = await this.linearAsync(`${prefix}.pwconv2.weight`, `${prefix}.pwconv2.bias`, x, seqLen);
+    addInPlace(x, input);
+    return x;
+  }
+
+  async inputEmbeddingAsync(x, cond, text, seqLen, dropAudioCond) {
+    const joined = new Float32Array(seqLen * (this.melDim * 2 + this.textDim));
+    for (let row = 0; row < seqLen; row += 1) {
+      const dst = row * (this.melDim * 2 + this.textDim);
+      joined.set(x.subarray(row * this.melDim, (row + 1) * this.melDim), dst);
+      if (!dropAudioCond) joined.set(cond.subarray(row * this.melDim, (row + 1) * this.melDim), dst + this.melDim);
+      joined.set(text.subarray(row * this.textDim, (row + 1) * this.textDim), dst + this.melDim * 2);
+    }
+    const projected = await this.linearAsync("transformer.input_embed.proj.weight", "transformer.input_embed.proj.bias", joined, seqLen);
+    let pos = this.bundle.runQ4GroupedConv1dAsync
+      ? await this.bundle.runQ4GroupedConv1dAsync("transformer.input_embed.conv_pos_embed.conv1d.0.weight", "transformer.input_embed.conv_pos_embed.conv1d.0.bias", projected, seqLen, this.dim, 31, 15, 16)
+      : groupedConv1dQ4(this.bundle, "transformer.input_embed.conv_pos_embed.conv1d.0.weight", "transformer.input_embed.conv_pos_embed.conv1d.0.bias", projected, seqLen, this.dim, 31, 15, 16);
+    mishInPlace(pos);
+    pos = this.bundle.runQ4GroupedConv1dAsync
+      ? await this.bundle.runQ4GroupedConv1dAsync("transformer.input_embed.conv_pos_embed.conv1d.2.weight", "transformer.input_embed.conv_pos_embed.conv1d.2.bias", pos, seqLen, this.dim, 31, 15, 16)
+      : groupedConv1dQ4(this.bundle, "transformer.input_embed.conv_pos_embed.conv1d.2.weight", "transformer.input_embed.conv_pos_embed.conv1d.2.bias", pos, seqLen, this.dim, 31, 15, 16);
+    mishInPlace(pos);
+    addInPlace(pos, projected);
+    return pos;
+  }
+
+  async ditBlockAsync(block, input, t, seqLen) {
+    const prefix = `transformer.transformer_blocks.${block}`;
+    const mod = await this.linearAsync(`${prefix}.attn_norm.linear.weight`, `${prefix}.attn_norm.linear.bias`, siluCopy(t), 1);
+    const shiftMsa = mod.subarray(0, this.dim);
+    const scaleMsa = mod.subarray(this.dim, this.dim * 2);
+    const gateMsa = mod.subarray(this.dim * 2, this.dim * 3);
+    const shiftMlp = mod.subarray(this.dim * 3, this.dim * 4);
+    const scaleMlp = mod.subarray(this.dim * 4, this.dim * 5);
+    const gateMlp = mod.subarray(this.dim * 5, this.dim * 6);
+    let norm = this.bundle.runLayerNormAffineAsync
+      ? await this.bundle.runLayerNormAffineAsync(input, shiftMsa, scaleMsa, seqLen, this.dim, EPS)
+      : this.bundle.runLayerNormAffine ? this.bundle.runLayerNormAffine(input, shiftMsa, scaleMsa, seqLen, this.dim, EPS) : layerNormAffineRows(input, shiftMsa, scaleMsa, seqLen, this.dim);
+    let q;
+    let k;
+    let v;
+    if (this.bundle.runQ4Linear3Async) {
+      const qkv = await this.bundle.runQ4Linear3Async(
+        { weightName: `${prefix}.attn.to_q.weight`, biasName: `${prefix}.attn.to_q.bias` },
+        { weightName: `${prefix}.attn.to_k.weight`, biasName: `${prefix}.attn.to_k.bias` },
+        { weightName: `${prefix}.attn.to_v.weight`, biasName: `${prefix}.attn.to_v.bias` },
+        norm,
+        seqLen,
+      );
+      const part = seqLen * this.dim;
+      q = qkv.subarray(0, part);
+      k = qkv.subarray(part, part * 2);
+      v = qkv.subarray(part * 2, part * 3);
+    } else {
+      q = await this.linearAsync(`${prefix}.attn.to_q.weight`, `${prefix}.attn.to_q.bias`, norm, seqLen);
+      k = await this.linearAsync(`${prefix}.attn.to_k.weight`, `${prefix}.attn.to_k.bias`, norm, seqLen);
+      v = await this.linearAsync(`${prefix}.attn.to_v.weight`, `${prefix}.attn.to_v.bias`, norm, seqLen);
+    }
+    let attn;
+    if (this.bundle.runRotaryAttentionAsync) {
+      attn = await this.bundle.runRotaryAttentionAsync(q, k, v, seqLen, this.heads, this.headDim);
+    } else {
+      applyRotary(q, k, seqLen, this.heads, this.headDim);
+      attn = this.bundle.runAttention ? this.bundle.runAttention(q, k, v, seqLen, seqLen, this.heads, this.headDim, false, 0) : attention(q, k, v, seqLen, this.heads, this.headDim);
+    }
+    attn = await this.linearAsync(`${prefix}.attn.to_out.0.weight`, `${prefix}.attn.to_out.0.bias`, attn, seqLen);
+    const x = this.bundle.runGatedAddRowsAsync
+      ? await this.bundle.runGatedAddRowsAsync(input, attn, gateMsa, seqLen, this.dim)
+      : this.bundle.runGatedAddRows ? this.bundle.runGatedAddRows(input, attn, gateMsa, seqLen, this.dim) : gatedAddRows(input, attn, gateMsa, seqLen, this.dim);
+    norm = this.bundle.runLayerNormAffineAsync
+      ? await this.bundle.runLayerNormAffineAsync(x, shiftMlp, scaleMlp, seqLen, this.dim, EPS)
+      : this.bundle.runLayerNormAffine ? this.bundle.runLayerNormAffine(x, shiftMlp, scaleMlp, seqLen, this.dim, EPS) : layerNormAffineRows(x, shiftMlp, scaleMlp, seqLen, this.dim);
+    let ff = this.bundle.runQ4MlpAsync
+      ? await this.bundle.runQ4MlpAsync({ weightName: `${prefix}.ff.ff.0.0.weight`, biasName: `${prefix}.ff.ff.0.0.bias` }, { weightName: `${prefix}.ff.ff.2.weight`, biasName: `${prefix}.ff.ff.2.bias` }, norm, seqLen, "gelu")
+      : await this.linearAsync(`${prefix}.ff.ff.0.0.weight`, `${prefix}.ff.ff.0.0.bias`, norm, seqLen);
+    if (!this.bundle.runQ4MlpAsync) {
+      geluTanhInPlace(ff);
+      ff = await this.linearAsync(`${prefix}.ff.ff.2.weight`, `${prefix}.ff.ff.2.bias`, ff, seqLen);
+    }
+    return this.bundle.runGatedAddRowsAsync
+      ? this.bundle.runGatedAddRowsAsync(x, ff, gateMlp, seqLen, this.dim)
+      : this.bundle.runGatedAddRows ? this.bundle.runGatedAddRows(x, ff, gateMlp, seqLen, this.dim) : gatedAddRows(x, ff, gateMlp, seqLen, this.dim);
+  }
+
+  async finalAdaNormAsync(input, t, seqLen) {
+    const mod = await this.linearAsync("transformer.norm_out.linear.weight", "transformer.norm_out.linear.bias", siluCopy(t), 1);
+    const scale = mod.subarray(0, this.dim);
+    const shift = mod.subarray(this.dim, this.dim * 2);
+    return this.bundle.runLayerNormAffineAsync
+      ? this.bundle.runLayerNormAffineAsync(input, shift, scale, seqLen, this.dim, EPS)
+      : this.bundle.runLayerNormAffine ? this.bundle.runLayerNormAffine(input, shift, scale, seqLen, this.dim, EPS) : layerNormAffineRows(input, shift, scale, seqLen, this.dim);
+  }
+
+  linearAsync(weightName, biasName, input, rows) {
+    return this.bundle.runQ4LinearAsync(weightName, input, rows, biasName);
   }
 
   linear(weightName, biasName, input, rows) {

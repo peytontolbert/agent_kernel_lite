@@ -7,23 +7,28 @@ let runtimePromise = null;
 const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
-const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-webgpu-session';
-const SPEAK_PRESET = 'custom-f5-fullq4-surface-v2-webgpu-session-wasmfallback-vocos-q4-peyton-ref256-cfg2-step8-speed115';
+const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-fused-wasm-ref256';
+const SPEAK_PRESET = 'custom-f5-hf-q4-distill-fused-wasm-vocos-q4-peyton-ref256-cfg2-step8-speed115';
 const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
 const REFERENCE_MEL_FRAMES = 256;
 const FULL_REFERENCE_MEL_FRAMES = 938;
 const MAX_DURATION_FRAMES = 1536;
 const SHORT_TEXT_SPEED = 0.3;
+const MIN_GEN_FRAMES_SHORT = 32;
+const MIN_GEN_FRAMES_MEDIUM = 64;
+const MIN_GEN_FRAMES_LONG = 96;
 const SPEECH_SPEED = 1.15;
 const DEFAULT_STEPS = 8;
 const DEFAULT_CFG_STRENGTH = 2.0;
 const CROSS_FADE_SECONDS = 0.15;
 const OUTPUT_PEAK = 0.82;
+const WEBGPU_MIN_SPEEDUP = 1.08;
+const WEBGPU_F5_MIN_SPEEDUP = 1.15;
 
 const DEFAULTS = {
   f5Manifest: 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/manifest.json',
-  f5FallbackManifest: '../models/f5tts_peyton_q4_v0/manifest.json',
+  f5FallbackManifest: '../models/f5tts_q4_12to4_distill_bundle/manifest.json',
   vocosManifest: '../models/vocos_mel_24khz_q4_v0/manifest.json',
   refWav: '../voice/peyton/sample_0.wav',
   vocab: '../voice/peyton/F5TTS_Base_vocab.txt',
@@ -50,10 +55,11 @@ async function loadRuntime() {
     runtimePromise = (async () => {
       postProgress({ phase: 'runtime', detail: 'Loading ' + VOICE_NAME + ' Q4 F5TTS weights', percent: 4 });
       let f5Bundle = await loadModelBundle({
-        label: 'Loading ' + VOICE_NAME + ' Q4 F5TTS from Hugging Face',
+        label: 'Loading released ' + VOICE_NAME + ' Q4 F5TTS from Hugging Face',
         manifestUrl: DEFAULTS.f5Manifest,
-        fallbackLabel: 'Loading packaged ' + VOICE_NAME + ' Q4 F5TTS fallback',
+        fallbackLabel: 'Loading packaged evaluated ' + VOICE_NAME + ' Q4 F5TTS fallback',
         fallbackManifestUrl: DEFAULTS.f5FallbackManifest,
+        preferWasm: true,
       });
       postProgress({ phase: 'runtime', detail: 'Loading Vocos Q4 weights', percent: 9 });
       const vocosBundle = await loadStage('Loading Vocos Q4', () => (
@@ -85,7 +91,17 @@ async function loadRuntime() {
         sessionStartedAt = performance.now();
         f5.prepareSession();
       }
-      const sessionMode = f5Bundle.f5GpuSession?.linearKernel || (f5Backend === 'WASM' ? 'fused-wasm' : 'webgpu');
+      if (f5Bundle.backend === 'webgpu' && f5Bundle.base) {
+        const selected = await selectFastestF5Session(f5Bundle, f5);
+        if (selected.bundle !== f5Bundle) {
+          f5Bundle = selected.bundle;
+          f5 = new F5TTSQ4DiTRuntime(f5Bundle);
+          f5Backend = 'WASM';
+          sessionStartedAt = performance.now();
+          f5.prepareSession();
+        }
+      }
+      const sessionMode = f5Bundle.f5GpuSession?.linearKernel || f5Bundle.runtimeSelection?.selected || (f5Backend === 'WASM' ? 'fused-wasm' : 'webgpu');
       postMessage({ type: 'status', detail: `F5 ${f5Backend} session ready (${sessionMode}, ${Math.round(performance.now() - sessionStartedAt)} ms)` });
       postProgress({ phase: 'runtime', detail: VOICE_NAME + ' voice runtime ready', percent: 20 });
       return {
@@ -102,6 +118,55 @@ async function loadRuntime() {
   return runtimePromise;
 }
 
+
+async function selectFastestF5Session(gpuBundle, gpuF5) {
+  if (!gpuBundle?.base) return { bundle: gpuBundle, speedup: 1 };
+  const condSeqLen = 16;
+  const genFrames = 8;
+  const duration = condSeqLen + genFrames;
+  const condMel = new Float32Array(condSeqLen * 100);
+  const textIds = new Int32Array(duration);
+  for (let i = 0; i < textIds.length; i += 1) textIds[i] = i < 8 ? 1 : -1;
+  const args = {
+    condMel,
+    condSeqLen,
+    textIds,
+    duration,
+    steps: 1,
+    cfgStrength: 0.0,
+    swaySamplingCoef: -1.0,
+    seed: 17,
+  };
+  const wasmF5 = new F5TTSQ4DiTRuntime(gpuBundle.base);
+  wasmF5.prepareSession();
+  try {
+    await gpuF5.sampleMel(args);
+    wasmF5.sampleMel(args);
+    const gpuMs = await medianTiming(1, () => gpuF5.sampleMel(args));
+    const wasmMs = await medianTiming(1, () => wasmF5.sampleMel(args));
+    const speedup = wasmMs / Math.max(0.001, gpuMs);
+    const useGpu = speedup >= WEBGPU_F5_MIN_SPEEDUP;
+    const selected = useGpu ? gpuBundle : gpuBundle.base;
+    selected.runtimeSelection = {
+      wasmMs,
+      gpuMs,
+      speedup,
+      selected: useGpu ? 'webgpu-f5' : 'fused-wasm-f5',
+    };
+    postMessage({
+      type: 'status',
+      detail: `F5 backend selected: ${selected.runtimeSelection.selected.toUpperCase()} (WASM ${wasmMs.toFixed(1)} ms, WebGPU ${gpuMs.toFixed(1)} ms)`,
+    });
+    if (!useGpu && gpuBundle.f5GpuSession) {
+      gpuBundle.f5GpuSession.remainingCpuOps = [...new Set([...(gpuBundle.f5GpuSession.remainingCpuOps || []), 'full-sampler-slower-than-wasm'])];
+    }
+    return { bundle: selected, speedup };
+  } catch (error) {
+    postMessage({ type: 'status', detail: `F5 WebGPU full-session benchmark failed; using fused WASM (${error.message || String(error)})` });
+    return { bundle: gpuBundle.base, speedup: 0 };
+  }
+}
+
 async function loadStage(label, fn) {
   postMessage({ type: 'status', detail: label });
   try {
@@ -111,24 +176,85 @@ async function loadStage(label, fn) {
   }
 }
 
-async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '' }) {
+async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '', preferWasm = false }) {
   async function loadPreferred(stageLabel, url) {
-    if (globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU) {
+    if (!preferWasm && globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU) {
       try {
-        return await loadStage(`${stageLabel} with WebGPU`, () => Q4Runtime.Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
+        const gpuBundle = await loadStage(`${stageLabel} with WebGPU`, () => Q4Runtime.Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
+        return await selectFastestQ4Bundle(gpuBundle, stageLabel);
       } catch (error) {
         postMessage({ type: 'status', detail: `${stageLabel} WebGPU failed; falling back to WASM (${error.message || String(error)})` });
       }
     }
-    return loadStage(`${stageLabel} with WASM`, () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(url)));
+    return loadStage(`${stageLabel} with fused WASM`, () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(url)));
   }
 
   try {
     return await loadPreferred(label, manifestUrl);
   } catch (error) {
     if (!fallbackManifestUrl) throw error;
-    postMessage({ type: 'status', detail: `${label} failed; trying local fallback (${error.message || String(error)})` });
-    return loadPreferred(fallbackLabel || 'Loading local model fallback', fallbackManifestUrl);
+    postMessage({ type: 'status', detail: `${label} failed; trying packaged evaluated fallback (${error.message || String(error)})` });
+    return loadPreferred(fallbackLabel || 'Loading packaged evaluated model fallback', fallbackManifestUrl);
+  }
+}
+
+async function selectFastestQ4Bundle(gpuBundle, stageLabel) {
+  if (!gpuBundle?.base || typeof gpuBundle.runQ4MlpAsync !== 'function') return gpuBundle;
+  const firstName = 'transformer.transformer_blocks.0.ff.ff.0.0.weight';
+  const secondName = 'transformer.transformer_blocks.0.ff.ff.2.weight';
+  const first = gpuBundle.q4Index?.[firstName];
+  const second = gpuBundle.q4Index?.[secondName];
+  if (!first || !second) return gpuBundle;
+  const firstShape = first.shape.map(Number);
+  const inDim = firstShape.slice(1).reduce((acc, value) => acc * value, 1);
+  const rows = 32;
+  const input = new Float32Array(rows * inDim);
+  for (let i = 0; i < input.length; i += 1) input[i] = ((i * 13) % 31 - 15) / 64;
+  const firstBias = gpuBundle.denseIndex?.[firstName.replace(/\.weight$/, '.bias')] ? firstName.replace(/\.weight$/, '.bias') : '';
+  const secondBias = gpuBundle.denseIndex?.[secondName.replace(/\.weight$/, '.bias')] ? secondName.replace(/\.weight$/, '.bias') : '';
+  try {
+    const wasmMs = await medianTiming(2, () => {
+      let hidden = gpuBundle.base.runQ4Linear(firstName, input, rows, firstBias);
+      geluTanhInPlace(hidden);
+      return gpuBundle.base.runQ4Linear(secondName, hidden, rows, secondBias);
+    });
+    const gpuMs = await medianTiming(2, () => gpuBundle.runQ4MlpAsync(
+      { weightName: firstName, biasName: firstBias },
+      { weightName: secondName, biasName: secondBias },
+      input,
+      rows,
+      'gelu',
+    ));
+    const speedup = wasmMs / Math.max(0.001, gpuMs);
+    const selected = speedup >= WEBGPU_MIN_SPEEDUP ? gpuBundle : gpuBundle.base;
+    selected.runtimeSelection = { wasmMs, gpuMs, speedup, selected: selected === gpuBundle ? 'webgpu' : 'wasm' };
+    postMessage({
+      type: 'status',
+      detail: `${stageLabel} backend selected: ${selected.runtimeSelection.selected.toUpperCase()} (WASM ${wasmMs.toFixed(1)} ms, WebGPU ${gpuMs.toFixed(1)} ms)`,
+    });
+    return selected;
+  } catch (error) {
+    postMessage({ type: 'status', detail: `${stageLabel} WebGPU benchmark failed; using WASM (${error.message || String(error)})` });
+    return gpuBundle.base;
+  }
+}
+
+async function medianTiming(repeats, fn) {
+  const timings = [];
+  for (let i = 0; i < repeats; i += 1) {
+    const started = performance.now();
+    await fn();
+    timings.push(performance.now() - started);
+  }
+  timings.sort((a, b) => a - b);
+  return timings[Math.floor(timings.length / 2)];
+}
+
+function geluTanhInPlace(values) {
+  const k = Math.sqrt(2 / Math.PI);
+  for (let i = 0; i < values.length; i += 1) {
+    const x = values[i];
+    values[i] = 0.5 * x * (1 + Math.tanh(k * (x + 0.044715 * x * x * x)));
   }
 }
 
@@ -186,7 +312,7 @@ async function speak(message) {
   let totalSamples = 0;
   let generationMs = 0;
   let decodeMs = 0;
-  const generationPlan = chunks.map((chunk) => clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte, speechSpeed), 96, maxGenFrames));
+  const generationPlan = chunks.map((chunk) => clampInt(explicitGenFrames, estimateTargetFrames(chunk, reference.framesPerTextByte, speechSpeed), minGenFramesForText(chunk), maxGenFrames));
   const totalPlannedFrames = generationPlan.reduce((sum, frames) => sum + frames, 0);
   let completedFrames = 0;
 
@@ -456,6 +582,13 @@ function splitTextForSpeech(text, framesPerTextByte, maxGenFrames) {
   }
   if (current) chunks.push(current);
   return chunks;
+}
+
+function minGenFramesForText(text) {
+  const bytes = utf8Length(String(text || '').trim());
+  if (bytes <= 32) return MIN_GEN_FRAMES_SHORT;
+  if (bytes <= 96) return MIN_GEN_FRAMES_MEDIUM;
+  return MIN_GEN_FRAMES_LONG;
 }
 
 function estimateTargetFrames(text, framesPerTextByte, speechSpeed = 1) {

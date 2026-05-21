@@ -853,6 +853,28 @@ export class BitNetEncoderDecoderWebGPU {
     return this.linear("agent_intent_head").run(pooled, 1);
   }
 
+  async agentPolicyLogits(encInputIds, options = {}) {
+    const policy = this.graph.agent_policy_heads || {};
+    const heads = Array.isArray(policy.heads) ? policy.heads : [];
+    if (!heads.length) {
+      throw new Error("model manifest does not expose agent policy heads");
+    }
+    const inputIds = Array.from(encInputIds || [], Number);
+    const memory = await this.encode(inputIds);
+    const pooled = meanPoolRows(
+      memory,
+      inputIds.length,
+      this.graph.d_model,
+      options.attentionMask || inputIds.map((id) => (id === 0 ? 0 : 1)),
+    );
+    const out = {};
+    for (const head of heads) {
+      const name = `agent_policy_heads.${head}`;
+      out[head] = Array.from(await this.linear(name).run(pooled, 1))[0] ?? 0;
+    }
+    return out;
+  }
+
   async decode(decInputIds, memory, memoryLen) {
     let x = embed(decInputIds, this.tensor("dec_embed.weight"), this.graph.d_model);
     for (let i = 0; i < this.graph.n_layers; i += 1) {
