@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v24-peyton-f5-vocos-q4';
-const VOICE_RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v4-step8-cfgfree-fused-wasm-ref256-gen92';
+const VOICE_RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-quality-wasm-ref256-gen92-step8-cfg2-speed115';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1423,7 +1423,7 @@ async function speakPeytonVoiceText(text) {
       runtimeVersion: VOICE_RUNTIME_VERSION,
       condSeqLen: 256,
       steps: 8,
-      cfgStrength: 0.0,
+      cfgStrength: 2.0,
       speed: 1.15,
     });
   } catch (error) {
