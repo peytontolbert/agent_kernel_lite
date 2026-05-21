@@ -1,9 +1,10 @@
 import { decodeWavMono, vocosMelFromMono } from '../vendor/model-stack-bitnet/audio_mel_runtime.js';
 import { F5TTSQ4DiTRuntime } from '../vendor/model-stack-bitnet/f5tts_q4_dit_runtime.js';
-import { Q4TensorBundleWASM, Q4TensorBundleWebGPU } from '../vendor/model-stack-bitnet/q4_wasm_runtime.js';
+import * as Q4Runtime from '../vendor/model-stack-bitnet/q4_wasm_runtime.js';
 import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/vocos_fp16_runtime.js';
 
 let runtimePromise = null;
+const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
 const RUNTIME_VERSION = '20260521-peyton-fullq4-surface-v2-step8-cfg2-webgpu-session';
@@ -112,9 +113,9 @@ async function loadStage(label, fn) {
 
 async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '' }) {
   async function loadPreferred(stageLabel, url) {
-    if (globalThis.navigator?.gpu) {
+    if (globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU) {
       try {
-        return await loadStage(`${stageLabel} with WebGPU`, () => Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
+        return await loadStage(`${stageLabel} with WebGPU`, () => Q4Runtime.Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
       } catch (error) {
         postMessage({ type: 'status', detail: `${stageLabel} WebGPU failed; falling back to WASM (${error.message || String(error)})` });
       }
