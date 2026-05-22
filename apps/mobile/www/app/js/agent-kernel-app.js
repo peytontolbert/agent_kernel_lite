@@ -25,7 +25,7 @@ const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
 const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') !== '0';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
-const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260522-v285-intent-head-runtime';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260522-v287-balanced-intent-runtime';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);

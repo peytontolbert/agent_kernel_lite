@@ -6,7 +6,7 @@
   "device": "cuda",
   "format": "model-stack-browser-bitnet",
   "layer_count": 119,
-  "manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v285a_intent_head_only_from_v284/browser_bitnet_app/manifest.json",
+  "manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/browser_bitnet_app/manifest.json",
   "max_seq_len": 1024,
   "model": {
     "activation": "silu",
@@ -52,7 +52,7 @@
     "version": 1,
     "vocab_size": 1506
   },
-  "output_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v285a_intent_head_only_from_v284/browser_bitnet_app",
+  "output_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/browser_bitnet_app",
   "quant_exclude": [],
   "quant_include": [],
   "quantization": {
@@ -184,10 +184,10 @@
     "weight_opt": "none"
   },
   "quantize_bitnet": true,
-  "size_bytes": 34129713,
-  "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v285a_intent_head_only_from_v284/agentkernel_lite_encdec_manifest.json",
-  "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v285a_intent_head_only_from_v284/model",
-  "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v285a_intent_head_only_from_v284/tokenizer",
+  "size_bytes": 34129768,
+  "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/agentkernel_lite_encdec_manifest.json",
+  "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/model",
+  "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/tokenizer",
   "tokenizer": {
     "bos_token_id": 1,
     "config_path": "tokenizer/tokenizer_config.json",
