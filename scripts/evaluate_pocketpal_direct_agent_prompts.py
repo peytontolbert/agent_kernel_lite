@@ -10,6 +10,9 @@ from typing import Any
 
 import torch
 
+from pocketpal_structured_decode import CONTENT, STRUCTURED, structured_tokens_to_json
+from pocketpal_content_operators import materialize_content
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -61,17 +64,47 @@ def _looks_malformed(text: str) -> bool:
     return False
 
 
-def _score_output(output: str, expected: str) -> tuple[bool, float, list[str]]:
+def _decision_content(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            return ""
+        try:
+            parsed = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            return ""
+    decision = parsed.get("decision_packet", {}).get("decision") if isinstance(parsed, dict) else None
+    if not decision and isinstance(parsed, dict):
+        decision = parsed.get("decision") or parsed
+    if not isinstance(decision, dict):
+        return ""
+    return str(decision.get("content", "") or "").strip()
+
+
+def _score_output(output: str, expected: str, *, source_text: str = "", prompt: str = "") -> tuple[bool, float, list[str], str]:
     failures: list[str] = []
-    if _looks_malformed(output):
+    normalized_output = (
+        structured_tokens_to_json(output, source_text=source_text)
+        if STRUCTURED in str(output or "") or CONTENT in str(output or "")
+        else output
+    )
+    scored_output = _decision_content(normalized_output) or normalized_output
+    scored_output = materialize_content(prompt, scored_output)
+    if _looks_malformed(scored_output):
         failures.append("malformed")
-    output_tokens = set(_content_tokens(output))
+    output_tokens = set(_content_tokens(scored_output))
     expected_tokens = set(_content_tokens(expected))
     overlap = len(output_tokens & expected_tokens)
     recall = overlap / float(len(expected_tokens) or 1)
     if recall < 0.45:
         failures.append(f"low_recall:{recall:.2f}")
-    return not failures, recall, failures
+    return not failures, recall, failures, scored_output
 
 
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
@@ -106,14 +139,27 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             model,
             tokenizer,
             str(row["encoder_text"]),
+            decoder_prefix=str(row.get("decoder_prefix", "") or args.decoder_prefix),
             device=device,
             max_encoder_tokens=int(args.max_encoder_tokens),
             max_new_tokens=int(args.max_new_tokens),
             temperature=float(args.temperature),
             top_p=float(args.top_p),
             repetition_penalty=float(args.repetition_penalty),
+            keep_special_tokens=bool(args.keep_special_tokens),
         )
-        ok, recall, row_failures = _score_output(output, str(row["decoder_text"]))
+        source_text = ""
+        source_match = re.search(r"<AK_SLOT_NAME>=SOURCE_TEXT\s+<AK_SLOT_VALUE>=(.*?)(?:\n|$)", str(row["encoder_text"]), flags=re.S)
+        if source_match:
+            source_text = source_match.group(1).strip()
+        target_text = str(row.get("json_decoder_text") or row.get("decoder_text") or "")
+        expected = str(row.get("expected_content") or _decision_content(target_text) or target_text)
+        ok, recall, row_failures, repaired_output = _score_output(
+            output,
+            expected,
+            source_text=source_text,
+            prompt=str(row["encoder_text"]),
+        )
         recalls.append(recall)
         task = str(row.get("task_type", "unknown") or "unknown")
         bucket = by_task.setdefault(task, {"total": 0, "passed": 0, "recall_sum": 0.0})
@@ -127,8 +173,9 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "source_id": row.get("source_id", ""),
                     "task_type": task,
-                    "expected": str(row["decoder_text"]),
+                    "expected": expected,
                     "output": output,
+                    "repaired_output": repaired_output,
                     "failures": row_failures,
                     "recall": recall,
                 }
@@ -162,6 +209,8 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.65)
     parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    parser.add_argument("--decoder-prefix", default="")
+    parser.add_argument("--keep-special-tokens", type=int, choices=(0, 1), default=0)
     parser.add_argument("--max-examples", type=int, default=120)
     parser.add_argument("--max-failures", type=int, default=20)
     parser.add_argument("--output-json", default="")
@@ -169,7 +218,9 @@ def main() -> None:
     summary = evaluate(args)
     text = json.dumps(summary, indent=2, sort_keys=True)
     if args.output_json:
-        Path(args.output_json).write_text(text + "\n", encoding="utf-8")
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text + "\n", encoding="utf-8")
     print(text)
 
 

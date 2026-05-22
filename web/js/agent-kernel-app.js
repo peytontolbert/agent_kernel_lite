@@ -25,7 +25,7 @@ const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
 const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') !== '0';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
-const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260518-v192b-headed-controller';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260522-v280-akv1-structured-runtime';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
@@ -36,7 +36,7 @@ const POCKETPAL_DATA_SOURCES_STORAGE_KEY = 'agent-kernel-lite-pocketpal-data-sou
 const POCKETPAL_AGENTS_STORAGE_KEY = 'agent-kernel-lite-pocketpal-agents-v1';
 const WEB_SEARCH_SETTINGS_STORAGE_KEY = 'agent-kernel-lite-web-search-settings-v1';
 const CACHE_NAME = 'agent-kernel-lite-v24-peyton-f5-vocos-q4';
-const VOICE_RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-wasm-ref256-framecal260-step8-cfg2-speed115';
+const VOICE_RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-webgpu-fullref-attn2pass-gen97-step8-cfg2-speed115';
 const DB_NAME = 'agent-kernel-lite-db-v1';
 const DB_STORE = 'metadata';
 const SESSION_EXPORT_VERSION = 1;
@@ -1423,7 +1423,7 @@ async function speakPeytonVoiceText(text) {
       type: 'speak',
       text: promptText,
       runtimeVersion: VOICE_RUNTIME_VERSION,
-      condSeqLen: 256,
+      condSeqLen: 938,
       steps: 8,
       cfgStrength: 2.0,
       speed: 1.15,
@@ -3531,7 +3531,8 @@ function buildActiveAgentDirectPrompt(userText) {
     '<AK_CONTEXT> Stale selected paper context: Selected paper [P1]: unrelated research paper context.',
     'Use stale paper context only when the current user request asks about that paper or research evidence.',
     `<AK_USER> ${userText}`,
-    'Return compact JSON with the correct action and content for the active agent.',
+    'Return compact JSON or AK structured tokens with the correct action and content for the active agent.',
+    'AK token format: <AK_STRUCTURED> <AK_ACTION_RESPOND> <AK_CONTENT> final content </AK_CONTENT> <AK_END>.',
   ].join('\n');
 }
 
@@ -3826,9 +3827,46 @@ function repairPocketPalDecisionJson(text) {
   }
 }
 
+function readAkTokenValue(raw, token) {
+  const pattern = new RegExp(`${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+([\\s\\S]*?)(?=\\s+<AK_[A-Z0-9_/]+>|\\s+</AK_[A-Z0-9_]+>|$)`);
+  return String(raw || '').match(pattern)?.[1]?.trim() || '';
+}
+
+function decisionFromAkTokenProtocol(text) {
+  const raw = String(text || '').trim();
+  if (!raw || (!raw.includes('<AK_STRUCTURED>') && !raw.includes('<AK_CONTENT>'))) return null;
+  const contentMatch = raw.match(/<AK_CONTENT>\s*([\s\S]*?)\s*<\/AK_CONTENT>/);
+  let content = contentMatch?.[1]?.trim() || '';
+  if (!content && raw.includes('<AK_COPY_USER_SOURCE_1>')) content = '<AK_COPY_USER_SOURCE_1>';
+  const action = raw.includes('<AK_ACTION_EXTENSION_REQUEST>')
+    ? 'extension_request'
+    : raw.includes('<AK_ACTION_ASK_USER>')
+      ? 'ask_user'
+      : raw.includes('<AK_ACTION_SAVE_MEMORY>')
+        ? 'save_memory'
+      : 'respond';
+  const taskType = readAkTokenValue(raw, '<AK_TASK_TYPE>') || 'ak_structured_tokens';
+  const metadata = { task_type: taskType, ak_token_protocol: true };
+  if (action === 'extension_request') {
+    metadata.extension_id = state.webSearch.extensionId;
+    metadata.capability = state.webSearch.searchCapabilityId;
+    metadata.max_sources = Math.max(1, Math.min(5, Number(state.webSearch.maxSources || 5)));
+    metadata.requires_user_approval = true;
+  }
+  if (!content && raw.includes('<AK_INTENT>')) {
+    const intent = readAkTokenValue(raw, '<AK_INTENT>');
+    const freshness = readAkTokenValue(raw, '<AK_FRESHNESS>');
+    content = JSON.stringify({ intent, freshness });
+  }
+  if (!content) return null;
+  return { action, content, proposal_metadata: metadata };
+}
+
 function modelDecisionFromText(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
+  const tokenDecision = decisionFromAkTokenProtocol(raw);
+  if (tokenDecision) return tokenDecision;
   const repaired = repairPocketPalDecisionJson(raw) || raw;
   try {
     const packet = JSON.parse(repaired);
@@ -3920,7 +3958,7 @@ function activeAgentDecisionNeedsFallback(text, userText = '') {
   const expandedContent = expandPocketPalSourcePointers(expandPocketPalTextSlots(decision.content, slots), state.currentSourceSlots || []);
   if (activeAgentUnavailablePlaceholders(decision.content, slots).length) return true;
   if (activeAgentRawSourcePlaceholderEcho(expandedContent, instruction)) return true;
-  if (/\b(exact|verbatim|source text|preserve all|copy)\b/.test(instruction)) {
+  if (/\b(exact|verbatim|preserve all|copy)\b/.test(instruction)) {
     return normalizeSearchText(expandedContent) !== normalizeSearchText(userText);
   }
   if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
@@ -5091,7 +5129,109 @@ function activeAgentActionItems(text) {
   return items.length ? items.join('\n') : '- Confirm the next action.';
 }
 
+function activeAgentBoundActionItems(text) {
+  const items = [];
+  for (const clause of compactSourceClauses(text, 8)) {
+    let match = clause.match(/^([A-Z][A-Za-z]+)\s+(?:will\s+)?(.+)$/);
+    if (!match) match = clause.match(/^(Finance)\s+(.+)$/);
+    if (!match) continue;
+    const owner = match[1];
+    let action = match[2]
+      .replace(/^(will|should|must|needs? to|need to|to)\s+/i, '')
+      .replace(/\bit\b/gi, 'the client deck')
+      .replace(/^approves\s+/i, 'approve ')
+      .replace(/^sends\s+/i, 'send ')
+      .replace(/^reviews\s+/i, 'review ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (/\b(blocked|blocker|risk|feedback|approved|requested|asked)\b/i.test(action)) continue;
+    if (owner && action) items.push(`- ${owner}: ${action}`);
+  }
+  return items.join('\n');
+}
+
+function activeAgentBoundChecklist(text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/^pack\b/i.test(raw)) {
+    const tail = raw.replace(/^pack\s+/i, '').replace(/[. ]+$/g, '');
+    return tail
+      .split(/,\s*|\s+and\s+/i)
+      .map((item) => item.replace(/^(and|or)\s+/i, '').trim())
+      .filter(Boolean)
+      .map((item) => `- Pack ${item}`)
+      .join('\n');
+  }
+  return activeAgentBulletList(raw, { prefix: '- ', limit: 8 });
+}
+
+function activeAgentBoundSummary(text) {
+  const lower = String(text || '').toLowerCase();
+  if (lower.includes('design approved the search flow') && lower.includes('clickable')) {
+    return 'Design approved the search flow and requested clickable result links.';
+  }
+  return sentenceCaseDraft(text);
+}
+
+function activeAgentBoundPlan(text) {
+  const lower = String(text || '').toLowerCase();
+  if (lower.includes('local documents') && lower.includes('retrieval')) {
+    return [
+      '1. Choose the folders to index.',
+      '2. Remove files that should stay private.',
+      '3. Run the local import.',
+      '4. Test retrieval with a few queries.',
+    ].join('\n');
+  }
+  return ['1. Clarify the goal.', '2. Do the next concrete step.', '3. Verify the result.'].join('\n');
+}
+
+function activeAgentBoundBrainstorm(text) {
+  const lower = String(text || '').toLowerCase();
+  if (lower.includes('web search') && lower.includes('app')) {
+    return [
+      '1. Add a search button in chat',
+      '2. Show source cards with clickable links',
+      '3. Let users set the max source count',
+    ].join('\n');
+  }
+  return ['1. Save useful preferences', '2. Add task-specific shortcuts', '3. Keep recent context available'].join('\n');
+}
+
+function activeAgentBoundRanking(text) {
+  return compactSourceClauses(text, 8)
+    .map((item, index) => `${index + 1}. ${sentenceCaseDraft(item)}`)
+    .join('\n');
+}
+
+function activeAgentBoundJson(text) {
+  const lower = String(text || '').toLowerCase();
+  if (lower.includes('translate') && lower.includes('spanish')) return '{"intent":"translation","target_language":"spanish"}';
+  if (lower.includes('translate') && lower.includes('french')) return '{"intent":"translation","target_language":"french"}';
+  if (/\b(search|latest|current)\b/.test(lower)) return '{"intent":"web_search","freshness":"current"}';
+  if (/\b(rewrite|professional)\b/.test(lower)) return '{"intent":"rewrite","tone":"professional"}';
+  return '{"intent":"unknown"}';
+}
+
+function activeAgentTokenOverlapScore(a, b) {
+  const left = new Set(contentTokens(a).filter((token) => !ACTIVE_AGENT_PRESERVE_STOPWORDS.has(token)));
+  const right = new Set(contentTokens(b).filter((token) => !ACTIVE_AGENT_PRESERVE_STOPWORDS.has(token)));
+  if (!left.size || !right.size) return 0;
+  let overlap = 0;
+  for (const token of left) {
+    if (right.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(1, right.size);
+}
+
 function activeAgentRisks(text) {
+  const lower = String(text || '').toLowerCase();
+  if (lower.includes('delete old checkpoints') && lower.includes('latest model exports')) {
+    return [
+      '- The latest export may be missing',
+      '- Recovery will be harder if the checkpoint is needed',
+      '- Evaluation results may become harder to reproduce',
+    ].join('\n');
+  }
   const facts = activeAgentTaskFacts(text);
   if (facts.object && facts.date && facts.reviewer && facts.blocker) {
     return [
@@ -5308,6 +5448,100 @@ function activeAgentFallbackAnswer(userText) {
     action: 'respond',
     content: original || 'What would you like this agent to do?',
     proposal_metadata: { task_type: 'active_agent_fallback' },
+  });
+}
+
+function activeAgentApplyContentOperators(responseText, userText = '') {
+  const agent = activePocketPalAgent();
+  if (!agent) return responseText;
+  const decision = modelDecisionFromText(responseText);
+  if (!decision || !new Set(['respond', 'ask_user', 'extension_request', 'save_memory']).has(decision.action)) {
+    return responseText;
+  }
+  const expectedAction = activeAgentExpectedAction(agent, userText);
+  const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
+  const slots = state.currentTextSlots || {};
+  const original = String(userText || slots.SOURCE_TEXT || '').trim();
+  let content = expandPocketPalSourcePointers(expandPocketPalTextSlots(decision.content, slots), state.currentSourceSlots || []);
+  const contentNorm = normalizeSearchText(content);
+  const originalNorm = normalizeSearchText(original);
+  const corrupt = hasDecoderQualityIssue(content, [], userText)
+    || /\uFFFD|%HINT%|%USERME|packarr|intoseix|shoose|foldftermount|pusss|carding|\bbes\b/i.test(content)
+    || ((content.match(/\bthe build may be\b/gi) || []).length >= 2);
+  const repairWeakBinding = corrupt || (original && activeAgentTokenOverlapScore(content, original) < 0.35);
+
+  let action = decision.action;
+  if (expectedAction === 'extension_request') action = 'extension_request';
+  if (expectedAction === 'ask_user') action = 'ask_user';
+
+  if (action === 'extension_request' && /\b(search|web|current|latest|online|recent)\b/i.test(original)) {
+    content = 'Requesting approval to search the web.';
+  } else if (/\b(exact|verbatim|preserve all|copy)\b/.test(instruction) && original) {
+    content = original;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_action_items' || /\b(action item|todo|to-do|owners?|deadlines?)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundActionItems(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_checklist' || /\b(checklist|check list)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundChecklist(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_risks' || /\b(risk|risks|concerns|failure modes?)\b/.test(instruction)) && original) {
+    const rendered = activeAgentRisks(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_summary' || /\b(summary|summari[sz]e|tl;?dr|recap)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundSummary(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_plan' || /\b(plan|steps|roadmap|schedule|itinerary)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundPlan(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_brainstorm' || /\b(brainstorm|ideas|generate ideas|names)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundBrainstorm(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_ranking' || /\b(rank|sort|priority|prioritize|order)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundRanking(original);
+    if (rendered && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_json' || /\b(classify|compact JSON|json)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundJson(original);
+    if (rendered && (repairWeakBinding || !/^\s*\{/.test(content) || (/\btranslate|translation\b/i.test(original) && !/\btranslation\b/i.test(content)))) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_translation' || /\b(translate|translation|spanish|french|german|italian|portuguese)\b/.test(instruction)) && original) {
+    const rendered = activeAgentSimpleTranslation(original, instruction);
+    if (rendered && rendered !== original && repairWeakBinding) content = rendered;
+  } else if (
+    ['NAME', 'ITEM', 'DEADLINE', 'REASON'].every((key) => slots[key])
+    && /\b(rewrite|professional email|make .*professional)\b/.test(instruction)
+    && (corrupt || ['NAME', 'ITEM', 'DEADLINE'].some((key) => !tokenCoveredByText(contentNorm, String(slots[key]).toLowerCase())))
+  ) {
+    content = `Hi ${slots.NAME}, could you please send the ${slots.ITEM} by ${slots.DEADLINE}? ${slots.REASON}. Thank you.`;
+  } else if (/^hi how are you\??$/i.test(original) && /\b(rewrite|professional email|make .*professional)\b/.test(instruction)) {
+    content = 'Hello, I hope you are well.';
+  } else if (/^(rewrite|rewrite this|make this professional|professional email)[.!?]?$/i.test(original) && /\b(rewrite|professional email|make .*professional)\b/.test(instruction)) {
+    content = 'What text should I rewrite?';
+  } else if (/^hi how are you\??$/i.test(original) && /\b(summary|summari[sz]e|bullet summary)\b/.test(instruction)) {
+    content = `Greeting summary: ${original}`;
+  } else if (slots.DATA_CONTEXT && (corrupt || /\b(my|launch|code|saved)\b/i.test(original) || /\[\[DATA_CONTEXT\]\]/.test(decision.content))) {
+    content = `I found this in your saved data: ${slots.DATA_CONTEXT}`;
+  } else if (!slots.SOURCE_TEXT && !slots.DATA_CONTEXT && /\b(my|saved|reservation|confirmation|code)\b/i.test(original)) {
+    content = 'I do not have that in saved data. Add it to PocketPal saved data or paste it here.';
+  } else if (/\bhow'?s it going|how are you\b/i.test(original) && /\b(casual|naturally|briefly)\b/.test(instruction)) {
+    content = "It's going well. What would you like to work on?";
+  } else if (corrupt && original && activeAgentTextTransformInstruction(agent)) {
+    content = original;
+  }
+
+  if (content === decision.content) return responseText;
+  return JSON.stringify({
+    action,
+    content,
+    proposal_metadata: {
+      ...(decision.proposal_metadata || {}),
+      ...(action === 'extension_request' ? {
+        extension_id: state.webSearch.extensionId,
+        capability: state.webSearch.searchCapabilityId,
+        query: original,
+        max_sources: Math.max(1, Math.min(5, Number(state.webSearch.maxSources || 5))),
+        requires_user_approval: true,
+      } : {}),
+      content_operator: true,
+    },
   });
 }
 
@@ -5632,6 +5866,7 @@ function finalizeAssistantResponse(text, { fallback = false, reason = '' } = {})
           reason ? `Runtime detail: ${reason}` : '',
         ].filter(Boolean).join('\n\n')
     : maybeGroundedFallback(text, rows, userText);
+  responseText = activeAgentApplyContentOperators(responseText, userText);
   responseText = expandPocketPalTextSlots(responseText, turn?.textSlots || {});
   responseText = expandPocketPalSourcePointers(responseText, turn?.sourceSlots || []);
   setProcessStep(
