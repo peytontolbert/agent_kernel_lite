@@ -8,9 +8,9 @@
     },
     "model_family": "agentkernel_lite_encdec_v1",
     "parameter_count": 102488473,
-    "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/agentkernel_lite_encdec_manifest.json",
-    "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/model",
-    "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285/tokenizer"
+    "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/agentkernel_lite_encdec_manifest.json",
+    "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/model",
+    "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/tokenizer"
   },
   "compression": {
     "dense_dtype": "float32",
@@ -10323,7 +10323,7 @@
           "bytes": 72,
           "dtype": "float32",
           "path": "agent_intent_head.bias.f32.bin",
-          "sha256": "a2feecbf33c735ccb7d84096985ac035237a5e67318b1c352e4e72596e251143",
+          "sha256": "2621a65ab9f8a970d8346f6b2d8e101b5712ac37e46a939232b8e8c738392e24",
           "shape": [
             18
           ]
@@ -10341,7 +10341,7 @@
           "bytes": 5120,
           "dtype": "uint8",
           "path": "agent_intent_head.packed_weight.u8.bin",
-          "sha256": "804e34eba7f793ab0efcae43585bb438c47a57907e15b66a50d45e480c508544",
+          "sha256": "3c05761a300390382041701630ec16a534dd567fc0f511605513ce2cb8919d58",
           "shape": [
             32,
             160
@@ -10351,7 +10351,7 @@
           "bytes": 4,
           "dtype": "float32",
           "path": "agent_intent_head.scale_values.f32.bin",
-          "sha256": "bc5e27036aeed22c533455976f89763ef8a649e2998d67c320b2fdd4999eab35",
+          "sha256": "d934b38ddd3a38535906a74cc5c45574fccef4f62215b21849854bffc825a7ef",
           "shape": [
             1
           ]

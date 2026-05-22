@@ -11,7 +11,7 @@
     "webgpu_js": "runtime/bitnet_webgpu.js",
     "wgsl": "runtime/bitnet_linear.wgsl"
   },
-  "sha256": "f3f99c30c87b48ffa0b20655391a7071add889bb03c5c27d917e55e1472ac625",
+  "sha256": "423aa987d46fc3ef247903fbc03c2c42c813b341f46f9d28912db7f275ef85ae",
   "tokenizer": {
     "bos_token_id": 1,
     "config_path": "tokenizer/tokenizer_config.json",

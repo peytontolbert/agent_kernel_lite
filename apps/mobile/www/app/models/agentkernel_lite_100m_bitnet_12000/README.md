@@ -11,9 +11,9 @@ tags:
 
 Self-contained browser BitNet export for the AgentKernel Lite chat model.
 
-- Source bundle: `/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v287a_intent_balanced_repair_from_v285`
+- Source bundle: `/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288`
 - Parameters before BitNet packing: `102488473`
-- Final eval loss: `0.48438748717308044`
+- Final eval loss: `0.4050685465335846`
 - Browser entrypoint: `manifest.json`
 - Runtime: Model Stack browser BitNet WebGPU encoder-decoder with packed BitNet WASM fallback
 - Tokenizer: AgentKernel byte-level BPE attached under `tokenizer/`
