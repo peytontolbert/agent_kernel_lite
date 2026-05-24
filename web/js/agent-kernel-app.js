@@ -25,7 +25,7 @@ const STRUCTURE_FIXTURE = URL_PARAMS.get('structureFixture') === '1';
 const HF_DATASET_SEARCH_ENABLED = URL_PARAMS.get('hfSearch') === '1';
 const SOURCE_SLOT_TOKENS_ENABLED = URL_PARAMS.get('sourceSlots') !== '0';
 const HF_MODELSTACK_MANIFEST = 'https://huggingface.co/PeytonT/agentkernel-lite-100m-bitnet/resolve/main/manifest.json';
-const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260522-v289-intent-boundary-runtime';
+const NATIVE_MODELSTACK_MANIFEST = './models/agentkernel_lite_100m_bitnet_12000/manifest.json?v=20260524-v356-controller-curriculum';
 const NATIVE_PAPERS_50K = './packed-data/papers_50000.json';
 const NEURAL_MEMORY_PACK_URL = String(URL_PARAMS.get('neuralMemoryPack') || '').trim();
 const NEURAL_MEMORY_ENABLED = URL_PARAMS.get('neuralMemory') === '1' || Boolean(NEURAL_MEMORY_PACK_URL);
@@ -3531,15 +3531,15 @@ function buildActiveAgentDirectPrompt(userText) {
     '<AK_CONTEXT> Stale selected paper context: Selected paper [P1]: unrelated research paper context.',
     'Use stale paper context only when the current user request asks about that paper or research evidence.',
     `<AK_USER> ${userText}`,
-    'Return compact JSON or AK structured tokens with the correct action and content for the active agent.',
+    'Return AK structured tokens with the correct action and content for the active agent.',
     'AK token format: <AK_STRUCTURED> <AK_ACTION_RESPOND> <AK_CONTENT> final content </AK_CONTENT> <AK_END>.',
   ].join('\n');
 }
 
 const ACTIVE_AGENT_ACTION_PREFIXES = {
-  ask_user: '{"action": "ask_user", "content": "',
-  extension_request: '{"action": "extension_request", "content": "',
-  respond: '{"action": "respond", "content": "',
+  ask_user: '<AK_STRUCTURED> <AK_ACTION_ASK_USER> ',
+  extension_request: '<AK_STRUCTURED> <AK_ACTION_EXTENSION_REQUEST> ',
+  respond: '<AK_STRUCTURED> <AK_ACTION_RESPOND> ',
 };
 
 function activeAgentNeedsWebSearch(agent, userText = '') {

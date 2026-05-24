@@ -3,10 +3,10 @@
   "dense_dtype": "float32",
   "dense_float32_include": [],
   "dense_tensor_count": 42,
-  "device": "cuda",
+  "device": "cpu",
   "format": "model-stack-browser-bitnet",
   "layer_count": 119,
-  "manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/browser_bitnet_app/manifest.json",
+  "manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v356a_retrieval_repair_from_v355a/browser_bitnet/manifest.json",
   "max_seq_len": 1024,
   "model": {
     "activation": "silu",
@@ -52,7 +52,7 @@
     "version": 1,
     "vocab_size": 1506
   },
-  "output_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/browser_bitnet_app",
+  "output_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v356a_retrieval_repair_from_v355a/browser_bitnet",
   "quant_exclude": [],
   "quant_include": [],
   "quantization": {
@@ -184,10 +184,10 @@
     "weight_opt": "none"
   },
   "quantize_bitnet": true,
-  "size_bytes": 34129767,
-  "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/agentkernel_lite_encdec_manifest.json",
-  "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/model",
-  "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v289a_intent_boundary_low_lr_from_v288/tokenizer",
+  "size_bytes": 34129712,
+  "source_bundle_manifest_path": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v356a_retrieval_repair_from_v355a/agentkernel_lite_encdec_manifest.json",
+  "source_model_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v356a_retrieval_repair_from_v355a/model",
+  "source_tokenizer_dir": "/data/agent_kernel_lite/artifacts/pocketpal_controller_100m_v356a_retrieval_repair_from_v355a/tokenizer",
   "tokenizer": {
     "bos_token_id": 1,
     "config_path": "tokenizer/tokenizer_config.json",
@@ -198,7 +198,5 @@
     "source_kind": "agentkernel_bytelevel_bpe_v1",
     "unk_token_id": 3,
     "vocab_size": 1506
-  },
-  "webapp_manifest_path": "/data/agent_kernel_lite/web/models/agentkernel_lite_100m_bitnet_12000/manifest.json",
-  "webapp_model_dir": "/data/agent_kernel_lite/web/models/agentkernel_lite_100m_bitnet_12000"
+  }
 }
