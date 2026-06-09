@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shutil
 import sys
 from typing import Any, Iterator
@@ -183,6 +184,21 @@ class LocalBpeTokenizer:
         "<AK_ACTION_SPACE_ARTIFACT>",
         "<AK_ACTION_SPACE_RETRIEVAL>",
         "<AK_ACTION_SPACE_RESPOND>",
+        "<AK_STRUCTURED>",
+        "<AK_ACTION_RESPOND>",
+        "<AK_ACTION_ASK_USER>",
+        "<AK_ACTION_EXTENSION_REQUEST>",
+        "<AK_ACTION_SAVE_MEMORY>",
+        "<AK_CONTENT>",
+        "</AK_CONTENT>",
+        "<AK_TASK_TYPE>",
+        "<AK_INTENT>",
+        "<AK_FIELD>",
+        "<AK_FIELD_NAME>",
+        "<AK_FIELD_VALUE>",
+        "<AK_FIELDS>",
+        "<AK_FRESHNESS>",
+        "<AK_END>",
         "<AK_RET_CODE>",
         "<AK_OOD>",
         "<AK_ARTIFACT_REPAIR>",
@@ -485,6 +501,110 @@ def _parse_retrieval_negative_doc_texts(raw: Any) -> list[str]:
     return [text] if text else []
 
 
+def _parse_positive_ints(raw: str) -> tuple[int, ...]:
+    values: list[int] = []
+    for item in str(raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        value = int(item)
+        if value > 0:
+            values.append(value)
+    return tuple(sorted(set(values)))
+
+
+def _encode_decoder_sequence(
+    tokenizer,
+    text: str,
+    *,
+    prefix_text: str = "",
+    max_decoder_tokens: int,
+    pad_token_id: int,
+    decoder_start_token_id: int,
+) -> tuple[list[int], list[int], list[float]]:
+    prefix_ids: list[int] = []
+    if str(prefix_text or "").strip():
+        prefix = tokenizer(
+            str(prefix_text),
+            max_length=int(max_decoder_tokens),
+            padding=False,
+            truncation=True,
+            add_special_tokens=False,
+        )
+        prefix_ids = [
+            int(token_id)
+            for token_id in list(prefix["input_ids"])
+            if int(token_id) not in {int(pad_token_id), int(decoder_start_token_id)}
+        ]
+    target = tokenizer(
+        str(text),
+        max_length=int(max_decoder_tokens),
+        padding="max_length",
+        truncation=True,
+        add_special_tokens=True,
+    )
+    labels = list(target["input_ids"])
+    if labels and int(labels[0]) == int(decoder_start_token_id):
+        labels = labels[1:]
+    labels = [*prefix_ids, *labels]
+    labels = labels[: int(max_decoder_tokens)]
+    label_weights: list[float] = []
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
+    for index, token in enumerate(labels):
+        if int(token) == int(pad_token_id):
+            label_weights.append(0.0)
+            continue
+        if index < len(prefix_ids):
+            label_weights.append(0.0)
+            continue
+        piece = str(tokenizer.decode([int(token)]) or "").strip()
+        normalized = piece.lower()
+        if not piece:
+            weight = 0.6
+        elif any(ch.isdigit() for ch in piece):
+            weight = 2.2
+        elif piece in {"{", "}", "[", "]", ":", ",", "-", "\n"} or any(ch in piece for ch in "{}[]:"):
+            weight = 1.8
+        elif re.search(r"[A-Z]", piece) and re.search(r"[a-z]", piece):
+            weight = 2.0
+        elif re.search(r"[A-Za-z0-9]", piece) and len(normalized) >= 4 and normalized not in stopwords:
+            weight = 1.7
+        elif normalized in stopwords:
+            weight = 0.7
+        else:
+            weight = 1.0
+        label_weights.append(float(weight))
+    while len(labels) < int(max_decoder_tokens):
+        labels.append(int(pad_token_id))
+        label_weights.append(0.0)
+    decoder_input_ids = [int(decoder_start_token_id), *labels[:-1]]
+    label_ids = [
+        token if token != int(pad_token_id) and index >= len(prefix_ids) else -100
+        for index, token in enumerate(labels)
+    ]
+    return decoder_input_ids, label_ids, label_weights
+
+
 def _encode_encdec_row(
     row: dict[str, Any],
     *,
@@ -504,21 +624,28 @@ def _encode_encdec_row(
         truncation=True,
         add_special_tokens=True,
     )
-    target = tokenizer(
+    decoder_input_ids, label_ids, label_token_weights = _encode_decoder_sequence(
+        tokenizer,
         str(row["decoder_text"]),
-        max_length=int(max_decoder_tokens),
-        padding="max_length",
-        truncation=True,
-        add_special_tokens=True,
+        prefix_text=str(row.get("decoder_train_prefix", "") or ""),
+        max_decoder_tokens=int(max_decoder_tokens),
+        pad_token_id=int(pad_token_id),
+        decoder_start_token_id=int(decoder_start_token_id),
     )
-    labels = list(target["input_ids"])
-    if labels and int(labels[0]) == int(decoder_start_token_id):
-        labels = labels[1:]
-    labels = labels[: int(max_decoder_tokens)]
-    while len(labels) < int(max_decoder_tokens):
-        labels.append(int(pad_token_id))
-    decoder_input_ids = [int(decoder_start_token_id), *labels[:-1]]
-    label_ids = [token if token != int(pad_token_id) else -100 for token in labels]
+    negative_decoder_text = str(row.get("negative_decoder_text", "") or "").strip()
+    negative_prefix_text = str(
+        row.get("negative_decoder_train_prefix", row.get("decoder_train_prefix", "")) or ""
+    )
+    negative_decoder_input_ids, negative_label_ids, _negative_label_token_weights = _encode_decoder_sequence(
+        tokenizer,
+        negative_decoder_text if negative_decoder_text else "",
+        prefix_text=negative_prefix_text if negative_decoder_text else "",
+        max_decoder_tokens=int(max_decoder_tokens),
+        pad_token_id=int(pad_token_id),
+        decoder_start_token_id=int(decoder_start_token_id),
+    )
+    if not negative_decoder_text:
+        negative_label_ids = [-100 for _ in negative_label_ids]
     retrieval_query_text = str(row.get("retrieval_query_text", "") or "").strip()
     retrieval_doc_text = str(row.get("retrieval_doc_text", "") or "").strip()
     has_retrieval_pair = bool(retrieval_query_text and retrieval_doc_text)
@@ -536,6 +663,60 @@ def _encode_encdec_row(
         truncation=True,
         add_special_tokens=True,
     )
+    state_text = str(row.get("state_text", "") or row.get("expected_content", "") or "").strip()
+    if not state_text:
+        state_text = str(row.get("retrieval_doc_text", "") or "").strip()
+    state_target = tokenizer(
+        state_text,
+        max_length=min(128, int(max_decoder_tokens)),
+        padding="max_length",
+        truncation=True,
+        add_special_tokens=True,
+    )
+    state_target_token_weights = []
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
+    for token in state_target["input_ids"]:
+        token = int(token)
+        if token == int(pad_token_id) or token <= 3:
+            state_target_token_weights.append(0.0)
+            continue
+        piece = str(tokenizer.decode([token]) or "").strip()
+        normalized = piece.lower()
+        if not piece:
+            weight = 0.0
+        elif any(ch.isdigit() for ch in piece):
+            weight = 2.2
+        elif piece in {"{", "}", "[", "]", ":", ",", "-", "\n"} or any(ch in piece for ch in "{}[]:"):
+            weight = 0.2
+        elif re.search(r"[A-Z]", piece) and re.search(r"[a-z]", piece):
+            weight = 2.0
+        elif re.search(r"[A-Za-z0-9]", piece) and len(normalized) >= 4 and normalized not in stopwords:
+            weight = 1.7
+        elif normalized in stopwords:
+            weight = 0.3
+        else:
+            weight = 0.8
+        state_target_token_weights.append(float(weight))
     negative_texts = _parse_retrieval_negative_doc_texts(row.get("retrieval_negative_doc_texts"))
     negative_texts = negative_texts[: max(0, int(max_retrieval_negatives))]
     negative_doc_ids: list[list[int]] = []
@@ -580,16 +761,32 @@ def _encode_encdec_row(
         except (TypeError, ValueError):
             return torch.tensor(-1, dtype=torch.long)
 
+    def contrastive_label_id() -> torch.Tensor:
+        raw = row.get("contrastive_label_id", None)
+        if raw is None or raw == "":
+            return torch.tensor(-1, dtype=torch.long)
+        try:
+            return torch.tensor(int(raw), dtype=torch.long)
+        except (TypeError, ValueError):
+            return torch.tensor(-1, dtype=torch.long)
+
     return {
         "enc_input_ids": torch.tensor(enc["input_ids"], dtype=torch.long),
         "enc_attention_mask": torch.tensor(enc["attention_mask"], dtype=torch.long),
         "dec_input_ids": torch.tensor(decoder_input_ids, dtype=torch.long),
         "labels": torch.tensor(label_ids, dtype=torch.long),
+        "label_token_weights": torch.tensor(label_token_weights, dtype=torch.float32),
+        "negative_dec_input_ids": torch.tensor(negative_decoder_input_ids, dtype=torch.long),
+        "negative_labels": torch.tensor(negative_label_ids, dtype=torch.long),
+        "negative_loss_weight": torch.tensor(float(row.get("negative_loss_weight", 0.0) or 0.0), dtype=torch.float32),
         "loss_weight": torch.tensor(float(row.get("weight", 1.0) or 1.0), dtype=torch.float32),
         "retrieval_query_ids": torch.tensor(retrieval_query["input_ids"], dtype=torch.long),
         "retrieval_query_attention_mask": torch.tensor(retrieval_query["attention_mask"], dtype=torch.long),
         "retrieval_doc_ids": torch.tensor(retrieval_doc["input_ids"], dtype=torch.long),
         "retrieval_doc_attention_mask": torch.tensor(retrieval_doc["attention_mask"], dtype=torch.long),
+        "state_target_ids": torch.tensor(state_target["input_ids"], dtype=torch.long),
+        "state_target_attention_mask": torch.tensor(state_target["attention_mask"], dtype=torch.long),
+        "state_target_token_weights": torch.tensor(state_target_token_weights, dtype=torch.float32),
         "retrieval_negative_doc_ids": negative_doc_ids_tensor,
         "retrieval_negative_doc_attention_mask": negative_doc_masks_tensor,
         "retrieval_negative_doc_mask": negative_valid_mask_tensor,
@@ -603,6 +800,7 @@ def _encode_encdec_row(
         "needs_verification_target": target_value("needs_verification_target"),
         "paper_action_validity_target": target_value("paper_action_validity_target"),
         "intent_label_id": intent_label_id(),
+        "contrastive_label_id": contrastive_label_id(),
     }
 
 
@@ -610,6 +808,10 @@ class EncDecParquetIterableDataset(IterableDataset):
     columns = [
         "encoder_text",
         "decoder_text",
+        "expected_content",
+        "state_text",
+        "negative_decoder_text",
+        "negative_loss_weight",
         "action",
         "task_type",
         "weight",
@@ -625,6 +827,7 @@ class EncDecParquetIterableDataset(IterableDataset):
         "needs_verification_target",
         "paper_action_validity_target",
         "intent_label_id",
+        "contrastive_label_id",
     ]
 
     def __init__(
@@ -732,6 +935,176 @@ class EncDecParquetIterableDataset(IterableDataset):
                     emitted = emit(item)
                     if emitted is not None:
                         yield emitted
+        if self.shuffle and self.shuffle_buffer_size > 1:
+            while buffer:
+                index = rng.randrange(len(buffer))
+                yield buffer.pop(index)
+
+
+class EncDecHfStreamIterableDataset(IterableDataset):
+    """Streaming HF curriculum rows converted on the fly.
+
+    The manifest supplies compact dataset specs; the trainer stores only model
+    progress/checkpoints, not dataset snapshots.
+    """
+
+    def __init__(
+        self,
+        specs: list[str],
+        tokenizer,
+        *,
+        max_encoder_tokens: int,
+        max_decoder_tokens: int,
+        max_retrieval_query_tokens: int = 96,
+        max_retrieval_doc_tokens: int = 256,
+        max_retrieval_negatives: int = 0,
+        weight: float = 3.0,
+        shuffle: bool = False,
+        shuffle_buffer_size: int = 0,
+        seed: int = 1,
+    ) -> None:
+        if not specs:
+            raise ValueError("streaming dataset requires at least one dataset spec")
+        self.specs = [str(item) for item in specs if str(item).strip()]
+        self.tokenizer = tokenizer
+        self.max_encoder_tokens = int(max_encoder_tokens)
+        self.max_decoder_tokens = int(max_decoder_tokens)
+        self.max_retrieval_query_tokens = int(max_retrieval_query_tokens)
+        self.max_retrieval_doc_tokens = int(max_retrieval_doc_tokens)
+        self.max_retrieval_negatives = max(0, int(max_retrieval_negatives))
+        self.weight = float(weight)
+        self.shuffle = bool(shuffle)
+        self.shuffle_buffer_size = max(0, int(shuffle_buffer_size))
+        self.seed = int(seed)
+        self.pad_token_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
+        self.decoder_start_token_id = int(
+            getattr(tokenizer, "bos_token_id", None)
+            or getattr(tokenizer, "eos_token_id", None)
+            or self.pad_token_id
+        )
+        self.row_count = sum(self._spec_limit(spec) for spec in self.specs)
+
+    @staticmethod
+    def _passes_quality_filter(prompt: str, answer: str) -> bool:
+        prompt_text = " ".join(str(prompt or "").split())
+        answer_text = " ".join(str(answer or "").split())
+        if len(prompt_text) < 12 or len(answer_text) < 18:
+            return False
+        lower = answer_text.lower()
+        blocked = (
+            "bfcl v2",
+            "live multiple",
+            "function calling leaderboard",
+            "<tool_call>",
+            "<functioncall>",
+        )
+        if any(item in lower for item in blocked):
+            return False
+        words = re.findall(r"[A-Za-z0-9_'-]+", answer_text)
+        if len(words) < 5:
+            return False
+        unique_ratio = len(set(word.lower() for word in words)) / max(1, len(words))
+        if unique_ratio < 0.35:
+            return False
+        return True
+
+    @staticmethod
+    def _spec_limit(spec: str) -> int:
+        parts = str(spec).split(":")
+        while len(parts) < 5:
+            parts.append("")
+        try:
+            return max(0, int(parts[4] or 1000))
+        except ValueError:
+            return 1000
+
+    def __len__(self) -> int:
+        return self.row_count
+
+    def __iter__(self):
+        try:
+            from datasets import load_dataset
+            from build_pocketpal_nvidia_hf_curriculum import _extract_pair, _parse_spec, _row
+        except ImportError as exc:
+            raise RuntimeError("HF streaming curriculum requires datasets and the NVIDIA curriculum builder") from exc
+
+        rng = random.Random(self.seed)
+        worker = get_worker_info()
+        specs = list(self.specs)
+        if self.shuffle:
+            rng.shuffle(specs)
+        if worker is not None:
+            specs = specs[worker.id :: worker.num_workers]
+
+        buffer: list[dict[str, torch.Tensor]] = []
+
+        def emit(item: dict[str, torch.Tensor]):
+            if self.shuffle and self.shuffle_buffer_size > 1:
+                buffer.append(item)
+                if len(buffer) >= self.shuffle_buffer_size:
+                    index = rng.randrange(len(buffer))
+                    return buffer.pop(index)
+                return None
+            return item
+
+        for spec in specs:
+            name, config, split, intent, limit = _parse_spec(spec)
+            kwargs: dict[str, Any] = {"split": split, "streaming": True}
+            try:
+                stream = load_dataset(name, config, **kwargs) if config else load_dataset(name, **kwargs)
+            except Exception as exc:
+                print(
+                    json.dumps(
+                        {
+                            "event": "hf_stream_dataset_skipped",
+                            "dataset": name,
+                            "config": config,
+                            "split": split,
+                            "intent": intent,
+                            "error": repr(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                continue
+            scanned = 0
+            for row_index, source_row in enumerate(stream):
+                if scanned >= int(limit):
+                    break
+                if not isinstance(source_row, dict):
+                    continue
+                prompt, answer, context, retrieval_doc = _extract_pair(source_row, fallback_intent=intent)
+                if not self._passes_quality_filter(prompt, answer):
+                    scanned += 1
+                    continue
+                built = _row(
+                    dataset_name=name if not config else f"{name}/{config}",
+                    source_id=f"{name}:{config or 'default'}:{split}:{row_index}",
+                    intent=intent,
+                    user=prompt,
+                    content=answer,
+                    context=context,
+                    retrieval_doc=retrieval_doc,
+                    weight=self.weight,
+                )
+                scanned += 1
+                if built is None:
+                    continue
+                item = _encode_encdec_row(
+                    built,
+                    tokenizer=self.tokenizer,
+                    max_encoder_tokens=self.max_encoder_tokens,
+                    max_decoder_tokens=self.max_decoder_tokens,
+                    max_retrieval_query_tokens=self.max_retrieval_query_tokens,
+                    max_retrieval_doc_tokens=self.max_retrieval_doc_tokens,
+                    max_retrieval_negatives=self.max_retrieval_negatives,
+                    pad_token_id=self.pad_token_id,
+                    decoder_start_token_id=self.decoder_start_token_id,
+                )
+                emitted = emit(item)
+                if emitted is not None:
+                    yield emitted
         if self.shuffle and self.shuffle_buffer_size > 1:
             while buffer:
                 index = rng.randrange(len(buffer))
@@ -1114,13 +1487,27 @@ def _agent_intent_head_loss(model: torch.nn.Module, batch: dict[str, torch.Tenso
     return (losses * weights).sum() / weights.sum().clamp_min(1e-6)
 
 
+def _pooled_controller_state(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    encode_controller_state = getattr(model, "encode_controller_state", None)
+    if callable(encode_controller_state):
+        return encode_controller_state(input_ids, attention_mask).float()
+    hidden = model.encode(input_ids, attention_mask)
+    return _mean_pool(hidden, attention_mask).float()
+
+
 def _intent_contrastive_loss(
     model: torch.nn.Module,
     batch: dict[str, torch.Tensor],
     *,
     temperature: float,
 ) -> torch.Tensor:
-    labels = batch.get("intent_label_id")
+    labels = batch.get("contrastive_label_id")
+    if labels is None or int((labels >= 0).sum().detach().cpu().item()) <= 1:
+        labels = batch.get("intent_label_id")
     if labels is None:
         return next(model.parameters()).new_tensor(0.0)
     labels = labels.to(device=batch["enc_input_ids"].device, dtype=torch.long)
@@ -1130,8 +1517,8 @@ def _intent_contrastive_loss(
     labels = labels[valid]
     if int(torch.unique(labels).shape[0]) <= 1:
         return next(model.parameters()).new_tensor(0.0)
-    hidden = model.encode(batch["enc_input_ids"][valid], batch["enc_attention_mask"][valid])
-    pooled = F.normalize(_mean_pool(hidden, batch["enc_attention_mask"][valid]).float(), dim=-1)
+    pooled = _pooled_controller_state(model, batch["enc_input_ids"][valid], batch["enc_attention_mask"][valid])
+    pooled = F.normalize(pooled.float(), dim=-1)
     logits = pooled @ pooled.transpose(0, 1)
     logits = logits / max(float(temperature), 1e-6)
     eye = torch.eye(logits.shape[0], device=logits.device, dtype=torch.bool)
@@ -1148,11 +1535,492 @@ def _intent_contrastive_loss(
     return losses[anchor_mask].mean()
 
 
+def _future_bow_aux_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    buckets: int,
+) -> torch.Tensor:
+    head = getattr(model, "future_bow_aux_head", None)
+    if head is None or int(buckets) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch["labels"]
+    valid = labels >= 0
+    token_weights = batch.get("label_token_weights")
+    if token_weights is not None:
+        valid = valid & (token_weights.to(device=labels.device, dtype=torch.float32) > 1.05)
+    if not bool(valid.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    pooled = _pooled_controller_state(model, batch["enc_input_ids"], batch["enc_attention_mask"])
+    logits = head(pooled)
+    targets = torch.zeros((labels.shape[0], int(buckets)), device=logits.device, dtype=logits.dtype)
+    bucket_ids = labels.clamp_min(0).remainder(int(buckets)).to(device=logits.device, dtype=torch.long)
+    valid_on_device = valid.to(device=logits.device)
+    targets.scatter_(1, bucket_ids.masked_fill(~valid_on_device, 0), valid_on_device.to(dtype=logits.dtype))
+    per_example = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").mean(dim=1)
+    weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    return (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _future_sketch_aux_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    buckets: int,
+    min_token_weight: float,
+    topk: int,
+    windows: tuple[int, ...] = (),
+) -> torch.Tensor:
+    head = getattr(model, "future_sketch_aux_head", None)
+    if head is None or int(buckets) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch["labels"]
+    valid = labels >= 0
+    token_weights = batch.get("label_token_weights")
+    if token_weights is None:
+        return next(model.parameters()).new_tensor(0.0)
+    info_weights = token_weights.to(device=labels.device, dtype=torch.float32)
+    valid = valid & (info_weights >= float(min_token_weight))
+    if not bool(valid.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    pooled = _pooled_controller_state(model, batch["enc_input_ids"], batch["enc_attention_mask"])
+    logits = head(pooled)
+    horizon_windows = tuple(sorted({max(1, int(item)) for item in windows if int(item) > 0}))
+    if horizon_windows:
+        expected_dim = int(buckets) * len(horizon_windows)
+        if logits.shape[-1] != expected_dim:
+            raise RuntimeError(
+                f"future sketch head dim {logits.shape[-1]} does not match "
+                f"buckets*windows {expected_dim}"
+            )
+        logits_by_window = logits.reshape(labels.shape[0], len(horizon_windows), int(buckets))
+    else:
+        horizon_windows = (labels.shape[1],)
+        logits_by_window = logits.reshape(labels.shape[0], 1, int(buckets))
+
+    per_window_losses: list[torch.Tensor] = []
+    per_window_valid: list[torch.Tensor] = []
+    bucket_ids_all = labels.clamp_min(0).remainder(int(buckets)).to(device=logits.device, dtype=torch.long)
+    values_all = (info_weights * valid.to(dtype=info_weights.dtype)).to(device=logits.device, dtype=logits.dtype)
+    for window_index, window in enumerate(horizon_windows):
+        window_len = min(int(window), labels.shape[1])
+        window_valid = valid[:, :window_len]
+        if not bool(window_valid.any().item()):
+            continue
+        targets = torch.zeros((labels.shape[0], int(buckets)), device=logits.device, dtype=logits.dtype)
+        bucket_ids = bucket_ids_all[:, :window_len]
+        values = values_all[:, :window_len]
+        targets.scatter_add_(1, bucket_ids, values)
+        if int(topk) > 0 and int(topk) < int(buckets):
+            keep = min(int(topk), int(buckets))
+            top_values, top_indices = targets.topk(k=keep, dim=1)
+            sparse = torch.zeros_like(targets)
+            sparse.scatter_(1, top_indices, top_values)
+            targets = sparse
+        row_sums = targets.sum(dim=1, keepdim=True)
+        has_target = row_sums.squeeze(1) > 0
+        if not bool(has_target.any().item()):
+            continue
+        targets = targets / row_sums.clamp_min(1e-6)
+        log_probs = F.log_softmax(logits_by_window[:, window_index, :], dim=-1)
+        per_window_losses.append(-(targets * log_probs).sum(dim=1))
+        per_window_valid.append(has_target)
+    if not per_window_losses:
+        return next(model.parameters()).new_tensor(0.0)
+    stacked_losses = torch.stack(per_window_losses, dim=1)
+    stacked_valid = torch.stack(per_window_valid, dim=1).to(device=logits.device, dtype=logits.dtype)
+    per_example = (stacked_losses * stacked_valid).sum(dim=1) / stacked_valid.sum(dim=1).clamp_min(1.0)
+    has_target = stacked_valid.any(dim=1)
+    weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    weights = weights * has_target.to(dtype=weights.dtype)
+    return (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _state_sketch_aux_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    buckets: int,
+    topk: int,
+    min_token_weight: float,
+) -> torch.Tensor:
+    head = getattr(model, "state_sketch_aux_head", None)
+    if head is None or int(buckets) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    state_ids = batch.get("state_target_ids")
+    state_mask = batch.get("state_target_attention_mask")
+    state_weights = batch.get("state_target_token_weights")
+    if state_ids is None or state_mask is None or state_weights is None:
+        return next(model.parameters()).new_tensor(0.0)
+    info_weights = state_weights.to(device=state_ids.device, dtype=torch.float32)
+    valid = (
+        state_mask.to(device=state_ids.device, dtype=torch.bool)
+        & (state_ids > 3)
+        & (info_weights >= float(min_token_weight))
+    )
+    if not bool(valid.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    pooled = _pooled_controller_state(model, batch["enc_input_ids"], batch["enc_attention_mask"])
+    logits = head(pooled)
+    targets = torch.zeros((state_ids.shape[0], int(buckets)), device=logits.device, dtype=logits.dtype)
+    bucket_ids = state_ids.clamp_min(0).remainder(int(buckets)).to(device=logits.device, dtype=torch.long)
+    valid_on_device = valid.to(device=logits.device)
+    values = (info_weights * valid.to(dtype=info_weights.dtype)).to(device=logits.device, dtype=logits.dtype)
+    targets.scatter_add_(1, bucket_ids, values)
+    if int(topk) > 0 and int(topk) < int(buckets):
+        keep = min(int(topk), int(buckets))
+        top_values, top_indices = targets.topk(k=keep, dim=1)
+        sparse = torch.zeros_like(targets)
+        sparse.scatter_(1, top_indices, top_values)
+        targets = sparse
+    row_sums = targets.sum(dim=1, keepdim=True)
+    has_target = row_sums.squeeze(1) > 0
+    if not bool(has_target.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    targets = targets / row_sums.clamp_min(1e-6)
+    log_probs = F.log_softmax(logits, dim=-1)
+    per_example = -(targets * log_probs).sum(dim=1)
+    weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    weights = weights * has_target.to(dtype=weights.dtype)
+    return (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _target_sketch_aux_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    buckets: int,
+    topk: int,
+    min_token_weight: float,
+) -> torch.Tensor:
+    head = getattr(model, "target_sketch_aux_head", None)
+    if head is None or int(buckets) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch["labels"]
+    token_weights = batch.get("label_token_weights")
+    if token_weights is None:
+        return next(model.parameters()).new_tensor(0.0)
+    info_weights = token_weights.to(device=labels.device, dtype=torch.float32)
+    valid = (labels >= 0) & (labels > 3) & (info_weights >= float(min_token_weight))
+    if not bool(valid.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    pooled = _pooled_controller_state(model, batch["enc_input_ids"], batch["enc_attention_mask"])
+    logits = head(pooled)
+    targets = torch.zeros((labels.shape[0], int(buckets)), device=logits.device, dtype=logits.dtype)
+    bucket_ids = labels.clamp_min(0).remainder(int(buckets)).to(device=logits.device, dtype=torch.long)
+    values = (info_weights * valid.to(dtype=info_weights.dtype)).to(device=logits.device, dtype=logits.dtype)
+    targets.scatter_add_(1, bucket_ids, values)
+    if int(topk) > 0 and int(topk) < int(buckets):
+        keep = min(int(topk), int(buckets))
+        top_values, top_indices = targets.topk(k=keep, dim=1)
+        sparse = torch.zeros_like(targets)
+        sparse.scatter_(1, top_indices, top_values)
+        targets = sparse
+    row_sums = targets.sum(dim=1, keepdim=True)
+    has_target = row_sums.squeeze(1) > 0
+    if not bool(has_target.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    targets = targets / row_sums.clamp_min(1e-6)
+    log_probs = F.log_softmax(logits, dim=-1)
+    per_example = -(targets * log_probs).sum(dim=1)
+    weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    weights = weights * has_target.to(dtype=weights.dtype)
+    return (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _decoder_future_sketch_aux_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    buckets: int,
+    min_token_weight: float,
+    topk: int,
+    windows: tuple[int, ...],
+) -> torch.Tensor:
+    head = getattr(model, "decoder_future_sketch_aux_head", None)
+    if head is None or int(buckets) <= 0:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch["labels"]
+    token_weights = batch.get("label_token_weights")
+    if token_weights is None:
+        return next(model.parameters()).new_tensor(0.0)
+    horizon_windows = tuple(sorted({max(1, int(item)) for item in windows if int(item) > 0}))
+    if not horizon_windows:
+        horizon_windows = (8, 32)
+    info_weights = token_weights.to(device=labels.device, dtype=torch.float32)
+    valid_future = (labels >= 0) & (labels > 3) & (info_weights >= float(min_token_weight))
+    if not bool(valid_future.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    memory = model.encode(batch["enc_input_ids"], batch["enc_attention_mask"])
+    hidden = model.decode(
+        batch["dec_input_ids"],
+        memory,
+        None,
+        batch["enc_attention_mask"],
+        None,
+    ).float()
+    logits = head(hidden)
+    expected_dim = int(buckets) * len(horizon_windows)
+    if logits.shape[-1] != expected_dim:
+        raise RuntimeError(
+            f"decoder future sketch head dim {logits.shape[-1]} does not match "
+            f"buckets*windows {expected_dim}"
+        )
+    logits_by_window = logits.reshape(labels.shape[0], labels.shape[1], len(horizon_windows), int(buckets))
+    bucket_ids_all = labels.clamp_min(0).remainder(int(buckets)).to(device=logits.device, dtype=torch.long)
+    values_all = (info_weights * valid_future.to(dtype=info_weights.dtype)).to(
+        device=logits.device,
+        dtype=logits.dtype,
+    )
+
+    per_window_losses: list[torch.Tensor] = []
+    per_window_valid: list[torch.Tensor] = []
+    batch_size, seq_len = labels.shape
+    for window_index, window in enumerate(horizon_windows):
+        window = min(int(window), max(1, seq_len - 1))
+        targets = torch.zeros((batch_size, seq_len, int(buckets)), device=logits.device, dtype=logits.dtype)
+        for offset in range(1, window + 1):
+            if offset >= seq_len:
+                break
+            target_slice = targets[:, :-offset, :]
+            ids = bucket_ids_all[:, offset:]
+            values = values_all[:, offset:]
+            target_slice.scatter_add_(2, ids.unsqueeze(-1), values.unsqueeze(-1))
+        if int(topk) > 0 and int(topk) < int(buckets):
+            keep = min(int(topk), int(buckets))
+            flat_targets = targets.reshape(-1, int(buckets))
+            top_values, top_indices = flat_targets.topk(k=keep, dim=1)
+            sparse = torch.zeros_like(flat_targets)
+            sparse.scatter_(1, top_indices, top_values)
+            targets = sparse.reshape_as(targets)
+        row_sums = targets.sum(dim=-1, keepdim=True)
+        has_target = row_sums.squeeze(-1) > 0
+        if not bool(has_target.any().item()):
+            continue
+        targets = targets / row_sums.clamp_min(1e-6)
+        log_probs = F.log_softmax(logits_by_window[:, :, window_index, :], dim=-1)
+        per_window_losses.append(-(targets * log_probs).sum(dim=-1))
+        per_window_valid.append(has_target)
+    if not per_window_losses:
+        return next(model.parameters()).new_tensor(0.0)
+    stacked_losses = torch.stack(per_window_losses, dim=2)
+    stacked_valid = torch.stack(per_window_valid, dim=2).to(device=logits.device, dtype=logits.dtype)
+    per_token = (stacked_losses * stacked_valid).sum(dim=2) / stacked_valid.sum(dim=2).clamp_min(1.0)
+    token_mask = stacked_valid.any(dim=2)
+    per_example = (per_token * token_mask.to(dtype=per_token.dtype)).sum(dim=1) / token_mask.to(dtype=per_token.dtype).sum(dim=1).clamp_min(1.0)
+    has_example = token_mask.any(dim=1)
+    weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    weights = weights * has_example.to(dtype=weights.dtype)
+    return (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
+
+
+def _decoder_source_copy_anchor_loss(
+    logits: torch.Tensor,
+    batch: dict[str, torch.Tensor],
+    *,
+    min_token_weight: float,
+) -> torch.Tensor:
+    labels = batch["labels"].to(device=logits.device, dtype=torch.long)
+    enc_ids = batch["enc_input_ids"].to(device=logits.device, dtype=torch.long)
+    valid_labels = labels >= 0
+    source_present = (labels.unsqueeze(-1) == enc_ids.unsqueeze(1)).any(dim=-1)
+    mask = valid_labels & source_present
+    if "label_token_weights" in batch:
+        token_weights = batch["label_token_weights"].to(device=logits.device, dtype=logits.dtype)
+        mask = mask & (token_weights >= float(min_token_weight))
+    else:
+        token_weights = mask.to(dtype=logits.dtype)
+    if int(mask.sum().detach().cpu().item()) <= 0:
+        return logits.new_tensor(0.0)
+    token_losses = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]),
+        labels.reshape(-1),
+        ignore_index=-100,
+        reduction="none",
+    ).reshape(labels.shape)
+    weights = token_weights * mask.to(dtype=token_weights.dtype)
+    per_example = (token_losses * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
+    example_weights = batch["loss_weight"].to(device=logits.device, dtype=per_example.dtype).clamp_min(0.0)
+    active = weights.sum(dim=1) > 0
+    example_weights = example_weights * active.to(dtype=example_weights.dtype)
+    return (per_example * example_weights).sum() / example_weights.sum().clamp_min(1e-6)
+
+
+def _decoder_multi_token_ce_loss(
+    logits: torch.Tensor,
+    batch: dict[str, torch.Tensor],
+    *,
+    horizons: tuple[int, ...],
+    min_token_weight: float,
+) -> torch.Tensor:
+    labels = batch["labels"].to(device=logits.device, dtype=torch.long)
+    horizon_values = tuple(sorted({int(item) for item in horizons if int(item) > 1}))
+    if not horizon_values:
+        return logits.new_tensor(0.0)
+    token_weights = batch.get("label_token_weights")
+    if token_weights is not None:
+        token_weights = token_weights.to(device=logits.device, dtype=logits.dtype)
+    else:
+        token_weights = (labels != -100).to(device=logits.device, dtype=logits.dtype)
+    example_weights = batch["loss_weight"].to(device=logits.device, dtype=logits.dtype).clamp_min(0.0)
+    horizon_losses: list[torch.Tensor] = []
+    horizon_weights: list[float] = []
+    seq_len = int(labels.shape[1])
+    for horizon in horizon_values:
+        if horizon >= seq_len:
+            continue
+        source_logits = logits[:, :-horizon, :].contiguous()
+        target_labels = labels[:, horizon:].contiguous()
+        target_weights = token_weights[:, horizon:].contiguous()
+        mask = target_labels != -100
+        if float(min_token_weight) > 0.0:
+            mask = mask & (target_weights >= float(min_token_weight))
+        if int(mask.sum().detach().cpu().item()) <= 0:
+            continue
+        token_losses = F.cross_entropy(
+            source_logits.reshape(-1, source_logits.shape[-1]),
+            target_labels.reshape(-1),
+            ignore_index=-100,
+            reduction="none",
+        ).reshape(target_labels.shape)
+        weights = target_weights * mask.to(dtype=target_weights.dtype)
+        per_example = (token_losses * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
+        active = weights.sum(dim=1) > 0
+        weighted = (per_example * example_weights * active.to(dtype=example_weights.dtype)).sum()
+        denom = (example_weights * active.to(dtype=example_weights.dtype)).sum().clamp_min(1e-6)
+        horizon_losses.append(weighted / denom)
+        horizon_weights.append(float(horizon) ** -0.5)
+    if not horizon_losses:
+        return logits.new_tensor(0.0)
+    weight_tensor = logits.new_tensor(horizon_weights)
+    stacked = torch.stack(horizon_losses)
+    return (stacked * weight_tensor).sum() / weight_tensor.sum().clamp_min(1e-6)
+
+
+def _decoder_drift_alignment_loss(
+    model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+    *,
+    min_token_weight: float,
+    contrastive_temperature: float,
+) -> torch.Tensor:
+    state_ids = batch.get("state_target_ids")
+    state_mask = batch.get("state_target_attention_mask")
+    state_weights = batch.get("state_target_token_weights")
+    if state_ids is None or state_mask is None or state_weights is None:
+        return next(model.parameters()).new_tensor(0.0)
+    labels = batch["labels"]
+    label_weights = batch.get("label_token_weights")
+    if label_weights is None:
+        label_weights = (labels != -100).to(device=labels.device, dtype=torch.float32)
+    info_weights = label_weights.to(device=labels.device, dtype=torch.float32)
+    dec_mask = (labels != -100) & (info_weights >= float(min_token_weight))
+    if not bool(dec_mask.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+    state_info_weights = state_weights.to(device=state_ids.device, dtype=torch.float32)
+    target_mask = (
+        state_mask.to(device=state_ids.device, dtype=torch.bool)
+        & (state_ids > 3)
+        & (state_info_weights >= float(min_token_weight))
+    )
+    has_decoder = dec_mask.any(dim=1)
+    has_target = target_mask.any(dim=1)
+    active = has_decoder & has_target
+    if not bool(active.any().item()):
+        return next(model.parameters()).new_tensor(0.0)
+
+    memory = model.encode(batch["enc_input_ids"], batch["enc_attention_mask"])
+    decoder_hidden = model.decode(
+        batch["dec_input_ids"],
+        memory,
+        None,
+        batch["enc_attention_mask"],
+        None,
+    ).float()
+    dec_values = (info_weights * dec_mask.to(dtype=info_weights.dtype)).to(
+        device=decoder_hidden.device,
+        dtype=decoder_hidden.dtype,
+    )
+    decoder_pooled = (decoder_hidden * dec_values.unsqueeze(-1)).sum(dim=1)
+    decoder_pooled = decoder_pooled / dec_values.sum(dim=1, keepdim=True).clamp_min(1.0)
+
+    with torch.no_grad():
+        target_hidden = model.encode(state_ids, state_mask).float()
+        target_values = (state_info_weights * target_mask.to(dtype=state_info_weights.dtype)).to(
+            device=target_hidden.device,
+            dtype=target_hidden.dtype,
+        )
+        target_pooled = (target_hidden * target_values.unsqueeze(-1)).sum(dim=1)
+        target_pooled = target_pooled / target_values.sum(dim=1, keepdim=True).clamp_min(1.0)
+
+    decoder_repr = F.normalize(decoder_pooled[active], dim=-1)
+    target_repr = F.normalize(target_pooled[active].to(device=decoder_repr.device), dim=-1)
+    cosine_losses = 1.0 - (decoder_repr * target_repr).sum(dim=-1)
+    example_weights = batch["loss_weight"].to(device=decoder_repr.device, dtype=decoder_repr.dtype).clamp_min(0.0)
+    active_weights = example_weights[active]
+    cosine_loss = (cosine_losses * active_weights).sum() / active_weights.sum().clamp_min(1e-6)
+
+    temperature = float(contrastive_temperature)
+    if temperature <= 0.0 or int(decoder_repr.shape[0]) < 2:
+        return cosine_loss
+    logits = decoder_repr @ target_repr.transpose(0, 1)
+    logits = logits / max(temperature, 1e-4)
+    targets = torch.arange(logits.shape[0], device=logits.device)
+    contrastive = 0.5 * (F.cross_entropy(logits, targets) + F.cross_entropy(logits.transpose(0, 1), targets))
+    return 0.5 * cosine_loss + 0.5 * contrastive
+
+
+def _scheduled_aux_weight(
+    base_weight: float,
+    *,
+    step: int,
+    total_steps: int,
+    schedule: str,
+) -> float:
+    base = float(base_weight)
+    if base <= 0.0:
+        return 0.0
+    name = str(schedule or "constant").strip().lower()
+    if name == "constant":
+        return base
+    if name != "warmup_cosine_decay":
+        raise ValueError(f"unknown auxiliary weight schedule: {schedule}")
+    total = max(1, int(total_steps))
+    progress = min(1.0, max(0.0, float(step) / float(total)))
+    warmup_end = 0.20
+    decay_start = 0.70
+    final_ratio = 0.20
+    if progress < warmup_end:
+        return base * (progress / warmup_end)
+    if progress <= decay_start:
+        return base
+    decay_progress = (progress - decay_start) / max(1e-6, 1.0 - decay_start)
+    cosine = 0.5 * (1.0 + torch.cos(torch.tensor(decay_progress * 3.141592653589793)).item())
+    return base * (final_ratio + (1.0 - final_ratio) * cosine)
+
+
 def _weighted_loss(
     model: torch.nn.Module,
     batch: dict[str, torch.Tensor],
     *,
     decoder_loss_weight: float = 1.0,
+    decoder_eos_loss_weight: float = 0.0,
+    decoder_json_structure_loss_weight: float = 0.0,
+    decoder_token_weight_alpha: float = 0.0,
+    decoder_multi_token_ce_weight: float = 0.0,
+    decoder_multi_token_horizons: tuple[int, ...] = (),
+    decoder_multi_token_min_token_weight: float = 0.0,
+    decoder_seq_eos_token_weight: float = 1.0,
+    decoder_stop_token_loss_weight: float = 1.0,
+    decoder_eos_token_id: int = 2,
+    decoder_stop_token_ids: tuple[int, ...] = (),
+    decoder_json_structure_token_ids: tuple[int, ...] = (),
+    decoder_control_token_suppression_weight: float = 0.0,
+    decoder_control_token_ids: tuple[int, ...] = (),
+    negative_decoder_loss_weight: float = 0.0,
+    negative_divergent_decoder_loss_weight: float = 0.0,
+    negative_first_token_margin_weight: float = 0.0,
+    negative_first_token_margin: float = 1.0,
     retrieval_contrastive_weight: float = 0.0,
     retrieval_temperature: float = 0.05,
     retrieval_ternary_aware_weight: float = 0.0,
@@ -1172,10 +2040,42 @@ def _weighted_loss(
     intent_contrastive_weight: float = 0.0,
     intent_contrastive_temperature: float = 0.10,
     encoder_rep_distill_weight: float = 0.0,
+    future_bow_aux_weight: float = 0.0,
+    future_bow_buckets: int = 512,
+    future_sketch_aux_weight: float = 0.0,
+    future_sketch_buckets: int = 256,
+    future_sketch_min_token_weight: float = 1.2,
+    future_sketch_topk: int = 8,
+    future_sketch_windows: tuple[int, ...] = (),
+    state_sketch_aux_weight: float = 0.0,
+    state_sketch_buckets: int = 256,
+    state_sketch_topk: int = 12,
+    state_sketch_min_token_weight: float = 1.2,
+    target_sketch_aux_weight: float = 0.0,
+    target_sketch_buckets: int = 256,
+    target_sketch_topk: int = 12,
+    target_sketch_min_token_weight: float = 1.2,
+    decoder_future_sketch_aux_weight: float = 0.0,
+    decoder_future_sketch_buckets: int = 256,
+    decoder_future_sketch_min_token_weight: float = 1.2,
+    decoder_future_sketch_topk: int = 8,
+    decoder_future_sketch_windows: tuple[int, ...] = (),
+    decoder_drift_alignment_weight: float = 0.0,
+    decoder_drift_alignment_min_token_weight: float = 1.2,
+    decoder_drift_alignment_temperature: float = 0.0,
+    decoder_source_copy_anchor_weight: float = 0.0,
+    decoder_source_copy_min_token_weight: float = 1.2,
+    aux_grad_budget: float = 0.0,
 ) -> torch.Tensor:
     logits = None
-    needs_decoder_logits = float(decoder_loss_weight) > 0.0 or (
+    needs_decoder_logits = (
+        float(decoder_loss_weight) > 0.0
+        or float(decoder_multi_token_ce_weight) > 0.0
+        or float(decoder_source_copy_anchor_weight) > 0.0
+        or float(negative_first_token_margin_weight) > 0.0
+        or (
         teacher_model is not None and float(teacher_distill_weight) > 0.0
+    )
     )
     if needs_decoder_logits:
         logits = model(
@@ -1193,12 +2093,175 @@ def _weighted_loss(
             reduction="none",
         )
         token_losses = token_losses.reshape(batch["labels"].shape)
-        valid_tokens = (batch["labels"] != -100).to(dtype=token_losses.dtype)
-        per_example = (token_losses * valid_tokens).sum(dim=1) / valid_tokens.sum(dim=1).clamp_min(1.0)
+        token_weights = (batch["labels"] != -100).to(device=token_losses.device, dtype=token_losses.dtype)
+        if float(decoder_token_weight_alpha) > 0.0 and "label_token_weights" in batch:
+            token_weights = batch["label_token_weights"].to(device=token_losses.device, dtype=token_losses.dtype)
+            token_weights = 1.0 + float(decoder_token_weight_alpha) * (token_weights - 1.0)
+            token_weights = token_weights.clamp_min(0.0)
+        if float(decoder_seq_eos_token_weight) != 1.0:
+            eos_mask = batch["labels"] == int(decoder_eos_token_id)
+            token_weights = torch.where(
+                eos_mask,
+                token_weights * float(decoder_seq_eos_token_weight),
+                token_weights,
+            )
+        if float(decoder_stop_token_loss_weight) != 1.0 and decoder_stop_token_ids:
+            stop_ids = torch.tensor(
+                [int(token_id) for token_id in decoder_stop_token_ids],
+                device=batch["labels"].device,
+                dtype=batch["labels"].dtype,
+            )
+            stop_mask = torch.isin(batch["labels"], stop_ids)
+            token_weights = torch.where(
+                stop_mask,
+                token_weights * float(decoder_stop_token_loss_weight),
+                token_weights,
+            )
+        token_weights = token_weights * (batch["labels"] != -100).to(dtype=token_weights.dtype)
+        per_example = (token_losses * token_weights).sum(dim=1) / token_weights.sum(dim=1).clamp_min(1.0)
         weights = batch["loss_weight"].to(dtype=per_example.dtype).clamp_min(0.0)
         seq_loss = (per_example * weights).sum() / weights.sum().clamp_min(1e-6)
     else:
         seq_loss = next(model.parameters()).new_tensor(0.0)
+    multi_token_ce_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_multi_token_ce_weight) > 0.0:
+        assert logits is not None
+        multi_token_ce_loss = _decoder_multi_token_ce_loss(
+            logits,
+            batch,
+            horizons=tuple(decoder_multi_token_horizons),
+            min_token_weight=float(decoder_multi_token_min_token_weight),
+        )
+    source_copy_anchor_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_source_copy_anchor_weight) > 0.0:
+        assert logits is not None
+        source_copy_anchor_loss = _decoder_source_copy_anchor_loss(
+            logits,
+            batch,
+            min_token_weight=float(decoder_source_copy_min_token_weight),
+        )
+    eos_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_eos_loss_weight) > 0.0:
+        assert logits is not None
+        labels = batch["labels"]
+        eos_mask = labels == int(decoder_eos_token_id)
+        if bool(eos_mask.any().item()):
+            token_losses = F.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]),
+                labels.reshape(-1),
+                ignore_index=-100,
+                reduction="none",
+            ).reshape(labels.shape)
+            per_example_eos = (token_losses * eos_mask.to(dtype=token_losses.dtype)).sum(dim=1) / eos_mask.to(dtype=token_losses.dtype).sum(dim=1).clamp_min(1.0)
+            has_eos = eos_mask.any(dim=1)
+            weights = batch["loss_weight"].to(device=per_example_eos.device, dtype=per_example_eos.dtype).clamp_min(0.0)
+            eos_loss = (per_example_eos * weights * has_eos.to(dtype=weights.dtype)).sum() / (weights * has_eos.to(dtype=weights.dtype)).sum().clamp_min(1e-6)
+    json_structure_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_json_structure_loss_weight) > 0.0 and decoder_json_structure_token_ids:
+        assert logits is not None
+        labels = batch["labels"]
+        structural_ids = torch.tensor(
+            [int(token_id) for token_id in decoder_json_structure_token_ids],
+            device=labels.device,
+            dtype=labels.dtype,
+        )
+        structure_mask = torch.isin(labels, structural_ids)
+        if bool(structure_mask.any().item()):
+            token_losses = F.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]),
+                labels.reshape(-1),
+                ignore_index=-100,
+                reduction="none",
+            ).reshape(labels.shape)
+            per_example_structure = (token_losses * structure_mask.to(dtype=token_losses.dtype)).sum(dim=1) / structure_mask.to(dtype=token_losses.dtype).sum(dim=1).clamp_min(1.0)
+            has_structure = structure_mask.any(dim=1)
+            weights = batch["loss_weight"].to(device=per_example_structure.device, dtype=per_example_structure.dtype).clamp_min(0.0)
+            json_structure_loss = (per_example_structure * weights * has_structure.to(dtype=weights.dtype)).sum() / (weights * has_structure.to(dtype=weights.dtype)).sum().clamp_min(1e-6)
+    control_suppression_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_control_token_suppression_weight) > 0.0 and decoder_control_token_ids:
+        assert logits is not None
+        labels = batch["labels"]
+        control_ids = torch.tensor(
+            [int(token_id) for token_id in decoder_control_token_ids],
+            device=labels.device,
+            dtype=torch.long,
+        )
+        valid_content = (labels != -100) & ~torch.isin(labels.to(dtype=torch.long), control_ids)
+        if bool(valid_content.any().item()):
+            probs = torch.softmax(logits.float(), dim=-1)
+            control_mass = probs.index_select(dim=-1, index=control_ids).sum(dim=-1).clamp(max=1.0 - 1e-5)
+            token_losses = -torch.log1p(-control_mass)
+            token_mask = valid_content.to(device=token_losses.device, dtype=token_losses.dtype)
+            per_example_control = (token_losses * token_mask).sum(dim=1) / token_mask.sum(dim=1).clamp_min(1.0)
+            has_content = valid_content.any(dim=1)
+            weights = batch["loss_weight"].to(device=per_example_control.device, dtype=per_example_control.dtype).clamp_min(0.0)
+            control_suppression_loss = (
+                per_example_control * weights * has_content.to(dtype=weights.dtype)
+            ).sum() / (weights * has_content.to(dtype=weights.dtype)).sum().clamp_min(1e-6)
+    negative_decoder_loss = next(model.parameters()).new_tensor(0.0)
+    negative_divergent_decoder_loss = next(model.parameters()).new_tensor(0.0)
+    negative_first_token_margin_loss = next(model.parameters()).new_tensor(0.0)
+    if (
+        (float(negative_decoder_loss_weight) > 0.0 or float(negative_divergent_decoder_loss_weight) > 0.0)
+        and "negative_labels" in batch
+    ):
+        negative_labels = batch["negative_labels"]
+        negative_valid = negative_labels != -100
+        negative_weights = batch.get("negative_loss_weight")
+        if negative_weights is not None and negative_valid.any() and bool((negative_weights > 0).any().item()):
+            negative_logits = model(
+                batch["enc_input_ids"],
+                batch["negative_dec_input_ids"],
+                batch["enc_attention_mask"],
+                None,
+            )
+            negative_probs = torch.softmax(negative_logits.float(), dim=-1)
+            safe_labels = negative_labels.clamp_min(0)
+            token_probs = negative_probs.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
+            token_losses = -torch.log1p(-token_probs.clamp(max=1.0 - 1e-5))
+            if float(negative_decoder_loss_weight) > 0.0:
+                full_losses = token_losses * negative_valid.to(dtype=token_losses.dtype)
+                per_example_negative = full_losses.sum(dim=1) / negative_valid.to(dtype=token_losses.dtype).sum(dim=1).clamp_min(1.0)
+                weights = negative_weights.to(device=per_example_negative.device, dtype=per_example_negative.dtype).clamp_min(0.0)
+                negative_decoder_loss = (per_example_negative * weights).sum() / weights.sum().clamp_min(1e-6)
+            if float(negative_divergent_decoder_loss_weight) > 0.0:
+                labels = batch["labels"]
+                divergent_mask = negative_valid & (labels != -100) & (negative_labels != labels)
+                if bool(divergent_mask.any().item()):
+                    divergent_losses = token_losses * divergent_mask.to(dtype=token_losses.dtype)
+                    divergent_counts = divergent_mask.to(dtype=token_losses.dtype).sum(dim=1)
+                    per_example_divergent = divergent_losses.sum(dim=1) / divergent_counts.clamp_min(1.0)
+                    has_divergent = divergent_counts > 0
+                    weights = negative_weights.to(device=per_example_divergent.device, dtype=per_example_divergent.dtype).clamp_min(0.0)
+                    negative_divergent_decoder_loss = (
+                        per_example_divergent * weights * has_divergent.to(dtype=weights.dtype)
+                    ).sum() / (weights * has_divergent.to(dtype=weights.dtype)).sum().clamp_min(1e-6)
+    if float(negative_first_token_margin_weight) > 0.0 and "negative_labels" in batch:
+        assert logits is not None
+        labels = batch["labels"]
+        negative_labels = batch["negative_labels"]
+        negative_weights = batch.get("negative_loss_weight")
+        if negative_weights is not None:
+            valid_labels = (labels != -100) & (negative_labels != -100)
+            divergent = valid_labels & (labels != negative_labels)
+            has_divergence = divergent.any(dim=1)
+            first_divergence_positions = divergent.float().argmax(dim=1).long()
+            valid = has_divergence & (negative_weights > 0)
+            if bool(valid.any().item()):
+                batch_positions = torch.arange(labels.shape[0], device=labels.device)
+                target_positions = first_divergence_positions.to(device=labels.device)
+                positive_ids = labels[batch_positions, target_positions].clamp_min(0)
+                negative_ids = negative_labels[batch_positions, target_positions].clamp_min(0)
+                step_logits = logits[batch_positions, target_positions, :].float()
+                positive_logits = step_logits.gather(-1, positive_ids.unsqueeze(-1)).squeeze(-1)
+                negative_logits_for_positive_prefix = step_logits.gather(-1, negative_ids.unsqueeze(-1)).squeeze(-1)
+                margin_losses = F.relu(
+                    float(negative_first_token_margin)
+                    - (positive_logits - negative_logits_for_positive_prefix)
+                )
+                weights = negative_weights.to(device=margin_losses.device, dtype=margin_losses.dtype).clamp_min(0.0)
+                margin_losses = margin_losses * valid.to(dtype=margin_losses.dtype)
+                negative_first_token_margin_loss = (margin_losses * weights).sum() / (weights * valid.to(dtype=weights.dtype)).sum().clamp_min(1e-6)
     distill_loss = next(model.parameters()).new_tensor(0.0)
     if teacher_model is not None and float(teacher_distill_weight) > 0.0:
         assert logits is not None
@@ -1287,8 +2350,107 @@ def _weighted_loss(
             batch,
             temperature=float(intent_contrastive_temperature),
         )
+    future_bow_loss = next(model.parameters()).new_tensor(0.0)
+    if float(future_bow_aux_weight) > 0.0:
+        future_bow_loss = _future_bow_aux_loss(model, batch, buckets=int(future_bow_buckets))
+    future_sketch_loss = next(model.parameters()).new_tensor(0.0)
+    if float(future_sketch_aux_weight) > 0.0:
+        future_sketch_loss = _future_sketch_aux_loss(
+            model,
+            batch,
+            buckets=int(future_sketch_buckets),
+            min_token_weight=float(future_sketch_min_token_weight),
+            topk=int(future_sketch_topk),
+            windows=tuple(future_sketch_windows),
+        )
+    future_sketch_weight = float(future_sketch_aux_weight)
+    if future_sketch_weight > 0.0 and float(aux_grad_budget) > 0.0:
+        max_contribution = float(aux_grad_budget) * float(seq_loss.detach().clamp_min(1e-6).cpu().item())
+        raw_contribution = future_sketch_weight * float(future_sketch_loss.detach().clamp_min(1e-6).cpu().item())
+        if raw_contribution > max_contribution:
+            future_sketch_weight *= max_contribution / raw_contribution
+    state_sketch_loss = next(model.parameters()).new_tensor(0.0)
+    if float(state_sketch_aux_weight) > 0.0:
+        state_sketch_loss = _state_sketch_aux_loss(
+            model,
+            batch,
+            buckets=int(state_sketch_buckets),
+            topk=int(state_sketch_topk),
+            min_token_weight=float(state_sketch_min_token_weight),
+        )
+    state_sketch_weight = float(state_sketch_aux_weight)
+    if state_sketch_weight > 0.0 and float(aux_grad_budget) > 0.0:
+        max_contribution = float(aux_grad_budget) * float(seq_loss.detach().clamp_min(1e-6).cpu().item())
+        raw_contribution = state_sketch_weight * float(state_sketch_loss.detach().clamp_min(1e-6).cpu().item())
+        if raw_contribution > max_contribution:
+            state_sketch_weight *= max_contribution / raw_contribution
+    target_sketch_loss = next(model.parameters()).new_tensor(0.0)
+    if float(target_sketch_aux_weight) > 0.0:
+        target_sketch_loss = _target_sketch_aux_loss(
+            model,
+            batch,
+            buckets=int(target_sketch_buckets),
+            topk=int(target_sketch_topk),
+            min_token_weight=float(target_sketch_min_token_weight),
+        )
+    target_sketch_weight = float(target_sketch_aux_weight)
+    if target_sketch_weight > 0.0 and float(aux_grad_budget) > 0.0:
+        reference_loss = seq_loss
+        if float(decoder_loss_weight) <= 0.0:
+            reference_loss = (
+                float(policy_head_loss_weight) * policy_loss
+                + float(intent_head_loss_weight) * intent_head_loss
+                + float(intent_contrastive_weight) * intent_loss
+                + float(retrieval_contrastive_weight) * retrieval_loss
+            )
+        max_contribution = float(aux_grad_budget) * float(reference_loss.detach().clamp_min(1e-6).cpu().item())
+        raw_contribution = target_sketch_weight * float(target_sketch_loss.detach().clamp_min(1e-6).cpu().item())
+        if raw_contribution > max_contribution:
+            target_sketch_weight *= max_contribution / raw_contribution
+    decoder_future_sketch_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_future_sketch_aux_weight) > 0.0:
+        decoder_future_sketch_loss = _decoder_future_sketch_aux_loss(
+            model,
+            batch,
+            buckets=int(decoder_future_sketch_buckets),
+            min_token_weight=float(decoder_future_sketch_min_token_weight),
+            topk=int(decoder_future_sketch_topk),
+            windows=tuple(decoder_future_sketch_windows),
+        )
+    decoder_future_sketch_weight = float(decoder_future_sketch_aux_weight)
+    if decoder_future_sketch_weight > 0.0 and float(aux_grad_budget) > 0.0:
+        max_contribution = float(aux_grad_budget) * float(seq_loss.detach().clamp_min(1e-6).cpu().item())
+        raw_contribution = decoder_future_sketch_weight * float(
+            decoder_future_sketch_loss.detach().clamp_min(1e-6).cpu().item()
+        )
+        if raw_contribution > max_contribution:
+            decoder_future_sketch_weight *= max_contribution / raw_contribution
+    decoder_drift_alignment_loss = next(model.parameters()).new_tensor(0.0)
+    if float(decoder_drift_alignment_weight) > 0.0:
+        decoder_drift_alignment_loss = _decoder_drift_alignment_loss(
+            model,
+            batch,
+            min_token_weight=float(decoder_drift_alignment_min_token_weight),
+            contrastive_temperature=float(decoder_drift_alignment_temperature),
+        )
+    decoder_drift_weight = float(decoder_drift_alignment_weight)
+    if decoder_drift_weight > 0.0 and float(aux_grad_budget) > 0.0:
+        max_contribution = float(aux_grad_budget) * float(seq_loss.detach().clamp_min(1e-6).cpu().item())
+        raw_contribution = decoder_drift_weight * float(
+            decoder_drift_alignment_loss.detach().clamp_min(1e-6).cpu().item()
+        )
+        if raw_contribution > max_contribution:
+            decoder_drift_weight *= max_contribution / raw_contribution
     return (
         float(decoder_loss_weight) * seq_loss
+        + float(decoder_multi_token_ce_weight) * multi_token_ce_loss
+        + float(decoder_source_copy_anchor_weight) * source_copy_anchor_loss
+        + float(decoder_eos_loss_weight) * eos_loss
+        + float(decoder_json_structure_loss_weight) * json_structure_loss
+        + float(decoder_control_token_suppression_weight) * control_suppression_loss
+        + float(negative_decoder_loss_weight) * negative_decoder_loss
+        + float(negative_divergent_decoder_loss_weight) * negative_divergent_decoder_loss
+        + float(negative_first_token_margin_weight) * negative_first_token_margin_loss
         + float(teacher_distill_weight) * distill_loss
         + float(encoder_rep_distill_weight) * encoder_rep_distill_loss
         + float(retrieval_contrastive_weight) * retrieval_loss
@@ -1299,6 +2461,12 @@ def _weighted_loss(
         + float(policy_head_loss_weight) * policy_loss
         + float(intent_head_loss_weight) * intent_head_loss
         + float(intent_contrastive_weight) * intent_loss
+        + float(future_bow_aux_weight) * future_bow_loss
+        + future_sketch_weight * future_sketch_loss
+        + state_sketch_weight * state_sketch_loss
+        + target_sketch_weight * target_sketch_loss
+        + decoder_future_sketch_weight * decoder_future_sketch_loss
+        + decoder_drift_weight * decoder_drift_alignment_loss
     )
 
 
@@ -1310,6 +2478,23 @@ def _evaluate(
     device: torch.device,
     max_batches: int,
     decoder_loss_weight: float = 1.0,
+    decoder_eos_loss_weight: float = 0.0,
+    decoder_json_structure_loss_weight: float = 0.0,
+    decoder_token_weight_alpha: float = 0.0,
+    decoder_multi_token_ce_weight: float = 0.0,
+    decoder_multi_token_horizons: tuple[int, ...] = (),
+    decoder_multi_token_min_token_weight: float = 0.0,
+    decoder_seq_eos_token_weight: float = 1.0,
+    decoder_stop_token_loss_weight: float = 1.0,
+    decoder_eos_token_id: int = 2,
+    decoder_stop_token_ids: tuple[int, ...] = (),
+    decoder_json_structure_token_ids: tuple[int, ...] = (),
+    decoder_control_token_suppression_weight: float = 0.0,
+    decoder_control_token_ids: tuple[int, ...] = (),
+    negative_decoder_loss_weight: float = 0.0,
+    negative_divergent_decoder_loss_weight: float = 0.0,
+    negative_first_token_margin_weight: float = 0.0,
+    negative_first_token_margin: float = 1.0,
     retrieval_contrastive_weight: float = 0.0,
     retrieval_temperature: float = 0.05,
     retrieval_ternary_aware_weight: float = 0.0,
@@ -1326,6 +2511,32 @@ def _evaluate(
     intent_contrastive_weight: float = 0.0,
     intent_contrastive_temperature: float = 0.10,
     encoder_rep_distill_weight: float = 0.0,
+    future_bow_aux_weight: float = 0.0,
+    future_bow_buckets: int = 512,
+    future_sketch_aux_weight: float = 0.0,
+    future_sketch_buckets: int = 256,
+    future_sketch_min_token_weight: float = 1.2,
+    future_sketch_topk: int = 8,
+    future_sketch_windows: tuple[int, ...] = (),
+    state_sketch_aux_weight: float = 0.0,
+    state_sketch_buckets: int = 256,
+    state_sketch_topk: int = 12,
+    state_sketch_min_token_weight: float = 1.2,
+    target_sketch_aux_weight: float = 0.0,
+    target_sketch_buckets: int = 256,
+    target_sketch_topk: int = 12,
+    target_sketch_min_token_weight: float = 1.2,
+    decoder_future_sketch_aux_weight: float = 0.0,
+    decoder_future_sketch_buckets: int = 256,
+    decoder_future_sketch_min_token_weight: float = 1.2,
+    decoder_future_sketch_topk: int = 8,
+    decoder_future_sketch_windows: tuple[int, ...] = (),
+    decoder_drift_alignment_weight: float = 0.0,
+    decoder_drift_alignment_min_token_weight: float = 1.2,
+    decoder_drift_alignment_temperature: float = 0.0,
+    decoder_source_copy_anchor_weight: float = 0.0,
+    decoder_source_copy_min_token_weight: float = 1.2,
+    aux_grad_budget: float = 0.0,
     teacher_model: torch.nn.Module | None = None,
 ) -> dict[str, Any]:
     if len(dataset) <= 0:
@@ -1350,6 +2561,23 @@ def _evaluate(
                 model,
                 batch,
                 decoder_loss_weight=float(decoder_loss_weight),
+                decoder_eos_loss_weight=float(decoder_eos_loss_weight),
+                decoder_json_structure_loss_weight=float(decoder_json_structure_loss_weight),
+                decoder_token_weight_alpha=float(decoder_token_weight_alpha),
+                decoder_multi_token_ce_weight=float(decoder_multi_token_ce_weight),
+                decoder_multi_token_horizons=tuple(decoder_multi_token_horizons),
+                decoder_multi_token_min_token_weight=float(decoder_multi_token_min_token_weight),
+                decoder_seq_eos_token_weight=float(decoder_seq_eos_token_weight),
+                decoder_stop_token_loss_weight=float(decoder_stop_token_loss_weight),
+                decoder_eos_token_id=int(decoder_eos_token_id),
+                decoder_stop_token_ids=tuple(decoder_stop_token_ids),
+                decoder_json_structure_token_ids=tuple(decoder_json_structure_token_ids),
+                decoder_control_token_suppression_weight=float(decoder_control_token_suppression_weight),
+                decoder_control_token_ids=tuple(decoder_control_token_ids),
+                negative_decoder_loss_weight=float(negative_decoder_loss_weight),
+                negative_divergent_decoder_loss_weight=float(negative_divergent_decoder_loss_weight),
+                negative_first_token_margin_weight=float(negative_first_token_margin_weight),
+                negative_first_token_margin=float(negative_first_token_margin),
                 retrieval_contrastive_weight=float(retrieval_contrastive_weight),
                 retrieval_temperature=float(retrieval_temperature),
                 retrieval_ternary_aware_weight=float(retrieval_ternary_aware_weight),
@@ -1366,6 +2594,32 @@ def _evaluate(
                 intent_contrastive_weight=float(intent_contrastive_weight),
                 intent_contrastive_temperature=float(intent_contrastive_temperature),
                 encoder_rep_distill_weight=float(encoder_rep_distill_weight),
+                future_bow_aux_weight=float(future_bow_aux_weight),
+                future_bow_buckets=int(future_bow_buckets),
+                future_sketch_aux_weight=float(future_sketch_aux_weight),
+                future_sketch_buckets=int(future_sketch_buckets),
+                future_sketch_min_token_weight=float(future_sketch_min_token_weight),
+                future_sketch_topk=int(future_sketch_topk),
+                future_sketch_windows=tuple(future_sketch_windows),
+                state_sketch_aux_weight=float(state_sketch_aux_weight),
+                state_sketch_buckets=int(state_sketch_buckets),
+                state_sketch_topk=int(state_sketch_topk),
+                state_sketch_min_token_weight=float(state_sketch_min_token_weight),
+                target_sketch_aux_weight=float(target_sketch_aux_weight),
+                target_sketch_buckets=int(target_sketch_buckets),
+                target_sketch_topk=int(target_sketch_topk),
+                target_sketch_min_token_weight=float(target_sketch_min_token_weight),
+                decoder_future_sketch_aux_weight=float(decoder_future_sketch_aux_weight),
+                decoder_future_sketch_buckets=int(decoder_future_sketch_buckets),
+                decoder_future_sketch_min_token_weight=float(decoder_future_sketch_min_token_weight),
+                decoder_future_sketch_topk=int(decoder_future_sketch_topk),
+                decoder_future_sketch_windows=tuple(decoder_future_sketch_windows),
+                decoder_drift_alignment_weight=float(decoder_drift_alignment_weight),
+                decoder_drift_alignment_min_token_weight=float(decoder_drift_alignment_min_token_weight),
+                decoder_drift_alignment_temperature=float(decoder_drift_alignment_temperature),
+                decoder_source_copy_anchor_weight=float(decoder_source_copy_anchor_weight),
+                decoder_source_copy_min_token_weight=float(decoder_source_copy_min_token_weight),
+                aux_grad_budget=float(aux_grad_budget),
                 teacher_model=teacher_model,
             )
             losses.append(float(loss.detach().cpu().item()))
@@ -1418,6 +2672,92 @@ def _trainable_parameter_count(model: torch.nn.Module) -> int:
     return sum(int(param.numel()) for param in model.parameters() if param.requires_grad)
 
 
+def _trainable_parameters(model: torch.nn.Module) -> list[torch.nn.Parameter]:
+    return [param for param in model.parameters() if param.requires_grad]
+
+
+def _clone_trainable_grads(parameters: list[torch.nn.Parameter]) -> list[torch.Tensor]:
+    return [
+        param.grad.detach().clone() if param.grad is not None else torch.zeros_like(param, memory_format=torch.preserve_format)
+        for param in parameters
+    ]
+
+
+def _grad_dot(left: list[torch.Tensor], right: list[torch.Tensor]) -> torch.Tensor:
+    value = left[0].new_zeros(())
+    for left_tensor, right_tensor in zip(left, right):
+        value = value + (left_tensor.float() * right_tensor.float()).sum()
+    return value
+
+
+def _grad_norm_sq(grad: list[torch.Tensor]) -> torch.Tensor:
+    value = grad[0].new_zeros(())
+    for tensor in grad:
+        value = value + tensor.float().square().sum()
+    return value
+
+
+def _apply_pcgrad_snapshots(
+    parameters: list[torch.nn.Parameter],
+    snapshots: list[list[torch.Tensor]],
+) -> dict[str, float | int]:
+    if not snapshots:
+        return {"pcgrad_snapshots": 0, "pcgrad_conflicts": 0, "pcgrad_min_cosine": 0.0}
+    projected = [[tensor.clone() for tensor in snapshot] for snapshot in snapshots]
+    reference_norms = [_grad_norm_sq(snapshot).clamp_min(1e-12) for snapshot in snapshots]
+    conflicts = 0
+    min_cosine = 1.0
+    for idx, grad in enumerate(projected):
+        for other_idx, other in enumerate(snapshots):
+            if idx == other_idx:
+                continue
+            dot = _grad_dot(grad, other)
+            cosine = float(
+                (dot / (_grad_norm_sq(grad).sqrt() * reference_norms[other_idx].sqrt()).clamp_min(1e-12))
+                .detach()
+                .item()
+            )
+            min_cosine = min(min_cosine, cosine)
+            if dot.item() < 0:
+                conflicts += 1
+                scale = dot / reference_norms[other_idx]
+                for tensor_idx in range(len(grad)):
+                    grad[tensor_idx].sub_(
+                        scale.to(device=grad[tensor_idx].device, dtype=grad[tensor_idx].dtype) * other[tensor_idx]
+                    )
+    for parameter_idx, parameter in enumerate(parameters):
+        merged = projected[0][parameter_idx]
+        for grad in projected[1:]:
+            merged = merged + grad[parameter_idx]
+        parameter.grad = merged.to(device=parameter.device, dtype=parameter.dtype)
+    return {"pcgrad_snapshots": len(snapshots), "pcgrad_conflicts": conflicts, "pcgrad_min_cosine": min_cosine}
+
+
+def _trainable_anchor_parameters(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    anchors: dict[str, torch.Tensor] = {}
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            anchors[name] = param.detach().float().cpu().clone()
+    return anchors
+
+
+def _anchor_weight_loss(model: torch.nn.Module, anchors: dict[str, torch.Tensor]) -> torch.Tensor:
+    if not anchors:
+        return next(model.parameters()).new_tensor(0.0)
+    loss: torch.Tensor | None = None
+    terms = 0
+    for name, param in model.named_parameters():
+        if not param.requires_grad or name not in anchors:
+            continue
+        target = anchors[name].to(device=param.device, dtype=torch.float32)
+        term = F.mse_loss(param.float(), target)
+        loss = term if loss is None else loss + term
+        terms += 1
+    if loss is None:
+        return next(model.parameters()).new_tensor(0.0)
+    return loss / float(max(1, terms))
+
+
 def _freeze_encoder_parameters(model: torch.nn.Module) -> int:
     frozen = 0
     for name, param in model.named_parameters():
@@ -1437,6 +2777,19 @@ def _freeze_token_embedding_parameters(model: torch.nn.Module) -> int:
     seen: set[int] = set()
     for name, param in model.named_parameters():
         if name.startswith("enc_embed.") or name.startswith("dec_embed."):
+            identity = id(param)
+            if identity not in seen:
+                frozen += int(param.numel())
+                seen.add(identity)
+            param.requires_grad_(False)
+    return frozen
+
+
+def _freeze_lm_head_parameters(model: torch.nn.Module) -> int:
+    frozen = 0
+    seen: set[int] = set()
+    for name, param in model.named_parameters():
+        if name.startswith("lm_head."):
             identity = id(param)
             if identity not in seen:
                 frozen += int(param.numel())
@@ -1487,6 +2840,50 @@ def _freeze_trainable_bitnet_linear_weights(model: torch.nn.Module) -> int:
                 module.weight.requires_grad_(False)
                 frozen += int(module.weight.numel())
     return frozen
+
+
+def _freeze_dense_linear_weights(model: torch.nn.Module) -> int:
+    frozen = 0
+    for module in model.modules():
+        if isinstance(module, torch.nn.Linear) and module.weight.requires_grad:
+            module.weight.requires_grad_(False)
+            frozen += int(module.weight.numel())
+    return frozen
+
+
+def _apply_trainable_name_filter(
+    model: torch.nn.Module,
+    include_patterns: str,
+    exclude_patterns: str = "",
+) -> dict[str, Any]:
+    includes = [re.compile(item.strip()) for item in str(include_patterns or "").split(",") if item.strip()]
+    excludes = [re.compile(item.strip()) for item in str(exclude_patterns or "").split(",") if item.strip()]
+    if not includes:
+        return {"enabled": False, "trainable_parameters": int(_trainable_parameter_count(model))}
+
+    trainable_names: list[str] = []
+    frozen = 0
+    trainable = 0
+    for name, param in model.named_parameters():
+        keep = any(pattern.search(name) for pattern in includes)
+        if keep and excludes:
+            keep = not any(pattern.search(name) for pattern in excludes)
+        param.requires_grad_(bool(keep))
+        count = int(param.numel())
+        if keep:
+            trainable += count
+            trainable_names.append(name)
+        else:
+            frozen += count
+    return {
+        "enabled": True,
+        "frozen_parameters": frozen,
+        "include": [pattern.pattern for pattern in includes],
+        "exclude": [pattern.pattern for pattern in excludes],
+        "trainable_parameter_names": trainable_names[:64],
+        "trainable_parameter_name_count": len(trainable_names),
+        "trainable_parameters": trainable,
+    }
 
 
 def _materialize_lazy_modules(model: torch.nn.Module) -> None:
@@ -1558,6 +2955,27 @@ def _tokenizer_token_id(tokenizer: Any | None, token: str) -> int | None:
     return value
 
 
+def _single_token_ids(tokenizer: Any | None, texts: tuple[str, ...]) -> tuple[int, ...]:
+    token_ids: list[int] = []
+    if tokenizer is None:
+        return ()
+    for text in texts:
+        try:
+            encoded = tokenizer(
+                text,
+                max_length=8,
+                padding="max_length",
+                truncation=True,
+                add_special_tokens=False,
+            )
+            ids = [int(token_id) for token_id, mask in zip(encoded.get("input_ids", []), encoded.get("attention_mask", [])) if int(mask) > 0]
+        except Exception:
+            ids = []
+        if len(ids) == 1 and ids[0] >= 0:
+            token_ids.append(ids[0])
+    return tuple(sorted(set(token_ids)))
+
+
 def _initialize_expanded_agentkernel_rows(
     weight: torch.Tensor,
     *,
@@ -1567,7 +2985,24 @@ def _initialize_expanded_agentkernel_rows(
     """Seed newly added structural tokens from existing structural rows."""
     if tokenizer is None:
         return
-    row_sources: dict[str, str] = {"<AK_SOURCE_SLOTS>": "<AK_CONTEXT>"}
+    row_sources: dict[str, str] = {
+        "<AK_SOURCE_SLOTS>": "<AK_CONTEXT>",
+        "<AK_STRUCTURED>": "<AK_JSON>",
+        "<AK_ACTION_RESPOND>": "<AK_RESPOND>",
+        "<AK_ACTION_ASK_USER>": "<AK_ASK_USER>",
+        "<AK_ACTION_EXTENSION_REQUEST>": "<AK_EXTENSION>",
+        "<AK_ACTION_SAVE_MEMORY>": "<AK_SAVE_MEMORY>",
+        "<AK_CONTENT>": "<AK_ANSWER>",
+        "</AK_CONTENT>": "<AK_ANSWER>",
+        "<AK_TASK_TYPE>": "<AK_DECISION>",
+        "<AK_INTENT>": "<AK_DECISION>",
+        "<AK_FIELD>": "<AK_SLOT>",
+        "<AK_FIELD_NAME>": "<AK_SLOT_NAME>",
+        "<AK_FIELD_VALUE>": "<AK_SLOT_VALUE>",
+        "<AK_FIELDS>": "<AK_SLOT>",
+        "<AK_FRESHNESS>": "<AK_SOURCE_TYPE>",
+        "<AK_END>": "</s>",
+    }
     for index in range(1, 25):
         row_sources[f"<AK_COPY_USER_SOURCE_{index}>"] = "<AK_SLOT_VALUE>"
     for token, source in row_sources.items():
@@ -1648,6 +3083,11 @@ def _load_training_checkpoint(
         payload = torch.load(path, map_location=device)
     state = payload["model_state_dict"]
     allowed_new_keys = {"enc_pos_embed.weight"}
+    allowed_new_prefixes = (
+        "agent_controller.",
+        "agent_controller_norm.",
+        "agent_controller_gate",
+    )
     if str(vocab_mismatch).strip().lower() == "expand":
         current = model.state_dict()
         patched: dict[str, torch.Tensor] = {}
@@ -1672,7 +3112,15 @@ def _load_training_checkpoint(
                 f"checkpoint tensor shape mismatch for {key}: checkpoint={tuple(tensor.shape)} target={tuple(target.shape)}"
             )
         missing, unexpected = model.load_state_dict(patched, strict=False)
-        unexpected = list(unexpected)
+        unexpected = [
+            key
+            for key in unexpected
+            if not key.startswith("future_bow_aux_head.")
+            and not key.startswith("future_sketch_aux_head.")
+            and not key.startswith("state_sketch_aux_head.")
+            and not key.startswith("target_sketch_aux_head.")
+            and not key.startswith("decoder_future_sketch_aux_head.")
+        ]
         missing = [
             key
             for key in missing
@@ -1681,6 +3129,7 @@ def _load_training_checkpoint(
             and not key.startswith("retrieval_doc_head.")
             and not key.startswith("agent_policy_heads.")
             and not key.startswith("agent_intent_head.")
+            and not key.startswith(allowed_new_prefixes)
         ]
         if unexpected or missing:
             raise RuntimeError(f"partial checkpoint load mismatch: missing={missing} unexpected={unexpected}")
@@ -1695,8 +3144,17 @@ def _load_training_checkpoint(
             and not key.startswith("retrieval_doc_head.")
             and not key.startswith("agent_policy_heads.")
             and not key.startswith("agent_intent_head.")
+            and not key.startswith(allowed_new_prefixes)
         ]
-        unexpected = list(unexpected)
+        unexpected = [
+            key
+            for key in unexpected
+            if not key.startswith("future_bow_aux_head.")
+            and not key.startswith("future_sketch_aux_head.")
+            and not key.startswith("state_sketch_aux_head.")
+            and not key.startswith("target_sketch_aux_head.")
+            and not key.startswith("decoder_future_sketch_aux_head.")
+        ]
         if missing or unexpected:
             raise RuntimeError(f"checkpoint load mismatch: missing={missing} unexpected={unexpected}")
     if optimizer is not None and "optimizer_state_dict" in payload:
@@ -1738,6 +3196,13 @@ def _save_manifest(
                 "controller_ood_estimation",
                 "controller_verification_need_estimation",
                 "controller_action_validity_estimation",
+            ]
+        )
+    if int(getattr(config, "agent_controller_dim", 0) or 0) > 0:
+        replaces_surfaces.extend(
+            [
+                "controller_latent_state_sidecar",
+                "controller_state_sketch_training",
             ]
         )
     dataset_objective = str(dataset_manifest.get("objective", "")).strip()
@@ -1862,6 +3327,22 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     model_dir = output_dir / "model"
     tokenizer_dir = output_dir / "tokenizer"
     output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_vocab_mismatch = str(args.checkpoint_vocab_mismatch).strip().lower()
+    checkpoint_continuation = bool(
+        str(getattr(args, "init_from_checkpoint", "") or "").strip()
+        or str(getattr(args, "resume_from", "") or "").strip()
+        or bool(getattr(args, "resume_latest", 0))
+    )
+    if (
+        checkpoint_continuation
+        and checkpoint_vocab_mismatch == "expand"
+        and (bool(getattr(args, "freeze_token_embeddings", 0)) or bool(getattr(args, "freeze_lm_head", 0)))
+    ):
+        raise SystemExit(
+            "Refusing checkpoint vocab expansion while token embeddings or lm_head are frozen. "
+            "New token rows need training; use the checkpoint tokenizer via --tokenizer-source-dir, "
+            "or unfreeze embeddings/lm_head for an explicit vocab-expansion run."
+        )
 
     tokenizer = _load_tokenizer(args, dataset_manifest=dataset_manifest)
     vocab_size = int(getattr(tokenizer, "vocab_size", 0) or len(tokenizer))
@@ -1880,13 +3361,18 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         if isinstance(intent_labels, dict) and intent_labels:
             intent_label_count = max(int(value) for value in intent_labels.values()) + 1
     config.agent_intent_labels = max(0, int(intent_label_count))
+    config.agent_controller_dim = max(0, int(getattr(args, "agent_controller_dim", 0) or 0))
+    config.agent_controller_apply_policy = bool(getattr(args, "agent_controller_apply_policy", 1))
+    config.agent_controller_apply_retrieval = bool(getattr(args, "agent_controller_apply_retrieval", 0))
     model = EncoderDecoderLM(config, tie_embeddings=True, vocab_size=vocab_size)
     _materialize_lazy_modules(model)
     parameter_count = _parameter_count(model)
     frozen_encoder_parameters = 0
     frozen_token_embedding_parameters = 0
+    frozen_lm_head_parameters = 0
     frozen_decoder_parameters = 0
     frozen_encoder_layer_parameters = 0
+    frozen_dense_linear_weight_parameters = 0
     tokenizer_kind = "byte" if bool(args.byte_tokenizer) else str(args.tokenizer_kind)
     tokenizer_name = str(args.tokenizer_name) if tokenizer_kind == "hf" else tokenizer_kind
 
@@ -1903,6 +3389,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "primary_action": "respond" if str(dataset_manifest.get("objective", "")).lower() in {"chat", "text"} else "mixed",
         "code_execution": False,
         "extension_counts": dict(dataset_manifest.get("extension_counts", {}) or {}),
+        "checkpoint_vocab_mismatch": checkpoint_vocab_mismatch,
+        "tokenizer_source_dir": str(getattr(args, "tokenizer_source_dir", "") or ""),
         "checkpoint_every": int(args.checkpoint_every),
         "eval_every": int(args.eval_every),
         "bitnet_qat": bool(args.bitnet_qat),
@@ -1923,13 +3411,58 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "retrieval_hard_negative_weight": float(args.retrieval_hard_negative_weight),
         "retrieval_hard_negative_ternary": bool(args.retrieval_hard_negative_ternary),
         "agent_policy_heads": bool(args.agent_policy_heads),
+        "agent_controller_dim": int(config.agent_controller_dim),
+        "agent_controller_apply_policy": bool(config.agent_controller_apply_policy),
+        "agent_controller_apply_retrieval": bool(config.agent_controller_apply_retrieval),
         "policy_head_loss_weight": float(args.policy_head_loss_weight),
         "agent_intent_labels": int(config.agent_intent_labels),
         "intent_head_loss_weight": float(args.intent_head_loss_weight),
         "intent_contrastive_weight": float(args.intent_contrastive_weight),
         "intent_contrastive_temperature": float(args.intent_contrastive_temperature),
         "encoder_rep_distill_weight": float(args.encoder_rep_distill_weight),
+        "future_bow_aux_weight": float(args.future_bow_aux_weight),
+        "future_bow_buckets": int(args.future_bow_buckets),
+        "future_bow_weight_schedule": str(args.future_bow_weight_schedule),
+        "future_sketch_aux_weight": float(args.future_sketch_aux_weight),
+        "future_sketch_buckets": int(args.future_sketch_buckets),
+        "future_sketch_min_token_weight": float(args.future_sketch_min_token_weight),
+        "future_sketch_topk": int(args.future_sketch_topk),
+        "future_sketch_windows": list(_parse_positive_ints(str(args.future_sketch_windows))),
+        "state_sketch_aux_weight": float(args.state_sketch_aux_weight),
+        "state_sketch_buckets": int(args.state_sketch_buckets),
+        "state_sketch_topk": int(args.state_sketch_topk),
+        "state_sketch_min_token_weight": float(args.state_sketch_min_token_weight),
+        "target_sketch_aux_weight": float(args.target_sketch_aux_weight),
+        "target_sketch_buckets": int(args.target_sketch_buckets),
+        "target_sketch_topk": int(args.target_sketch_topk),
+        "target_sketch_min_token_weight": float(args.target_sketch_min_token_weight),
+        "decoder_future_sketch_aux_weight": float(args.decoder_future_sketch_aux_weight),
+        "decoder_future_sketch_buckets": int(args.decoder_future_sketch_buckets),
+        "decoder_future_sketch_min_token_weight": float(args.decoder_future_sketch_min_token_weight),
+        "decoder_future_sketch_topk": int(args.decoder_future_sketch_topk),
+        "decoder_future_sketch_windows": list(_parse_positive_ints(str(args.decoder_future_sketch_windows))),
+        "decoder_drift_alignment_weight": float(args.decoder_drift_alignment_weight),
+        "decoder_drift_alignment_min_token_weight": float(args.decoder_drift_alignment_min_token_weight),
+        "decoder_drift_alignment_temperature": float(args.decoder_drift_alignment_temperature),
+        "decoder_source_copy_anchor_weight": float(args.decoder_source_copy_anchor_weight),
+        "decoder_source_copy_min_token_weight": float(args.decoder_source_copy_min_token_weight),
+        "aux_grad_budget": float(args.aux_grad_budget),
+        "pcgrad_decoder_aux": bool(args.pcgrad_decoder_aux),
         "decoder_loss_weight": float(args.decoder_loss_weight),
+        "decoder_eos_loss_weight": float(args.decoder_eos_loss_weight),
+        "decoder_json_structure_loss_weight": float(args.decoder_json_structure_loss_weight),
+        "decoder_control_token_suppression_weight": float(args.decoder_control_token_suppression_weight),
+        "decoder_token_weight_alpha": float(args.decoder_token_weight_alpha),
+        "decoder_multi_token_ce_weight": float(args.decoder_multi_token_ce_weight),
+        "decoder_multi_token_horizons": list(_parse_positive_ints(str(args.decoder_multi_token_horizons))),
+        "decoder_multi_token_min_token_weight": float(args.decoder_multi_token_min_token_weight),
+        "decoder_stop_token_loss_weight": float(args.decoder_stop_token_loss_weight),
+        "decoder_seq_eos_token_weight": float(args.decoder_seq_eos_token_weight),
+        "anchor_weight_loss_weight": float(args.anchor_weight_loss_weight),
+        "negative_decoder_loss_weight": float(args.negative_decoder_loss_weight),
+        "negative_divergent_decoder_loss_weight": float(args.negative_divergent_decoder_loss_weight),
+        "negative_first_token_margin_weight": float(args.negative_first_token_margin_weight),
+        "negative_first_token_margin": float(args.negative_first_token_margin),
         "teacher_distill_weight": float(args.teacher_distill_weight),
         "teacher_distill_temperature": float(args.teacher_distill_temperature),
         "attn_dropout": float(args.attn_dropout),
@@ -1958,27 +3491,79 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             training_summary=dry_summary,
         )
 
-    train_dataset = _load_encdec_dataset(
-        Path(str(dataset_manifest["train_dataset_path"])),
-        tokenizer,
-        max_encoder_tokens=int(args.max_encoder_tokens),
-        max_decoder_tokens=int(args.max_decoder_tokens),
-        max_retrieval_query_tokens=int(args.max_retrieval_query_tokens),
-        max_retrieval_doc_tokens=int(args.max_retrieval_doc_tokens),
-        max_retrieval_negatives=int(args.max_retrieval_negatives),
-        shuffle=True,
-        shuffle_buffer_size=int(args.parquet_shuffle_buffer_size),
-        require_retrieval_pair=bool(args.parquet_require_retrieval_pair),
-        action_include=tuple(item.strip() for item in str(args.parquet_action_include).split(",") if item.strip()),
-        task_type_include=tuple(item.strip() for item in str(args.parquet_task_type_include).split(",") if item.strip()),
-        seed=int(args.seed),
-    )
+    train_stream_specs = [str(item) for item in (dataset_manifest.get("train_stream_specs") or []) if str(item).strip()]
+    if train_stream_specs:
+        train_dataset = EncDecHfStreamIterableDataset(
+            train_stream_specs,
+            tokenizer,
+            max_encoder_tokens=int(args.max_encoder_tokens),
+            max_decoder_tokens=int(args.max_decoder_tokens),
+            max_retrieval_query_tokens=int(args.max_retrieval_query_tokens),
+            max_retrieval_doc_tokens=int(args.max_retrieval_doc_tokens),
+            max_retrieval_negatives=int(args.max_retrieval_negatives),
+            weight=float(dataset_manifest.get("stream_weight", 3.0) or 3.0),
+            shuffle=bool(args.train_shuffle),
+            shuffle_buffer_size=int(args.parquet_shuffle_buffer_size),
+            seed=int(args.seed),
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "hf_stream_train_dataset",
+                    "specs": train_stream_specs,
+                    "estimated_rows": len(train_dataset),
+                    "stream_weight": float(dataset_manifest.get("stream_weight", 3.0) or 3.0),
+                },
+                sort_keys=True,
+            )
+        )
+    else:
+        train_dataset = _load_encdec_dataset(
+            Path(str(dataset_manifest["train_dataset_path"])),
+            tokenizer,
+            max_encoder_tokens=int(args.max_encoder_tokens),
+            max_decoder_tokens=int(args.max_decoder_tokens),
+            max_retrieval_query_tokens=int(args.max_retrieval_query_tokens),
+            max_retrieval_doc_tokens=int(args.max_retrieval_doc_tokens),
+            max_retrieval_negatives=int(args.max_retrieval_negatives),
+            shuffle=bool(args.train_shuffle),
+            shuffle_buffer_size=int(args.parquet_shuffle_buffer_size),
+            require_retrieval_pair=bool(args.parquet_require_retrieval_pair),
+            action_include=tuple(item.strip() for item in str(args.parquet_action_include).split(",") if item.strip()),
+            task_type_include=tuple(item.strip() for item in str(args.parquet_task_type_include).split(",") if item.strip()),
+            seed=int(args.seed),
+        )
     if len(train_dataset) <= 0:
         raise SystemExit("training dataset is empty")
     eval_dataset = None
+    eval_stream_specs = [str(item) for item in (dataset_manifest.get("eval_stream_specs") or []) if str(item).strip()]
+    if eval_stream_specs:
+        eval_dataset = EncDecHfStreamIterableDataset(
+            eval_stream_specs,
+            tokenizer,
+            max_encoder_tokens=int(args.max_encoder_tokens),
+            max_decoder_tokens=int(args.max_decoder_tokens),
+            max_retrieval_query_tokens=int(args.max_retrieval_query_tokens),
+            max_retrieval_doc_tokens=int(args.max_retrieval_doc_tokens),
+            max_retrieval_negatives=int(args.max_retrieval_negatives),
+            weight=float(dataset_manifest.get("stream_weight", 3.0) or 3.0),
+            shuffle=False,
+            shuffle_buffer_size=0,
+            seed=int(args.seed) + 1009,
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "hf_stream_eval_dataset",
+                    "specs": eval_stream_specs,
+                    "estimated_rows": len(eval_dataset),
+                },
+                sort_keys=True,
+            )
+        )
     eval_path_value = str(dataset_manifest.get("eval_dataset_path", "") or "")
     eval_path = Path(eval_path_value) if eval_path_value else None
-    if eval_path is not None and eval_path.exists():
+    if eval_dataset is None and eval_path is not None and eval_path.exists():
         eval_dataset = _load_encdec_dataset(
             eval_path,
             tokenizer,
@@ -2000,7 +3585,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     loader = DataLoader(
         train_dataset,
         batch_size=int(args.batch_size),
-        shuffle=False if train_is_iterable else True,
+        shuffle=False if train_is_iterable else bool(args.train_shuffle),
         num_workers=0,
         collate_fn=_collate,
         generator=None if train_is_iterable else generator,
@@ -2046,6 +3631,18 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 sort_keys=True,
             )
         )
+    if bool(getattr(args, "freeze_lm_head", 0)):
+        frozen_lm_head_parameters = _freeze_lm_head_parameters(model)
+        print(
+            json.dumps(
+                {
+                    "event": "lm_head_frozen",
+                    "frozen_parameters": int(frozen_lm_head_parameters),
+                    "trainable_parameters": int(_trainable_parameter_count(model)),
+                },
+                sort_keys=True,
+            )
+        )
     if bool(args.freeze_decoder):
         frozen_decoder_parameters = _freeze_decoder_parameters(model)
         print(
@@ -2053,6 +3650,20 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "event": "decoder_frozen",
                     "frozen_parameters": int(frozen_decoder_parameters),
+                    "trainable_parameters": int(_trainable_parameter_count(model)),
+                },
+                sort_keys=True,
+            )
+        )
+    if bool(getattr(args, "freeze_dense_linear_weights", 0)):
+        newly_frozen_dense_linear_weight_parameters = _freeze_dense_linear_weights(model)
+        frozen_dense_linear_weight_parameters += int(newly_frozen_dense_linear_weight_parameters)
+        print(
+            json.dumps(
+                {
+                    "event": "dense_linear_weights_frozen",
+                    "frozen_parameters": int(newly_frozen_dense_linear_weight_parameters),
+                    "total_frozen_parameters": int(frozen_dense_linear_weight_parameters),
                     "trainable_parameters": int(_trainable_parameter_count(model)),
                 },
                 sort_keys=True,
@@ -2126,6 +3737,87 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 sort_keys=True,
             )
         )
+    if bool(getattr(args, "freeze_lm_head", 0)):
+        frozen_lm_head_parameters = _freeze_lm_head_parameters(model)
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "lm_head_frozen_after_qat",
+                    "frozen_parameters": int(frozen_lm_head_parameters),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    if bool(args.freeze_encoder):
+        frozen_encoder_parameters = _freeze_encoder_parameters(model)
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "encoder_frozen_after_qat",
+                    "frozen_parameters": int(frozen_encoder_parameters),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    if bool(args.freeze_token_embeddings):
+        frozen_token_embedding_parameters = _freeze_token_embedding_parameters(model)
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "token_embeddings_frozen_after_qat",
+                    "frozen_parameters": int(frozen_token_embedding_parameters),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    if bool(args.freeze_decoder):
+        frozen_decoder_parameters = _freeze_decoder_parameters(model)
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "decoder_frozen_after_qat",
+                    "frozen_parameters": int(frozen_decoder_parameters),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    if bool(getattr(args, "freeze_dense_linear_weights", 0)):
+        newly_frozen_dense_linear_weight_parameters = _freeze_dense_linear_weights(model)
+        frozen_dense_linear_weight_parameters += int(newly_frozen_dense_linear_weight_parameters)
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "dense_linear_weights_frozen_after_qat",
+                    "frozen_parameters": int(newly_frozen_dense_linear_weight_parameters),
+                    "total_frozen_parameters": int(frozen_dense_linear_weight_parameters),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    if int(args.freeze_encoder_layers_through) >= 0:
+        frozen_encoder_layer_parameters = _freeze_encoder_layers_through(model, int(args.freeze_encoder_layers_through))
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "encoder_layers_frozen_after_qat",
+                    "frozen_parameters": int(frozen_encoder_layer_parameters),
+                    "through_layer": int(args.freeze_encoder_layers_through),
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
     frozen_bitnet_linear_weight_parameters = 0
     if bool(getattr(args, "freeze_bitnet_linear_weights", 0)):
         frozen_bitnet_linear_weight_parameters = _freeze_trainable_bitnet_linear_weights(model)
@@ -2136,6 +3828,125 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "event": "bitnet_linear_weights_frozen",
                     "frozen_parameters": int(frozen_bitnet_linear_weight_parameters),
                     "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    trainable_name_filter_summary = _apply_trainable_name_filter(
+        model,
+        include_patterns=str(getattr(args, "trainable_name_include", "") or ""),
+        exclude_patterns=str(getattr(args, "trainable_name_exclude", "") or ""),
+    )
+    if bool(trainable_name_filter_summary.get("enabled")):
+        trainable_parameter_count_before_export = int(_trainable_parameter_count(model))
+        print(
+            json.dumps(
+                {
+                    "event": "trainable_name_filter_applied",
+                    **trainable_name_filter_summary,
+                    "trainable_parameters": int(trainable_parameter_count_before_export),
+                },
+                sort_keys=True,
+            )
+        )
+    anchor_parameters: dict[str, torch.Tensor] = {}
+    if float(getattr(args, "anchor_weight_loss_weight", 0.0) or 0.0) > 0.0:
+        anchor_parameters = _trainable_anchor_parameters(model)
+        print(
+            json.dumps(
+                {
+                    "event": "anchor_weight_loss_enabled",
+                    "weight": float(args.anchor_weight_loss_weight),
+                    "anchored_parameter_tensors": len(anchor_parameters),
+                    "anchored_parameters": int(sum(tensor.numel() for tensor in anchor_parameters.values())),
+                },
+                sort_keys=True,
+            )
+        )
+    if float(getattr(args, "future_bow_aux_weight", 0.0) or 0.0) > 0.0:
+        model.future_bow_aux_head = torch.nn.Linear(int(config.d_model), int(args.future_bow_buckets)).to(device)
+        print(
+            json.dumps(
+                {
+                    "event": "future_bow_aux_enabled",
+                    "buckets": int(args.future_bow_buckets),
+                    "weight": float(args.future_bow_aux_weight),
+                    "parameters": int(sum(param.numel() for param in model.future_bow_aux_head.parameters())),
+                },
+                sort_keys=True,
+            )
+        )
+    if float(getattr(args, "future_sketch_aux_weight", 0.0) or 0.0) > 0.0:
+        future_sketch_windows = _parse_positive_ints(str(args.future_sketch_windows))
+        future_sketch_head_dim = int(args.future_sketch_buckets) * max(1, len(future_sketch_windows))
+        model.future_sketch_aux_head = torch.nn.Linear(int(config.d_model), int(future_sketch_head_dim)).to(device)
+        print(
+            json.dumps(
+                {
+                    "event": "future_sketch_aux_enabled",
+                    "buckets": int(args.future_sketch_buckets),
+                    "windows": list(future_sketch_windows),
+                    "weight": float(args.future_sketch_aux_weight),
+                    "topk": int(args.future_sketch_topk),
+                    "min_token_weight": float(args.future_sketch_min_token_weight),
+                    "aux_grad_budget": float(args.aux_grad_budget),
+                    "parameters": int(sum(param.numel() for param in model.future_sketch_aux_head.parameters())),
+                },
+                sort_keys=True,
+            )
+        )
+    if float(getattr(args, "state_sketch_aux_weight", 0.0) or 0.0) > 0.0:
+        model.state_sketch_aux_head = torch.nn.Linear(int(config.d_model), int(args.state_sketch_buckets)).to(device)
+        print(
+            json.dumps(
+                {
+                    "event": "state_sketch_aux_enabled",
+                    "buckets": int(args.state_sketch_buckets),
+                    "weight": float(args.state_sketch_aux_weight),
+                    "topk": int(args.state_sketch_topk),
+                    "min_token_weight": float(args.state_sketch_min_token_weight),
+                    "aux_grad_budget": float(args.aux_grad_budget),
+                    "parameters": int(sum(param.numel() for param in model.state_sketch_aux_head.parameters())),
+                },
+                sort_keys=True,
+            )
+        )
+    if float(getattr(args, "target_sketch_aux_weight", 0.0) or 0.0) > 0.0:
+        model.target_sketch_aux_head = torch.nn.Linear(int(config.d_model), int(args.target_sketch_buckets)).to(device)
+        print(
+            json.dumps(
+                {
+                    "event": "target_sketch_aux_enabled",
+                    "buckets": int(args.target_sketch_buckets),
+                    "weight": float(args.target_sketch_aux_weight),
+                    "topk": int(args.target_sketch_topk),
+                    "min_token_weight": float(args.target_sketch_min_token_weight),
+                    "aux_grad_budget": float(args.aux_grad_budget),
+                    "parameters": int(sum(param.numel() for param in model.target_sketch_aux_head.parameters())),
+                },
+                sort_keys=True,
+            )
+        )
+    if float(getattr(args, "decoder_future_sketch_aux_weight", 0.0) or 0.0) > 0.0:
+        decoder_future_sketch_windows = _parse_positive_ints(str(args.decoder_future_sketch_windows))
+        if not decoder_future_sketch_windows:
+            decoder_future_sketch_windows = (8, 32)
+        decoder_future_sketch_head_dim = int(args.decoder_future_sketch_buckets) * len(decoder_future_sketch_windows)
+        model.decoder_future_sketch_aux_head = torch.nn.Linear(
+            int(config.d_model),
+            int(decoder_future_sketch_head_dim),
+        ).to(device)
+        print(
+            json.dumps(
+                {
+                    "event": "decoder_future_sketch_aux_enabled",
+                    "buckets": int(args.decoder_future_sketch_buckets),
+                    "windows": list(decoder_future_sketch_windows),
+                    "weight": float(args.decoder_future_sketch_aux_weight),
+                    "topk": int(args.decoder_future_sketch_topk),
+                    "min_token_weight": float(args.decoder_future_sketch_min_token_weight),
+                    "aux_grad_budget": float(args.aux_grad_budget),
+                    "parameters": int(sum(param.numel() for param in model.decoder_future_sketch_aux_head.parameters())),
                 },
                 sort_keys=True,
             )
@@ -2174,39 +3985,190 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             iterator = iter(loader)
             batch = next(iterator)
         batch = {key: value.to(device) for key, value in batch.items()}
-        loss = _weighted_loss(
-            model,
-            batch,
-            decoder_loss_weight=float(args.decoder_loss_weight),
-            retrieval_contrastive_weight=float(args.retrieval_contrastive_weight),
-            retrieval_temperature=float(args.retrieval_temperature),
-            retrieval_ternary_aware_weight=float(args.retrieval_ternary_aware_weight),
-            retrieval_ternary_threshold_ratio=float(args.retrieval_ternary_threshold_ratio),
-            retrieval_ternary_group_size=int(args.retrieval_ternary_group_size),
-            retrieval_ternary_residual_dims=int(args.retrieval_ternary_residual_dims),
-            retrieval_ternary_teacher_distill_weight=float(args.retrieval_ternary_teacher_distill_weight),
-            retrieval_ternary_teacher_temperature=float(args.retrieval_ternary_teacher_temperature),
-            retrieval_ternary_reconstruction_weight=float(args.retrieval_ternary_reconstruction_weight),
-            retrieval_hard_negative_weight=float(args.retrieval_hard_negative_weight),
-            retrieval_hard_negative_ternary=bool(args.retrieval_hard_negative_ternary),
-            teacher_model=teacher_model,
-            teacher_distill_weight=float(args.teacher_distill_weight),
-            teacher_distill_temperature=float(args.teacher_distill_temperature),
-            policy_head_loss_weight=float(args.policy_head_loss_weight),
-            intent_head_loss_weight=float(args.intent_head_loss_weight),
-            intent_contrastive_weight=float(args.intent_contrastive_weight),
-            intent_contrastive_temperature=float(args.intent_contrastive_temperature),
-            encoder_rep_distill_weight=float(args.encoder_rep_distill_weight),
+        loss_kwargs = {
+            "decoder_loss_weight": float(args.decoder_loss_weight),
+            "decoder_eos_loss_weight": float(args.decoder_eos_loss_weight),
+            "decoder_json_structure_loss_weight": float(args.decoder_json_structure_loss_weight),
+            "decoder_token_weight_alpha": float(args.decoder_token_weight_alpha),
+            "decoder_multi_token_ce_weight": _scheduled_aux_weight(
+                float(args.decoder_multi_token_ce_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "decoder_multi_token_horizons": _parse_positive_ints(str(args.decoder_multi_token_horizons)),
+            "decoder_multi_token_min_token_weight": float(args.decoder_multi_token_min_token_weight),
+            "decoder_seq_eos_token_weight": float(args.decoder_seq_eos_token_weight),
+            "decoder_stop_token_loss_weight": float(args.decoder_stop_token_loss_weight),
+            "decoder_eos_token_id": int(getattr(tokenizer, "eos_token_id", 2) or 2),
+            "decoder_stop_token_ids": _single_token_ids(tokenizer, ("</AK_CONTENT>", "<AK_END>")),
+            "decoder_json_structure_token_ids": _single_token_ids(tokenizer, ("{", "}", "[", "]", "\"", ":", ",")),
+            "decoder_control_token_suppression_weight": float(args.decoder_control_token_suppression_weight),
+            "decoder_control_token_ids": _single_token_ids(
+                tokenizer,
+                (
+                    "<AK_STRUCTURED>",
+                    "<AK_ACTION_RESPOND>",
+                    "<AK_ACTION_ASK_USER>",
+                    "<AK_ACTION_EXTENSION_REQUEST>",
+                    "<AK_ACTION_SAVE_MEMORY>",
+                    "<AK_CONTENT>",
+                    "</AK_CONTENT>",
+                    "<AK_TASK_TYPE>",
+                    "<AK_INTENT>",
+                    "<AK_FIELD>",
+                    "<AK_FIELD_NAME>",
+                    "<AK_FIELD_VALUE>",
+                    "<AK_FIELDS>",
+                    "<AK_FRESHNESS>",
+                    "<AK_END>",
+                    *[f"<AK_COPY_USER_SOURCE_{index}>" for index in range(1, 25)],
+                ),
+            ),
+            "negative_decoder_loss_weight": float(args.negative_decoder_loss_weight),
+            "negative_divergent_decoder_loss_weight": float(args.negative_divergent_decoder_loss_weight),
+            "negative_first_token_margin_weight": float(args.negative_first_token_margin_weight),
+            "negative_first_token_margin": float(args.negative_first_token_margin),
+            "retrieval_contrastive_weight": float(args.retrieval_contrastive_weight),
+            "retrieval_temperature": float(args.retrieval_temperature),
+            "retrieval_ternary_aware_weight": float(args.retrieval_ternary_aware_weight),
+            "retrieval_ternary_threshold_ratio": float(args.retrieval_ternary_threshold_ratio),
+            "retrieval_ternary_group_size": int(args.retrieval_ternary_group_size),
+            "retrieval_ternary_residual_dims": int(args.retrieval_ternary_residual_dims),
+            "retrieval_ternary_teacher_distill_weight": float(args.retrieval_ternary_teacher_distill_weight),
+            "retrieval_ternary_teacher_temperature": float(args.retrieval_ternary_teacher_temperature),
+            "retrieval_ternary_reconstruction_weight": float(args.retrieval_ternary_reconstruction_weight),
+            "retrieval_hard_negative_weight": float(args.retrieval_hard_negative_weight),
+            "retrieval_hard_negative_ternary": bool(args.retrieval_hard_negative_ternary),
+            "teacher_model": teacher_model,
+            "teacher_distill_weight": float(args.teacher_distill_weight),
+            "teacher_distill_temperature": float(args.teacher_distill_temperature),
+            "policy_head_loss_weight": float(args.policy_head_loss_weight),
+            "intent_head_loss_weight": float(args.intent_head_loss_weight),
+            "intent_contrastive_weight": float(args.intent_contrastive_weight),
+            "intent_contrastive_temperature": float(args.intent_contrastive_temperature),
+            "encoder_rep_distill_weight": float(args.encoder_rep_distill_weight),
+            "future_bow_aux_weight": _scheduled_aux_weight(
+                float(args.future_bow_aux_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "future_bow_buckets": int(args.future_bow_buckets),
+            "future_sketch_aux_weight": _scheduled_aux_weight(
+                float(args.future_sketch_aux_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "future_sketch_buckets": int(args.future_sketch_buckets),
+            "future_sketch_min_token_weight": float(args.future_sketch_min_token_weight),
+            "future_sketch_topk": int(args.future_sketch_topk),
+            "future_sketch_windows": _parse_positive_ints(str(args.future_sketch_windows)),
+            "state_sketch_aux_weight": _scheduled_aux_weight(
+                float(args.state_sketch_aux_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "state_sketch_buckets": int(args.state_sketch_buckets),
+            "state_sketch_topk": int(args.state_sketch_topk),
+            "state_sketch_min_token_weight": float(args.state_sketch_min_token_weight),
+            "target_sketch_aux_weight": _scheduled_aux_weight(
+                float(args.target_sketch_aux_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "target_sketch_buckets": int(args.target_sketch_buckets),
+            "target_sketch_topk": int(args.target_sketch_topk),
+            "target_sketch_min_token_weight": float(args.target_sketch_min_token_weight),
+            "decoder_future_sketch_aux_weight": _scheduled_aux_weight(
+                float(args.decoder_future_sketch_aux_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "decoder_future_sketch_buckets": int(args.decoder_future_sketch_buckets),
+            "decoder_future_sketch_min_token_weight": float(args.decoder_future_sketch_min_token_weight),
+            "decoder_future_sketch_topk": int(args.decoder_future_sketch_topk),
+            "decoder_future_sketch_windows": _parse_positive_ints(str(args.decoder_future_sketch_windows)),
+            "decoder_drift_alignment_weight": _scheduled_aux_weight(
+                float(args.decoder_drift_alignment_weight),
+                step=step,
+                total_steps=int(args.max_steps),
+                schedule=str(args.future_bow_weight_schedule),
+            ),
+            "decoder_drift_alignment_min_token_weight": float(args.decoder_drift_alignment_min_token_weight),
+            "decoder_drift_alignment_temperature": float(args.decoder_drift_alignment_temperature),
+            "decoder_source_copy_anchor_weight": float(args.decoder_source_copy_anchor_weight),
+            "decoder_source_copy_min_token_weight": float(args.decoder_source_copy_min_token_weight),
+            "aux_grad_budget": float(args.aux_grad_budget),
+        }
+        pcgrad_stats: dict[str, float | int] = {"pcgrad_snapshots": 0, "pcgrad_conflicts": 0, "pcgrad_min_cosine": 0.0}
+        use_pcgrad_decoder_aux = (
+            bool(getattr(args, "pcgrad_decoder_aux", 0))
+            and float(loss_kwargs["decoder_future_sketch_aux_weight"]) > 0.0
         )
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        if use_pcgrad_decoder_aux:
+            trainable_parameters = _trainable_parameters(model)
+            primary_kwargs = dict(loss_kwargs)
+            primary_kwargs["decoder_future_sketch_aux_weight"] = 0.0
+            aux_kwargs = dict(loss_kwargs)
+            for key in (
+                "decoder_loss_weight",
+                "decoder_eos_loss_weight",
+                "decoder_json_structure_loss_weight",
+                "decoder_control_token_suppression_weight",
+                "negative_decoder_loss_weight",
+                "negative_divergent_decoder_loss_weight",
+                "negative_first_token_margin_weight",
+                "retrieval_contrastive_weight",
+                "retrieval_ternary_aware_weight",
+                "retrieval_ternary_teacher_distill_weight",
+                "retrieval_ternary_reconstruction_weight",
+                "retrieval_hard_negative_weight",
+                "teacher_distill_weight",
+                "encoder_rep_distill_weight",
+                "policy_head_loss_weight",
+                "intent_head_loss_weight",
+                "intent_contrastive_weight",
+                "future_bow_aux_weight",
+                "future_sketch_aux_weight",
+                "state_sketch_aux_weight",
+                "target_sketch_aux_weight",
+                "decoder_source_copy_anchor_weight",
+            ):
+                aux_kwargs[key] = 0.0
+            aux_kwargs["aux_grad_budget"] = 0.0
+            optimizer.zero_grad(set_to_none=True)
+            primary_loss = _weighted_loss(model, batch, **primary_kwargs)
+            if anchor_parameters and float(args.anchor_weight_loss_weight) > 0.0:
+                primary_loss = primary_loss + float(args.anchor_weight_loss_weight) * _anchor_weight_loss(
+                    model,
+                    anchor_parameters,
+                )
+            primary_loss.backward()
+            primary_grads = _clone_trainable_grads(trainable_parameters)
+            optimizer.zero_grad(set_to_none=True)
+            aux_loss = _weighted_loss(model, batch, **aux_kwargs)
+            aux_loss.backward()
+            aux_grads = _clone_trainable_grads(trainable_parameters)
+            pcgrad_stats = _apply_pcgrad_snapshots(trainable_parameters, [primary_grads, aux_grads])
+            loss = primary_loss.detach() + aux_loss.detach()
+        else:
+            loss = _weighted_loss(model, batch, **loss_kwargs)
+            if anchor_parameters and float(args.anchor_weight_loss_weight) > 0.0:
+                loss = loss + float(args.anchor_weight_loss_weight) * _anchor_weight_loss(model, anchor_parameters)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), float(args.clip_grad_norm))
         optimizer.step()
         loss_value = float(loss.detach().cpu().item())
         losses.append(loss_value)
         last_step = step
         if step % max(1, int(args.log_every)) == 0:
-            print(json.dumps({"step": step, "loss": loss_value}, sort_keys=True))
+            print(json.dumps({"step": step, "loss": loss_value, **pcgrad_stats}, sort_keys=True))
         if eval_dataset is not None and int(args.eval_every) > 0 and step % int(args.eval_every) == 0:
             eval_result = _evaluate(
                 model,
@@ -2215,6 +4177,43 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 device=device,
                 max_batches=int(args.max_eval_batches),
                 decoder_loss_weight=float(args.decoder_loss_weight),
+                decoder_eos_loss_weight=float(args.decoder_eos_loss_weight),
+                decoder_json_structure_loss_weight=float(args.decoder_json_structure_loss_weight),
+                decoder_token_weight_alpha=float(args.decoder_token_weight_alpha),
+                decoder_multi_token_ce_weight=float(args.decoder_multi_token_ce_weight),
+                decoder_multi_token_horizons=_parse_positive_ints(str(args.decoder_multi_token_horizons)),
+                decoder_multi_token_min_token_weight=float(args.decoder_multi_token_min_token_weight),
+                decoder_seq_eos_token_weight=float(args.decoder_seq_eos_token_weight),
+                decoder_stop_token_loss_weight=float(args.decoder_stop_token_loss_weight),
+                decoder_eos_token_id=int(getattr(tokenizer, "eos_token_id", 2) or 2),
+                decoder_stop_token_ids=_single_token_ids(tokenizer, ("</AK_CONTENT>", "<AK_END>")),
+                decoder_json_structure_token_ids=_single_token_ids(tokenizer, ("{", "}", "[", "]", "\"", ":", ",")),
+                decoder_control_token_suppression_weight=float(args.decoder_control_token_suppression_weight),
+                decoder_control_token_ids=_single_token_ids(
+                    tokenizer,
+                    (
+                        "<AK_STRUCTURED>",
+                        "<AK_ACTION_RESPOND>",
+                        "<AK_ACTION_ASK_USER>",
+                        "<AK_ACTION_EXTENSION_REQUEST>",
+                        "<AK_ACTION_SAVE_MEMORY>",
+                        "<AK_CONTENT>",
+                        "</AK_CONTENT>",
+                        "<AK_TASK_TYPE>",
+                        "<AK_INTENT>",
+                        "<AK_FIELD>",
+                        "<AK_FIELD_NAME>",
+                        "<AK_FIELD_VALUE>",
+                        "<AK_FIELDS>",
+                        "<AK_FRESHNESS>",
+                        "<AK_END>",
+                        *[f"<AK_COPY_USER_SOURCE_{index}>" for index in range(1, 25)],
+                    ),
+                ),
+                negative_decoder_loss_weight=float(args.negative_decoder_loss_weight),
+                negative_divergent_decoder_loss_weight=float(args.negative_divergent_decoder_loss_weight),
+                negative_first_token_margin_weight=float(args.negative_first_token_margin_weight),
+                negative_first_token_margin=float(args.negative_first_token_margin),
                 retrieval_contrastive_weight=float(args.retrieval_contrastive_weight),
                 retrieval_temperature=float(args.retrieval_temperature),
                 retrieval_ternary_aware_weight=float(args.retrieval_ternary_aware_weight),
@@ -2231,6 +4230,32 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 intent_contrastive_weight=float(args.intent_contrastive_weight),
                 intent_contrastive_temperature=float(args.intent_contrastive_temperature),
                 encoder_rep_distill_weight=float(args.encoder_rep_distill_weight),
+                future_bow_aux_weight=float(args.future_bow_aux_weight),
+                future_bow_buckets=int(args.future_bow_buckets),
+                future_sketch_aux_weight=float(args.future_sketch_aux_weight),
+                future_sketch_buckets=int(args.future_sketch_buckets),
+                future_sketch_min_token_weight=float(args.future_sketch_min_token_weight),
+                future_sketch_topk=int(args.future_sketch_topk),
+                future_sketch_windows=_parse_positive_ints(str(args.future_sketch_windows)),
+                state_sketch_aux_weight=float(args.state_sketch_aux_weight),
+                state_sketch_buckets=int(args.state_sketch_buckets),
+                state_sketch_topk=int(args.state_sketch_topk),
+                state_sketch_min_token_weight=float(args.state_sketch_min_token_weight),
+                target_sketch_aux_weight=float(args.target_sketch_aux_weight),
+                target_sketch_buckets=int(args.target_sketch_buckets),
+                target_sketch_topk=int(args.target_sketch_topk),
+                target_sketch_min_token_weight=float(args.target_sketch_min_token_weight),
+                decoder_future_sketch_aux_weight=float(args.decoder_future_sketch_aux_weight),
+                decoder_future_sketch_buckets=int(args.decoder_future_sketch_buckets),
+                decoder_future_sketch_min_token_weight=float(args.decoder_future_sketch_min_token_weight),
+                decoder_future_sketch_topk=int(args.decoder_future_sketch_topk),
+                decoder_future_sketch_windows=_parse_positive_ints(str(args.decoder_future_sketch_windows)),
+                decoder_drift_alignment_weight=float(args.decoder_drift_alignment_weight),
+                decoder_drift_alignment_min_token_weight=float(args.decoder_drift_alignment_min_token_weight),
+                decoder_drift_alignment_temperature=float(args.decoder_drift_alignment_temperature),
+                decoder_source_copy_anchor_weight=float(args.decoder_source_copy_anchor_weight),
+                decoder_source_copy_min_token_weight=float(args.decoder_source_copy_min_token_weight),
+                aux_grad_budget=float(args.aux_grad_budget),
                 teacher_model=teacher_model,
             )
             eval_result = {"step": step, **eval_result}
@@ -2260,6 +4285,16 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         )
         print(json.dumps({"event": "checkpoint", "final": True, "path": str(checkpoint_path), "step": last_step}, sort_keys=True))
 
+    if hasattr(model, "future_bow_aux_head"):
+        delattr(model, "future_bow_aux_head")
+    if hasattr(model, "future_sketch_aux_head"):
+        delattr(model, "future_sketch_aux_head")
+    if hasattr(model, "state_sketch_aux_head"):
+        delattr(model, "state_sketch_aux_head")
+    if hasattr(model, "target_sketch_aux_head"):
+        delattr(model, "target_sketch_aux_head")
+    if hasattr(model, "decoder_future_sketch_aux_head"):
+        delattr(model, "decoder_future_sketch_aux_head")
     tokenizer.save_pretrained(str(tokenizer_dir))
     model = model.eval()
     qat_dense_converted = 0
@@ -2315,14 +4350,21 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "initialized_from": "" if init_checkpoint_path is None else str(init_checkpoint_path),
         "freeze_encoder": bool(args.freeze_encoder),
         "freeze_token_embeddings": bool(args.freeze_token_embeddings),
+        "freeze_lm_head": bool(getattr(args, "freeze_lm_head", 0)),
         "freeze_decoder": bool(args.freeze_decoder),
+        "freeze_dense_linear_weights": bool(getattr(args, "freeze_dense_linear_weights", 0)),
         "frozen_encoder_parameters": int(frozen_encoder_parameters),
         "frozen_token_embedding_parameters": int(frozen_token_embedding_parameters),
+        "frozen_lm_head_parameters": int(frozen_lm_head_parameters),
         "frozen_decoder_parameters": int(frozen_decoder_parameters),
+        "frozen_dense_linear_weight_parameters": int(frozen_dense_linear_weight_parameters),
         "freeze_encoder_layers_through": int(args.freeze_encoder_layers_through),
         "frozen_encoder_layer_parameters": int(frozen_encoder_layer_parameters),
         "freeze_bitnet_linear_weights": bool(args.freeze_bitnet_linear_weights),
         "frozen_bitnet_linear_weight_parameters": int(frozen_bitnet_linear_weight_parameters),
+        "trainable_name_filter": trainable_name_filter_summary,
+        "anchor_weight_loss_weight": float(args.anchor_weight_loss_weight),
+        "anchored_parameter_count": int(sum(tensor.numel() for tensor in anchor_parameters.values())),
         "trainable_parameter_count_before_export": int(trainable_parameter_count_before_export),
         "trainable_parameter_count": int(_trainable_parameter_count(model)),
     }
@@ -2371,21 +4413,68 @@ def main() -> None:
     parser.add_argument("--retrieval-hard-negative-weight", type=float, default=0.0)
     parser.add_argument("--retrieval-hard-negative-ternary", type=int, choices=(0, 1), default=1)
     parser.add_argument("--agent-policy-heads", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--agent-controller-dim", type=int, default=0)
+    parser.add_argument("--agent-controller-apply-policy", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--agent-controller-apply-retrieval", type=int, choices=(0, 1), default=0)
     parser.add_argument("--policy-head-loss-weight", type=float, default=0.0)
     parser.add_argument("--agent-intent-labels", type=int, default=0)
     parser.add_argument("--intent-head-loss-weight", type=float, default=0.0)
     parser.add_argument("--intent-contrastive-weight", type=float, default=0.0)
     parser.add_argument("--intent-contrastive-temperature", type=float, default=0.10)
     parser.add_argument("--encoder-rep-distill-weight", type=float, default=0.0)
+    parser.add_argument("--future-bow-aux-weight", type=float, default=0.0)
+    parser.add_argument("--future-bow-buckets", type=int, default=512)
+    parser.add_argument("--future-bow-weight-schedule", choices=("constant", "warmup_cosine_decay"), default="constant")
+    parser.add_argument("--future-sketch-aux-weight", type=float, default=0.0)
+    parser.add_argument("--future-sketch-buckets", type=int, default=256)
+    parser.add_argument("--future-sketch-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--future-sketch-topk", type=int, default=8)
+    parser.add_argument("--future-sketch-windows", default="")
+    parser.add_argument("--state-sketch-aux-weight", type=float, default=0.0)
+    parser.add_argument("--state-sketch-buckets", type=int, default=256)
+    parser.add_argument("--state-sketch-topk", type=int, default=12)
+    parser.add_argument("--state-sketch-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--target-sketch-aux-weight", type=float, default=0.0)
+    parser.add_argument("--target-sketch-buckets", type=int, default=256)
+    parser.add_argument("--target-sketch-topk", type=int, default=12)
+    parser.add_argument("--target-sketch-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--decoder-future-sketch-aux-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-future-sketch-buckets", type=int, default=256)
+    parser.add_argument("--decoder-future-sketch-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--decoder-future-sketch-topk", type=int, default=8)
+    parser.add_argument("--decoder-future-sketch-windows", default="8,32")
+    parser.add_argument("--decoder-drift-alignment-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-drift-alignment-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--decoder-drift-alignment-temperature", type=float, default=0.0)
+    parser.add_argument("--decoder-source-copy-anchor-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-source-copy-min-token-weight", type=float, default=1.2)
+    parser.add_argument("--aux-grad-budget", type=float, default=0.0)
+    parser.add_argument("--pcgrad-decoder-aux", type=int, choices=(0, 1), default=0)
     parser.add_argument("--decoder-loss-weight", type=float, default=1.0)
+    parser.add_argument("--decoder-eos-loss-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-json-structure-loss-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-control-token-suppression-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-token-weight-alpha", type=float, default=0.0)
+    parser.add_argument("--decoder-multi-token-ce-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-multi-token-horizons", default="2,4")
+    parser.add_argument("--decoder-multi-token-min-token-weight", type=float, default=0.0)
+    parser.add_argument("--decoder-stop-token-loss-weight", type=float, default=1.0)
+    parser.add_argument("--decoder-seq-eos-token-weight", type=float, default=1.0)
+    parser.add_argument("--anchor-weight-loss-weight", type=float, default=0.0)
+    parser.add_argument("--negative-decoder-loss-weight", type=float, default=0.0)
+    parser.add_argument("--negative-divergent-decoder-loss-weight", type=float, default=0.0)
+    parser.add_argument("--negative-first-token-margin-weight", type=float, default=0.0)
+    parser.add_argument("--negative-first-token-margin", type=float, default=1.0)
     parser.add_argument("--teacher-distill-weight", type=float, default=0.0)
     parser.add_argument("--teacher-distill-temperature", type=float, default=1.0)
     parser.add_argument("--parquet-shuffle-buffer-size", type=int, default=8192)
+    parser.add_argument("--train-shuffle", type=int, choices=(0, 1), default=1)
     parser.add_argument("--parquet-require-retrieval-pair", type=int, choices=(0, 1), default=0)
     parser.add_argument("--parquet-action-include", default="")
     parser.add_argument("--parquet-task-type-include", default="")
     parser.add_argument("--freeze-encoder", type=int, choices=(0, 1), default=0)
     parser.add_argument("--freeze-token-embeddings", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--freeze-lm-head", type=int, choices=(0, 1), default=0)
     parser.add_argument("--freeze-decoder", type=int, choices=(0, 1), default=0)
     parser.add_argument("--freeze-encoder-layers-through", type=int, default=-1)
     parser.add_argument("--encoder-position-embeddings", type=int, choices=(0, 1), default=0)
@@ -2420,6 +4509,9 @@ def main() -> None:
     parser.add_argument("--bitnet-activation-quant", default="")
     parser.add_argument("--bitnet-activation-quant-bits", type=int, default=0)
     parser.add_argument("--freeze-bitnet-linear-weights", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--freeze-dense-linear-weights", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--trainable-name-include", default="")
+    parser.add_argument("--trainable-name-exclude", default="")
     args = parser.parse_args()
     manifest = train(args)
     print(json.dumps(manifest, indent=2, sort_keys=True))

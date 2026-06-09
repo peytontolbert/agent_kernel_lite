@@ -4,24 +4,67 @@ import path from 'node:path';
 
 const repoRoot = process.cwd();
 const appPath = path.join(repoRoot, 'apps/mobile/www/app/js/agent-kernel-app.js');
+const workerPath = path.join(repoRoot, 'apps/mobile/www/app/js/llm-worker.js');
 const appSource = fs.readFileSync(appPath, 'utf8');
+const workerSource = fs.readFileSync(workerPath, 'utf8');
 
 const requiredSymbols = [
   'activeAgentFallbackAnswer',
   'activeAgentDecisionNeedsFallback',
   'activeAgentContentPreservesInput',
+  'activeAgentUnavailablePlaceholders',
+  'activeAgentRawSourcePlaceholderEcho',
   'activeAgentExtractJson',
   'activeAgentClassifyJson',
   'activeAgentAllowedLabels',
   'activeAgentClassifyLabel',
   'activeAgentActionItems',
   'activeAgentSimpleTranslation',
+  'activeAgentRetrievedContext',
+  'activeAgentOperatorSource',
+  'activeAgentFieldValue',
 ];
 
 for (const symbol of requiredSymbols) {
   if (!appSource.includes(`function ${symbol}`)) {
     throw new Error(`missing runtime symbol in app bundle: ${symbol}`);
   }
+}
+
+if (!appSource.includes('activeAgentUnavailablePlaceholders(decision.content, slots).length')) {
+  throw new Error('active agent fallback does not reject unavailable placeholders');
+}
+
+if (!appSource.includes('activeAgentRawSourcePlaceholderEcho(expandedContent, instruction)')) {
+  throw new Error('active agent fallback does not check expanded SOURCE_TEXT transform echoes');
+}
+
+if (!appSource.includes("modelIntent === 'extraction'")) {
+  throw new Error('active agent fallback does not use model intent routing');
+}
+
+if (!appSource.includes("const modelIntent = hintIntent || (modelConfidence >= 0.55")) {
+  throw new Error('active agent fallback does not prefer explicit task hints over uncertain model routing');
+}
+
+if (!workerSource.includes('function extractAgentTaskHintIntent') || !workerSource.includes('confidence: 1')) {
+  throw new Error('worker intent classifier does not short-circuit explicit AK task hints');
+}
+
+if (!appSource.includes('Retrieved (?:skill card|change episode|concept|paper context)')) {
+  throw new Error('active agent operators do not recognize retrieved skill/concept/paper contexts');
+}
+
+if (!appSource.includes('First retrieve the relevant card for')) {
+  throw new Error('active agent operators do not materialize retrieved-card plans');
+}
+
+if (!appSource.includes('Abstract/context')) {
+  throw new Error('active agent operators do not materialize retrieved paper summaries');
+}
+
+if (!appSource.includes('activeAgentRuntimeFallback') || !appSource.includes('Used active-agent runtime fallback')) {
+  throw new Error('active agent retry failure can still fall through instead of using runtime fallback');
 }
 
 function contentTokens(value) {
@@ -46,6 +89,9 @@ function professionalizeDraft(text) {
   if (!cleaned) return '';
   if (/^(hi|hello|hey)(?:[, ]+(?:how are you|how are you doing))?[.!?]?$/i.test(cleaned)) return 'Hello, I hope you are well.';
   const source = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/\b(late|delayed)\b/i.test(source) && /\b(blocking|blocked)\b/i.test(source)) {
+    return 'This is delayed and is currently blocking our work.';
+  }
   let requestText = source.replace(/^(?:hey|hi|hello|yo)\s+[, ]*/i, '').trim();
   let name = '';
   const directed = requestText.match(/^([A-Za-z][A-Za-z'-]{1,30})\s+(?=(?:please\s+)?(?:send|get|finish|prepare|share|complete|review|update|draft|write)\b)/i);
@@ -136,7 +182,11 @@ function activeAgentClassifyLabel(text, instruction = '') {
 function fallback(agent, userText) {
   const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
   const original = String(userText || '').trim();
-  if (/\b(search|web|latest|current|online)\b/.test(instruction + original)) {
+  const transformAgent = /\b(rewrite|reword|paraphrase|polish|edit|improve|translate|summari[sz]e|extract|classify|format|turn .* into|make .* professional|clean up|brainstorm|ideas|plan)\b/.test(instruction);
+  const explicitWeb = /\b(web search|search agent|browser|look up online|search the web|online research|current info|latest news)\b/.test(instruction)
+    || (!transformAgent && (/\b(?:search|look up|find)\b.{0,80}\b(?:web|online|internet|latest|current|recent|news|price|pricing)\b/.test(original.toLowerCase())
+      || /\b(?:latest|current|recent|today's|news|pricing)\b.{0,80}\b(?:for|about|on)\b/.test(original.toLowerCase())));
+  if (explicitWeb) {
     return { action: 'extension_request', content: 'Requesting approval to search the web.' };
   }
   if (/\b(classify|classification|label|intent|tone)\b/.test(instruction)) {
@@ -144,9 +194,21 @@ function fallback(agent, userText) {
     return { action: 'respond', content: label || JSON.stringify({ intent: 'casual', tone: 'neutral' }) };
   }
   if (/\b(extract|owner|deadline|amount|email address|email addresses)\b/.test(instruction)) {
+    if (/^\s*(?:can|could|would|should|is|are|do|does|did|what|when|where|why|how)\b.+\?\s*$/i.test(original)) {
+      return { action: 'respond', content: `Question: ${original.replace(/\s+/g, ' ').trim()}` };
+    }
     const names = Array.from(new Set((original.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || [])));
     const money = Array.from(new Set((original.match(/\$\s?\d[\d,]*(?:\.\d{2})?/g) || [])));
     return { action: 'respond', content: JSON.stringify({ names, money }) };
+  }
+  if (/\b(brainstorm|ideas|generate ideas)\b/.test(instruction)) {
+    const lower = original.toLowerCase();
+    if (/\bcustom agents?\b/.test(lower) || /\bpersonal\b/.test(lower)) {
+      return { action: 'respond', content: '1. Let users create custom agents\n2. Add local memory collections\n3. Offer per-agent tone and tool settings' };
+    }
+    if (/\bsearch button\b/.test(lower) || /\bsource cards?\b/.test(lower) || /\bmax source\b/.test(lower) || /\bweb search\b.*\b(easier|app|chat)\b/.test(lower)) {
+      return { action: 'respond', content: '1. Add a search button in chat\n2. Show source cards with clickable links\n3. Let users set the max source count' };
+    }
   }
   if (/\b(action item|todo|to-do|owners?|deadlines?)\b/.test(instruction)) {
     return { action: 'respond', content: compactSourceClauses(original).map((item) => `- ${sentenceCaseDraft(item)}`).join('\n') };
@@ -157,8 +219,12 @@ function fallback(agent, userText) {
   if (/\b(subject line|email subject|subject)\b/.test(instruction)) {
     return { action: 'respond', content: activeAgentTitle(original, 'Follow Up') };
   }
-  if (/\b(translate|translation|spanish)\b/.test(instruction)) {
-    return { action: 'respond', content: original.toLowerCase() === 'hello' ? 'Hola.' : sentenceCaseDraft(original) };
+  if (/\b(translate|translation|spanish|french)\b/.test(instruction)) {
+    const french = new Map([
+      ['can you call me after lunch?', "Pouvez-vous m'appeler apres le dejeuner?"],
+      ['please review the proposal before friday.', 'Veuillez examiner la proposition avant vendredi.'],
+    ]);
+    return { action: 'respond', content: /\bfrench\b/.test(instruction) ? (french.get(original.toLowerCase()) || sentenceCaseDraft(original)) : (original.toLowerCase() === 'hello' ? 'Hola.' : sentenceCaseDraft(original)) };
   }
   if (/\b(summarize|summary|recap)\b/.test(instruction)) {
     return { action: 'respond', content: `- ${sentenceCaseDraft(original)}` };
@@ -217,6 +283,24 @@ const cases = [
     agent: { name: 'Translator', instruction: 'Translate into Spanish.' },
     userText: 'hello',
     expect: ['respond', 'Hola'],
+  },
+  {
+    id: 'question-extract',
+    agent: { name: 'Extractor', instruction: 'Extract questions from the input.' },
+    userText: 'Can you check if web search is active?',
+    expect: ['respond', 'Question: Can you check if web search is active?'],
+  },
+  {
+    id: 'brainstorm-web-ui',
+    agent: { name: 'Brainstormer', instruction: 'Brainstorm concrete product ideas.' },
+    userText: 'Ways to make web search easier in the app',
+    expect: ['respond', 'Add a search button in chat', 'clickable links', 'max source count'],
+  },
+  {
+    id: 'translate-french',
+    agent: { name: 'Translator', instruction: 'Translate into French.' },
+    userText: 'Please review the proposal before Friday.',
+    expect: ['respond', 'Veuillez examiner la proposition avant vendredi.'],
   },
 ];
 

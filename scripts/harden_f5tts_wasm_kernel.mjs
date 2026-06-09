@@ -95,7 +95,7 @@ for (const workerFile of ['web/js/tts-worker.js', 'apps/mobile/www/app/js/tts-wo
   if (Math.abs(hfProbeFrames - 578) > 2) {
     throw new Error(`${workerFile} no longer matches Hugging Face quality sample frame budget: ${hfProbeFrames}`);
   }
-  if (!/preferWasm:\s*true/.test(source) || !/with fused WASM/.test(source)) {
+  if (!/(preferWasm:\s*true|graphKind:\s*['"]f5['"])/.test(source) || !/with fused WASM/.test(source)) {
     throw new Error(`${workerFile} must load Peyton F5TTS through the fused WASM bundle path`);
   }
 }

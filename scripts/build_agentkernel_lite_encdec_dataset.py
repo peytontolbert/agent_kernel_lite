@@ -609,6 +609,46 @@ AK_ANSWER = "<AK_ANSWER>"
 AK_CITE = "<AK_CITE>"
 AK_RENDER = "<AK_RENDER>"
 AK_JSON = "<AK_JSON>"
+AK_PROFILE = "<AK_PROFILE>"
+AK_SLOT = "<AK_SLOT>"
+AK_SLOT_NAME = "<AK_SLOT_NAME>"
+AK_SLOT_VALUE = "<AK_SLOT_VALUE>"
+AK_PREFERENCE = "<AK_PREFERENCE>"
+AK_GOAL = "<AK_GOAL>"
+AK_DOMAIN = "<AK_DOMAIN>"
+AK_TONE = "<AK_TONE>"
+AK_CONSTRAINT = "<AK_CONSTRAINT>"
+AK_PRIVACY = "<AK_PRIVACY>"
+AK_REMEMBER = "<AK_REMEMBER>"
+AK_UPDATE_SLOT = "<AK_UPDATE_SLOT>"
+AK_DELETE_SLOT = "<AK_DELETE_SLOT>"
+AK_EXTENSION = "<AK_EXTENSION>"
+AK_CAPABILITY = "<AK_CAPABILITY>"
+AK_APPROVAL = "<AK_APPROVAL>"
+AK_SAVE_MEMORY = "<AK_SAVE_MEMORY>"
+AK_ASK_USER = "<AK_ASK_USER>"
+AK_SOURCE_TYPE = "<AK_SOURCE_TYPE>"
+AK_EXTENSION_RESULT = "<AK_EXTENSION_RESULT>"
+AK_INSTALLED = "<AK_INSTALLED>"
+AK_STRUCTURED = "<AK_STRUCTURED>"
+AK_ACTION_RESPOND = "<AK_ACTION_RESPOND>"
+AK_ACTION_ASK_USER = "<AK_ACTION_ASK_USER>"
+AK_ACTION_EXTENSION_REQUEST = "<AK_ACTION_EXTENSION_REQUEST>"
+AK_ACTION_SAVE_MEMORY = "<AK_ACTION_SAVE_MEMORY>"
+AK_CONTENT = "<AK_CONTENT>"
+AK_CONTENT_END = "</AK_CONTENT>"
+AK_TASK_TYPE = "<AK_TASK_TYPE>"
+AK_INTENT = "<AK_INTENT>"
+AK_FIELD = "<AK_FIELD>"
+AK_FIELD_NAME = "<AK_FIELD_NAME>"
+AK_FIELD_VALUE = "<AK_FIELD_VALUE>"
+AK_FIELDS = "<AK_FIELDS>"
+AK_FRESHNESS = "<AK_FRESHNESS>"
+AK_END = "<AK_END>"
+AK_WEB_SEARCH = "<AK_WEB_SEARCH>"
+AK_WEB_RESULT = "<AK_WEB_RESULT>"
+AK_SOURCE = "<AK_SOURCE>"
+AK_MAX_SOURCES = "<AK_MAX_SOURCES>"
 AGENTKERNEL_SPECIAL_TOKENS = [
     AK_USER,
     AK_CHAT,
@@ -637,7 +677,901 @@ AGENTKERNEL_SPECIAL_TOKENS = [
     AK_CITE,
     AK_RENDER,
     AK_JSON,
+    AK_PROFILE,
+    AK_SLOT,
+    AK_SLOT_NAME,
+    AK_SLOT_VALUE,
+    AK_PREFERENCE,
+    AK_GOAL,
+    AK_DOMAIN,
+    AK_TONE,
+    AK_CONSTRAINT,
+    AK_PRIVACY,
+    AK_REMEMBER,
+    AK_UPDATE_SLOT,
+    AK_DELETE_SLOT,
+    AK_EXTENSION,
+    AK_CAPABILITY,
+    AK_APPROVAL,
+    AK_SAVE_MEMORY,
+    AK_ASK_USER,
+    AK_SOURCE_TYPE,
+    AK_EXTENSION_RESULT,
+    AK_INSTALLED,
+    AK_STRUCTURED,
+    AK_ACTION_RESPOND,
+    AK_ACTION_ASK_USER,
+    AK_ACTION_EXTENSION_REQUEST,
+    AK_ACTION_SAVE_MEMORY,
+    AK_CONTENT,
+    AK_CONTENT_END,
+    AK_TASK_TYPE,
+    AK_INTENT,
+    AK_FIELD,
+    AK_FIELD_NAME,
+    AK_FIELD_VALUE,
+    AK_FIELDS,
+    AK_FRESHNESS,
+    AK_END,
+    AK_WEB_SEARCH,
+    AK_WEB_RESULT,
+    AK_SOURCE,
+    AK_MAX_SOURCES,
 ]
+
+
+USER_SLOT_PROFILES = [
+    {
+        "name": "busy founder",
+        "domain": "product planning",
+        "goal": "turn rough ideas into short launch tasks",
+        "tone": "direct and practical",
+        "preference": "give the next three actions before background detail",
+        "constraint": "keep responses under 120 words unless asked",
+        "private": "do not reveal calendar details unless the user asks",
+        "request": "Help me decide what to do next for the app this afternoon.",
+        "answer": (
+            "Next: define the smallest useful user setting, write one example flow, and test it on-device. "
+            "For the app work, keep the scope to a single configurable behavior before expanding the model."
+        ),
+        "memory_request": "Remember that PocketPal should feel like a local personal agent, not a paper search app.",
+        "memory_content": "PocketPal should feel like a local personal agent, not a paper search app.",
+        "missing_slot_request": "Can you set up my preferred daily planning style?",
+        "missing_slot_question": "What daily planning style should I use: checklist, time-blocked schedule, or short priority list?",
+        "extension_id": "image_generation",
+        "capability": "image.generate",
+        "extension_request": "Make a small app icon concept for PocketPal.",
+        "extension_args": {"prompt": "small friendly local assistant app icon concept for PocketPal"},
+        "extension_result": "Generated an icon draft with a compact assistant mark and blue-green app background.",
+        "context_type": "project_note",
+        "context_text": "PocketPal should prioritize local-first privacy, short practical answers, and user-editable configuration slots.",
+        "context_request": "Use my project notes and tell me what matters most for the next build.",
+    },
+    {
+        "name": "student",
+        "domain": "study planning",
+        "goal": "prepare for exams without long study blocks",
+        "tone": "calm and encouraging",
+        "preference": "break work into 25 minute sessions",
+        "constraint": "avoid dense academic language",
+        "private": "never expose grades in a shared summary",
+        "request": "Make a quick study plan for tonight.",
+        "answer": (
+            "Use three 25 minute sessions: review the hardest topic first, do practice questions second, "
+            "then make a short mistake list. Stop after the third block and only extend if you still feel clear."
+        ),
+        "memory_request": "Remember I study better when the first task is the hardest one.",
+        "memory_content": "The user studies better when the first task is the hardest one.",
+        "missing_slot_request": "Can you tune my homework help style?",
+        "missing_slot_question": "Should homework help be step-by-step, hint-first, or answer-checking only?",
+        "extension_id": "translator",
+        "capability": "translation.text",
+        "extension_request": "Translate this note to Spanish: I will study after dinner.",
+        "extension_args": {
+            "text": "I will study after dinner.",
+            "source_language": "English",
+            "target_language": "Spanish",
+            "modality": "text",
+        },
+        "extension_result": "Estudiaré después de cenar.",
+        "context_type": "study_note",
+        "context_text": "The biology exam covers cells, membranes, enzymes, and practice diagrams. The user struggles most with enzymes.",
+        "context_request": "Use my study note and pick what I should review first.",
+    },
+    {
+        "name": "caregiver",
+        "domain": "household coordination",
+        "goal": "remember routines and reduce repeated planning",
+        "tone": "brief and warm",
+        "preference": "use checklists for errands",
+        "constraint": "flag anything that needs another person's confirmation",
+        "private": "keep health notes local",
+        "request": "What should I pack before leaving?",
+        "answer": (
+            "Pack keys, wallet, medication, water, and the errand list. Confirm any time-sensitive pickup before leaving. "
+            "I will keep health-related notes local to this profile."
+        ),
+        "memory_request": "Remember that medication reminders are private and should stay local.",
+        "memory_content": "Medication reminders are private and should stay local.",
+        "missing_slot_request": "Set up how you help with errands.",
+        "missing_slot_question": "Should errand help focus on packing lists, route order, or reminders?",
+        "extension_id": "translator",
+        "capability": "translation.audio",
+        "extension_request": "Translate a short spoken errand note into English.",
+        "extension_args": {
+            "source_language": "Auto",
+            "target_language": "English",
+            "modality": "audio",
+            "surface": "browser",
+        },
+        "extension_result": "Pick up the prescription before 5 PM.",
+        "context_type": "household_note",
+        "context_text": "Today includes a pharmacy pickup, school form drop-off, and a grocery stop. The pharmacy closes at 5 PM.",
+        "context_request": "Use my household note and tell me the priority.",
+    },
+    {
+        "name": "maker",
+        "domain": "hardware projects",
+        "goal": "finish small prototypes",
+        "tone": "technical but concise",
+        "preference": "list parts and risks separately",
+        "constraint": "do not assume access to paid cloud tools",
+        "private": "do not share supplier notes outside the device",
+        "request": "Plan the next prototype step.",
+        "answer": (
+            "Parts: controller, battery, enclosure, and test leads. Next step: build the smallest powered loop and measure heat. "
+            "Risk: battery fit and runtime. Use local tools first."
+        ),
+        "memory_request": "Remember that I want risks separated from parts in prototype plans.",
+        "memory_content": "For prototype plans, separate risks from parts.",
+        "missing_slot_request": "Set up how you should help with prototypes.",
+        "missing_slot_question": "Should prototype help optimize for speed, low cost, reliability, or learning?",
+        "extension_id": "image_generation",
+        "capability": "image.generate",
+        "extension_request": "Generate a simple enclosure sketch prompt for this prototype.",
+        "extension_args": {"prompt": "simple compact electronics enclosure sketch with battery compartment and test ports"},
+        "extension_result": "Generated a simple enclosure sketch with labeled battery and test-port areas.",
+        "context_type": "project_file",
+        "context_text": "The prototype overheated after 12 minutes. Battery fit is tight and the enclosure lacks airflow.",
+        "context_request": "Use my project file and tell me the next hardware test.",
+    },
+]
+
+
+POCKETPAL_FOCUS_AREAS = [
+    "today's priorities",
+    "the next app build",
+    "a weekly routine",
+    "a short decision",
+    "a saved project",
+    "a private note",
+    "a repeat workflow",
+    "a deadline",
+    "a handoff message",
+    "a local-only summary",
+    "a troubleshooting pass",
+    "a follow-up plan",
+]
+
+POCKETPAL_HORIZONS = [
+    "this afternoon",
+    "tonight",
+    "tomorrow morning",
+    "this week",
+    "before the next meeting",
+    "before leaving home",
+    "during a 25 minute block",
+    "after the current task",
+]
+
+POCKETPAL_TONES = [
+    "direct and practical",
+    "calm and concise",
+    "technical but concise",
+    "brief and warm",
+    "checklist-first",
+    "plainspoken and specific",
+]
+
+POCKETPAL_RESPONSE_PREFERENCES = [
+    "give the next three actions before background detail",
+    "start with the highest-impact step",
+    "use a checklist when there are multiple tasks",
+    "separate risks from actions",
+    "ask one question when a key detail is missing",
+    "keep the answer short and locally grounded",
+    "state what can be done without an extension first",
+    "show the decision and then the next step",
+]
+
+POCKETPAL_CONSTRAINTS = [
+    "keep responses under 120 words unless asked",
+    "do not assume cloud access",
+    "do not expose private notes in shareable drafts",
+    "do not use an extension without approval",
+    "avoid claims not supported by local context",
+    "prefer reversible changes",
+    "flag anything that needs another person's confirmation",
+    "keep the first answer actionable",
+]
+
+POCKETPAL_PRIVATE_NOTES = [
+    "keep health notes local",
+    "keep calendar details local unless the user asks",
+    "do not include grades in shared summaries",
+    "do not share supplier notes outside the device",
+    "hide exact addresses from shareable drafts",
+    "keep contact details out of generated examples",
+    "do not reveal private routines to extensions unless approved",
+    "summarize sensitive details instead of quoting them",
+]
+
+POCKETPAL_CONTEXT_TYPES = [
+    "project_note",
+    "study_note",
+    "household_note",
+    "project_file",
+    "calendar_summary",
+    "saved_webpage",
+    "personal_note",
+    "extension_receipt",
+]
+
+POCKETPAL_MEMORY_KINDS = [
+    "preference",
+    "routine",
+    "project_fact",
+    "privacy_rule",
+    "workflow_style",
+    "deadline_hint",
+]
+
+POCKETPAL_MISSING_SLOTS = [
+    ("workflow_style", "Should I use checklist, time-blocked schedule, or short priority list for this?"),
+    ("response_length", "Should answers be short, normal, or detailed for this workflow?"),
+    ("privacy_level", "Should this be private, shareable, or extension-visible after approval?"),
+    ("extension_policy", "Should I ask every time before using this extension, or only for sensitive inputs?"),
+    ("priority_rule", "Should I prioritize speed, quality, cost, reliability, or learning?"),
+    ("output_format", "Should I format this as bullets, a message draft, or a step-by-step plan?"),
+]
+
+POCKETPAL_MISSING_SLOT_REQUESTS = {
+    "workflow_style": [
+        "Configure how you should plan this workflow.",
+        "Set up the planning style for this kind of work.",
+        "Decide how you should organize my next task.",
+    ],
+    "response_length": [
+        "Configure how detailed my daily plan should be.",
+        "Set how much detail you should use for this workflow.",
+        "Choose how long your answers should be when I ask for planning help.",
+    ],
+    "privacy_level": [
+        "Configure how private this workflow should be.",
+        "Set whether this kind of note is private or shareable.",
+        "Decide what privacy level to use before helping with this.",
+    ],
+    "extension_policy": [
+        "Configure when you should use installed extensions.",
+        "Set whether extensions need approval for this workflow.",
+        "Decide when you should ask before using an extension.",
+    ],
+    "priority_rule": [
+        "Configure what you should optimize for first.",
+        "Set the priority rule for this workflow.",
+        "Decide whether speed, quality, cost, reliability, or learning matters most.",
+    ],
+    "output_format": [
+        "Configure the output format for this workflow.",
+        "Set how you should format plans for this kind of request.",
+        "Choose whether replies should be bullets, drafts, or step-by-step plans.",
+    ],
+}
+
+POCKETPAL_EXTENSIONS = [
+    (
+        "image_generation",
+        "image.generate",
+        "Make a visual draft for {focus}.",
+        {"prompt": "local personal assistant visual draft for {focus}"},
+        "Generated a visual draft for {focus}.",
+    ),
+    (
+        "translator",
+        "translation.text",
+        "Translate this note to Spanish: I will handle {focus} {horizon}.",
+        {
+            "text": "I will handle {focus} {horizon}.",
+            "source_language": "English",
+            "target_language": "Spanish",
+            "modality": "text",
+        },
+        "Translated the note about {focus} into Spanish.",
+    ),
+    (
+        "translator",
+        "translation.audio",
+        "Translate a short spoken note about {focus}.",
+        {
+            "source_language": "Auto",
+            "target_language": "English",
+            "modality": "audio",
+            "surface": "browser",
+        },
+        "Translated the spoken note about {focus}.",
+    ),
+    (
+        "calendar",
+        "calendar.create_event",
+        "Put {focus} on the calendar {horizon} at 3pm.",
+        {
+            "title": "{focus}",
+            "when": "{horizon} at 3pm",
+            "calendar": "default",
+        },
+        "Created a calendar event for {focus} {horizon} at 3pm.",
+    ),
+    (
+        "reminders",
+        "reminder.create",
+        "Remind me about {focus} {horizon}.",
+        {
+            "title": "{focus}",
+            "when": "{horizon}",
+            "priority": "normal",
+        },
+        "Created a reminder for {focus} {horizon}.",
+    ),
+    (
+        "files",
+        "file.search",
+        "Find my local notes about {focus}.",
+        {
+            "query": "{focus}",
+            "scope": "local_user_files",
+        },
+        "Found local notes related to {focus}.",
+    ),
+]
+
+
+POCKETPAL_WEB_SEARCH_SCENARIOS = [
+    {
+        "query": "California wildfire insurance market 2025",
+        "request": "Search the web for California wildfire insurance market 2025 and summarize the main points.",
+        "results": [
+            {
+                "source": "California FAIR Plan",
+                "title": "California FAIR Plan",
+                "snippet": "The FAIR Plan is the state-backed fire insurance option when homeowners cannot obtain normal coverage.",
+                "url": "https://example.test/fair-plan",
+            },
+            {
+                "source": "Insurance market report",
+                "title": "California insurance availability",
+                "snippet": "Insurers have reduced exposure in high wildfire-risk areas, increasing pressure on last-resort coverage.",
+                "url": "https://example.test/insurance-market",
+            },
+        ],
+        "answer": (
+            "The search points to two useful facts: California homeowners in high wildfire-risk areas may rely on the FAIR Plan, "
+            "and private insurers have been reducing exposure in those areas. Treat this as a market-availability issue and verify details before making decisions."
+        ),
+    },
+    {
+        "query": "Rust async runtime comparison tokio smol",
+        "request": "Search online for Rust async runtime comparison tokio smol.",
+        "results": [
+            {
+                "source": "Stack Overflow",
+                "title": "Choosing a Rust async runtime",
+                "snippet": "Tokio is widely used for production networking; smaller runtimes can be useful for lightweight applications.",
+                "url": "https://example.test/rust-runtime",
+            },
+            {
+                "source": "GitHub",
+                "title": "smol-rs/smol",
+                "snippet": "Smol is a small and fast async runtime for Rust with a compact API surface.",
+                "url": "https://example.test/smol",
+            },
+        ],
+        "answer": (
+            "The useful distinction is scope: Tokio is the safer default for production networking because of ecosystem support, "
+            "while smol is attractive for smaller async programs that value a compact runtime."
+        ),
+    },
+    {
+        "query": "solid state battery Toyota production timeline",
+        "request": "Do a web search on Toyota solid state battery production timeline.",
+        "results": [
+            {
+                "source": "Automotive report",
+                "title": "Toyota solid-state battery plans",
+                "snippet": "Toyota has discussed commercialization plans for solid-state batteries, but timelines depend on manufacturing readiness.",
+                "url": "https://example.test/toyota-solid-state",
+            },
+            {
+                "source": "Battery research index",
+                "title": "Solid-state battery manufacturing",
+                "snippet": "Scaling solid-state batteries requires solving cost, durability, and production-yield problems.",
+                "url": "https://example.test/solid-state-scale",
+            },
+        ],
+        "answer": (
+            "The search suggests Toyota's solid-state battery timeline should be treated as conditional, not guaranteed. "
+            "The core blockers are manufacturing scale, cost, durability, and yield."
+        ),
+    },
+]
+
+
+def _format_template(value: object, **kwargs: str) -> object:
+    if isinstance(value, str):
+        return value.format(**kwargs)
+    if isinstance(value, dict):
+        return {key: _format_template(item, **kwargs) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_format_template(item, **kwargs) for item in value]
+    return value
+
+
+def _profile_instance(base: dict[str, str], index: int) -> dict[str, Any]:
+    focus = POCKETPAL_FOCUS_AREAS[index % len(POCKETPAL_FOCUS_AREAS)]
+    horizon = POCKETPAL_HORIZONS[(index // len(POCKETPAL_FOCUS_AREAS)) % len(POCKETPAL_HORIZONS)]
+    tone = POCKETPAL_TONES[(index // 3) % len(POCKETPAL_TONES)]
+    preference = POCKETPAL_RESPONSE_PREFERENCES[(index // 5) % len(POCKETPAL_RESPONSE_PREFERENCES)]
+    constraint = POCKETPAL_CONSTRAINTS[(index // 7) % len(POCKETPAL_CONSTRAINTS)]
+    private_note = POCKETPAL_PRIVATE_NOTES[(index // 11) % len(POCKETPAL_PRIVATE_NOTES)]
+    context_type = POCKETPAL_CONTEXT_TYPES[(index // 13) % len(POCKETPAL_CONTEXT_TYPES)]
+    memory_kind = POCKETPAL_MEMORY_KINDS[(index // 17) % len(POCKETPAL_MEMORY_KINDS)]
+    missing_slot, missing_question = POCKETPAL_MISSING_SLOTS[(index // 19) % len(POCKETPAL_MISSING_SLOTS)]
+    missing_requests = POCKETPAL_MISSING_SLOT_REQUESTS.get(missing_slot, [])
+    missing_request = (
+        missing_requests[(index // 29) % len(missing_requests)]
+        if missing_requests
+        else f"Set up how you should help with {focus}."
+    )
+    extension_id, capability, extension_request, extension_args, extension_result = POCKETPAL_EXTENSIONS[
+        (index // 23) % len(POCKETPAL_EXTENSIONS)
+    ]
+    profile: dict[str, Any] = dict(base)
+    profile.update(
+        {
+            "domain": f"{base['domain']} for {focus}",
+            "goal": f"{base['goal']} {horizon}",
+            "tone": tone,
+            "preference": preference,
+            "constraint": constraint,
+            "private": private_note,
+            "request": f"Help me with {focus} {horizon}.",
+            "answer": (
+                f"For {focus} {horizon}, start with the highest-impact step, then check the constraint: {constraint}. "
+                f"Use a {tone} style and keep the work tied to {base['domain']}."
+            ),
+            "memory_request": f"Remember that for {focus} I prefer: {preference}.",
+            "memory_content": f"For {focus}, the user prefers to {preference}.",
+            "memory_kind": memory_kind,
+            "missing_slot_request": missing_request,
+            "missing_slot": missing_slot,
+            "missing_slot_question": missing_question,
+            "extension_id": extension_id,
+            "capability": capability,
+            "extension_request": str(_format_template(extension_request, focus=focus, horizon=horizon)),
+            "extension_args": _format_template(extension_args, focus=focus, horizon=horizon),
+            "extension_result": str(_format_template(extension_result, focus=focus, horizon=horizon)),
+            "context_type": context_type,
+            "context_text": (
+                f"Local {context_type} for {focus}: the user wants {base['goal']} {horizon}. "
+                f"Constraint: {constraint}. Preference: {preference}."
+            ),
+            "context_request": f"Use my local context and tell me what matters for {focus}.",
+        }
+    )
+    return profile
+
+
+def _slot_profile_block(profile: dict[str, str]) -> str:
+    return "\n".join(
+        [
+            f"{AK_PROFILE} PocketPal user configuration.",
+            f"{AK_SLOT} {AK_SLOT_NAME}=domain {AK_SLOT_VALUE}={profile['domain']} {AK_DOMAIN}",
+            f"{AK_SLOT} {AK_SLOT_NAME}=goal {AK_SLOT_VALUE}={profile['goal']} {AK_GOAL}",
+            f"{AK_SLOT} {AK_SLOT_NAME}=tone {AK_SLOT_VALUE}={profile['tone']} {AK_TONE}",
+            f"{AK_SLOT} {AK_SLOT_NAME}=preference {AK_SLOT_VALUE}={profile['preference']} {AK_PREFERENCE}",
+            f"{AK_SLOT} {AK_SLOT_NAME}=constraint {AK_SLOT_VALUE}={profile['constraint']} {AK_CONSTRAINT}",
+            f"{AK_SLOT} {AK_SLOT_NAME}=private_note {AK_SLOT_VALUE}={profile['private']} {AK_PRIVACY}",
+        ]
+    )
+
+
+def _user_slot_examples(*, max_examples: int, objective: str, seed: int) -> list[dict[str, Any]]:
+    if max_examples <= 0:
+        return []
+    rng = random.Random(int(seed))
+    examples: list[dict[str, Any]] = []
+    profiles = list(USER_SLOT_PROFILES)
+    index = 0
+    while len(examples) < max_examples:
+        profile = _profile_instance(profiles[index % len(profiles)], index)
+        profile_block = _slot_profile_block(profile)
+        web_search = POCKETPAL_WEB_SEARCH_SCENARIOS[index % len(POCKETPAL_WEB_SEARCH_SCENARIOS)]
+        web_result_lines = "\n".join(
+            (
+                f"{AK_WEB_RESULT} [W{result_index}] {AK_SOURCE}={result['source']} "
+                f"title={result['title']} url={result['url']} snippet={result['snippet']}"
+            )
+            for result_index, result in enumerate(web_search["results"], start=1)
+        )
+        variants = [
+            {
+                "task_type": "slot_conditioned_runtime_minimal",
+                "source_id": f"{profile['name']}:runtime_respond:{index}",
+                "action": "respond",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_PROFILE} {AK_SLOT}\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} {profile['request']}"
+                ),
+                "content": profile["answer"],
+                "metadata": {
+                    "task_type": "slot_conditioned_response",
+                    "runtime_prompt_shape": "minimal_profile_slots",
+                    "used_slots": ["domain", "goal", "tone", "preference", "constraint", "private_note"],
+                    "profile_name": profile["name"],
+                },
+                "weight": 1.6,
+            },
+            {
+                "task_type": "slot_conditioned_response",
+                "source_id": f"{profile['name']}:respond:{index}",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_PROFILE} {AK_SLOT}\n"
+                    "PocketPal slot-conditioned assistant example.\n"
+                    "Use the stable model behavior plus the user-filled slots. Follow privacy and constraint slots. "
+                    "Do not mention slot mechanics unless the user asks.\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} {profile['request']}\n"
+                    "Return a structured chat decision with action=respond."
+                ),
+                "content": profile["answer"],
+                "metadata": {
+                    "task_type": "slot_conditioned_response",
+                    "used_slots": ["domain", "goal", "tone", "preference", "constraint", "private_note"],
+                    "profile_name": profile["name"],
+                },
+                "weight": 1.3,
+            },
+            {
+                "task_type": "slot_update",
+                "source_id": f"{profile['name']}:update:{index}",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_PROFILE} {AK_SLOT} {AK_UPDATE_SLOT} {AK_REMEMBER}\n"
+                    "PocketPal user-slot update example.\n"
+                    "The user is changing one configurable slot. Acknowledge the change and encode the update in metadata. "
+                    "Keep the response short.\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} Remember that I prefer {profile['tone']} answers when I am busy.\n"
+                    "Return a structured chat decision with action=respond and proposal_metadata.slot_updates."
+                ),
+                "content": f"Got it. I will use {profile['tone']} answers when you are busy.",
+                "metadata": {
+                    "task_type": "slot_update",
+                    "slot_updates": {"tone": profile["tone"], "busy_mode": True},
+                    "profile_name": profile["name"],
+                },
+                "weight": 1.1,
+            },
+            {
+                "task_type": "slot_privacy_boundary",
+                "source_id": f"{profile['name']}:privacy:{index}",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_PROFILE} {AK_PRIVACY} {AK_CONSTRAINT}\n"
+                    "PocketPal privacy-boundary example.\n"
+                    "Use local profile slots without exposing private slot values to another person. "
+                    "Offer a safe summary instead.\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} Write a message I can send someone about my plan, but leave out private details.\n"
+                    "Return a structured chat decision with action=respond."
+                ),
+                "content": (
+                    "Here is a shareable version: I have a short plan and will handle the next step today. "
+                    "I left out private profile details."
+                ),
+                "metadata": {
+                    "task_type": "slot_privacy_boundary",
+                    "private_slots_excluded": ["private_note"],
+                    "profile_name": profile["name"],
+                },
+                "weight": 1.2,
+            },
+            {
+                "task_type": "memory_save",
+                "source_id": f"{profile['name']}:memory:{index}",
+                "action": "save_memory",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_SAVE_MEMORY} {AK_PROFILE} {AK_SLOT} {AK_REMEMBER}\n"
+                    "PocketPal local memory example.\n"
+                    "The user explicitly asks the assistant to remember a preference or fact. "
+                    "Save it as local user memory, include a short user-facing acknowledgement, and do not use an extension.\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} {profile['memory_request']}\n"
+                    "Return a structured decision with action=save_memory and proposal_metadata.memory."
+                ),
+                "content": "Saved locally.",
+                "metadata": {
+                    "task_type": "memory_save",
+                    "memory": {
+                        "scope": "local_user_profile",
+                        "kind": profile["memory_kind"],
+                        "text": _compact(profile["memory_content"], limit=180),
+                    },
+                    "profile_name": profile["name"],
+                },
+                "weight": 3.0,
+            },
+            {
+                "task_type": "memory_save",
+                "source_id": f"{profile['name']}:memory_runtime:{index}",
+                "action": "save_memory",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_SAVE_MEMORY} {AK_PROFILE} {AK_REMEMBER}\n"
+                    "PocketPal runtime memory request.\n"
+                    f"{AK_SLOT} <AK_SLOT_NAME>=domain <AK_SLOT_VALUE>={profile['domain']} {AK_DOMAIN}\n"
+                    f"{AK_SLOT} <AK_SLOT_NAME>=tone <AK_SLOT_VALUE>={profile['tone']} {AK_TONE}\n"
+                    f"{AK_USER} {profile['memory_request']}\n"
+                    "Return JSON with action=save_memory."
+                ),
+                "content": "Saved locally.",
+                "metadata": {
+                    "task_type": "memory_save",
+                    "memory": {
+                        "scope": "local_user_profile",
+                        "kind": profile["memory_kind"],
+                        "text": _compact(profile["memory_content"], limit=160),
+                    },
+                    "runtime_prompt_shape": "minimal_memory_request",
+                },
+                "weight": 3.5,
+            },
+            {
+                "task_type": "ask_missing_slot",
+                "source_id": f"{profile['name']}:ask_slot:{index}",
+                "action": "ask_user",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_ASK_USER} {AK_PROFILE} {AK_SLOT}\n"
+                    "PocketPal missing-slot example.\n"
+                    "The user asks to configure behavior, but the requested slot value is not present. "
+                    "Ask one concise question instead of guessing.\n"
+                    f"{profile_block}\n"
+                    f"{AK_USER} {profile['missing_slot_request']}\n"
+                    "Return a structured decision with action=ask_user."
+                ),
+                "content": profile["missing_slot_question"],
+                "metadata": {
+                    "task_type": "ask_missing_slot",
+                    "missing_slot": profile["missing_slot"],
+                    "profile_name": profile["name"],
+                },
+                "weight": 3.0,
+            },
+            {
+                "task_type": "ask_missing_slot",
+                "source_id": f"{profile['name']}:ask_slot_runtime:{index}",
+                "action": "ask_user",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_ASK_USER} {AK_PROFILE} {AK_SLOT}\n"
+                    "PocketPal runtime missing-slot request.\n"
+                    f"{AK_SLOT} <AK_SLOT_NAME>=domain <AK_SLOT_VALUE>={profile['domain']} {AK_DOMAIN}\n"
+                    f"{AK_USER} {profile['missing_slot_request']}\n"
+                    "Return JSON with action=ask_user."
+                ),
+                "content": profile["missing_slot_question"],
+                "metadata": {
+                    "task_type": "ask_missing_slot",
+                    "missing_slot": profile["missing_slot"],
+                    "runtime_prompt_shape": "minimal_missing_slot",
+                },
+                "weight": 3.5,
+            },
+            {
+                "task_type": "extension_request",
+                "source_id": f"{profile['name']}:extension:{index}",
+                "action": "extension_request",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_EXTENSION} {AK_CAPABILITY} {AK_APPROVAL} {AK_INSTALLED}\n"
+                    "PocketPal installed-extension routing example.\n"
+                    "The requested work needs an installed extension. Emit an extension_request with approval required; "
+                    "do not pretend the extension already ran.\n"
+                    f"{profile_block}\n"
+                    f"{AK_EXTENSION} installed id={profile['extension_id']} {AK_CAPABILITY} {profile['capability']} approval_policy=always_ask\n"
+                    f"{AK_USER} {profile['extension_request']}\n"
+                    "Return a structured decision with action=extension_request and proposal_metadata.extension_id/capability."
+                ),
+                "content": f"Requesting approval to use {profile['extension_id']}:{profile['capability']}.",
+                "metadata": {
+                    "task_type": "extension_request",
+                    "extension_id": profile["extension_id"],
+                    "capability": profile["capability"],
+                    "requires_user_approval": True,
+                    "profile_name": profile["name"],
+                },
+                "weight": 3.0,
+            },
+            {
+                "task_type": "extension_request",
+                "source_id": f"{profile['name']}:extension_runtime:{index}",
+                "action": "extension_request",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_EXTENSION} {AK_CAPABILITY} {AK_APPROVAL} {AK_INSTALLED}\n"
+                    "PocketPal runtime extension request.\n"
+                    f"{AK_EXTENSION} installed id={profile['extension_id']} {AK_CAPABILITY} {profile['capability']} approval_policy=always_ask\n"
+                    f"{AK_USER} {profile['extension_request']}\n"
+                    "Return JSON with action=extension_request."
+                ),
+                "content": f"Requesting approval to use {profile['extension_id']}:{profile['capability']}.",
+                "metadata": {
+                    "task_type": "extension_request",
+                    "extension_id": profile["extension_id"],
+                    "capability": profile["capability"],
+                    "requires_user_approval": True,
+                    "runtime_prompt_shape": "minimal_extension_request",
+                },
+                "weight": 3.5,
+            },
+            {
+                "task_type": "extension_result_summary",
+                "source_id": f"{profile['name']}:extension_result:{index}",
+                "action": "respond",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_EXTENSION_RESULT} {AK_EXTENSION}\n"
+                    "PocketPal extension-result example.\n"
+                    "The extension has already run with user approval. Summarize the result and suggest the next user action.\n"
+                    f"{profile_block}\n"
+                    f"{AK_EXTENSION_RESULT} id={profile['extension_id']} capability={profile['capability']} status=approved_executed\n"
+                    f"{profile['extension_result']}\n"
+                    f"{AK_USER} What happened?\n"
+                    "Return a structured decision with action=respond."
+                ),
+                "content": f"{profile['extension_result']} Next, review it and tell me what you want changed.",
+                "metadata": {
+                    "task_type": "extension_result_summary",
+                    "extension_id": profile["extension_id"],
+                    "capability": profile["capability"],
+                    "profile_name": profile["name"],
+                },
+                "weight": 1.0,
+            },
+            {
+                "task_type": "web_search_request",
+                "source_id": f"{profile['name']}:web_search_request:{index}",
+                "action": "extension_request",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_WEB_SEARCH} {AK_EXTENSION} {AK_CAPABILITY} {AK_APPROVAL} {AK_MAX_SOURCES}\n"
+                    "PocketPal web-search routing example.\n"
+                    "The user asks for current or web-backed information. Request the web_search extension with a bounded source count. "
+                    "Do not invent search results before the extension runs.\n"
+                    f"{profile_block}\n"
+                    f"{AK_EXTENSION} installed id=web_search {AK_CAPABILITY} web.search approval_policy=always_ask\n"
+                    f"{AK_MAX_SOURCES}=5\n"
+                    f"{AK_USER} {web_search['request']}\n"
+                    "Return a structured decision with action=extension_request and proposal_metadata.extension_id/capability/query/max_sources."
+                ),
+                "content": "Requesting approval to search the web.",
+                "metadata": {
+                    "task_type": "extension_request",
+                    "extension_id": "web_search",
+                    "capability": "web.search",
+                    "query": web_search["query"],
+                    "max_sources": 5,
+                    "requires_user_approval": True,
+                    "profile_name": profile["name"],
+                },
+                "weight": 3.8,
+            },
+            {
+                "task_type": "web_search_result_synthesis",
+                "source_id": f"{profile['name']}:web_search_synthesis:{index}",
+                "action": "respond",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_WEB_SEARCH} {AK_WEB_RESULT} {AK_SOURCE} {AK_MAX_SOURCES}\n"
+                    "PocketPal web-search synthesis example.\n"
+                    "The web_search extension has returned structured sources. Answer only from the provided results, name the source basis, "
+                    "and avoid unsupported claims.\n"
+                    f"{profile_block}\n"
+                    f"{AK_WEB_SEARCH} query={web_search['query']} {AK_MAX_SOURCES}=5\n"
+                    f"{web_result_lines}\n"
+                    f"{AK_USER} What did you find?\n"
+                    "Return a structured decision with action=respond."
+                ),
+                "content": web_search["answer"],
+                "metadata": {
+                    "task_type": "web_search_result_synthesis",
+                    "query": web_search["query"],
+                    "used_context_ids": ["W1", "W2"],
+                    "source_count": len(web_search["results"]),
+                },
+                "weight": 2.2,
+            },
+            {
+                "task_type": "web_search_weak_results",
+                "source_id": f"{profile['name']}:web_search_weak:{index}",
+                "action": "respond",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_WEB_SEARCH} {AK_INSUFFICIENT}\n"
+                    "PocketPal weak web-search result example.\n"
+                    "The structured search providers returned no sufficiently relevant results. Do not answer from weak matches; give the user the fallback search link.\n"
+                    f"{profile_block}\n"
+                    f"{AK_WEB_SEARCH} query=Rust async runtime comparison tokio smol {AK_MAX_SOURCES}=5\n"
+                    f"{AK_WEB_RESULT} none coverage=insufficient\n"
+                    f"{AK_USER} What did you find?\n"
+                    "Return a structured decision with action=respond."
+                ),
+                "content": (
+                    "I could not retrieve enough relevant structured results for that query. "
+                    "Use the browser search link and I can summarize the pages you choose to open."
+                ),
+                "metadata": {
+                    "task_type": "web_search_weak_results",
+                    "query": "Rust async runtime comparison tokio smol",
+                    "source_count": 0,
+                    "fallback": "browser_search_link",
+                },
+                "weight": 2.0,
+            },
+            {
+                "task_type": "user_context_answer",
+                "source_id": f"{profile['name']}:context:{index}",
+                "action": "respond",
+                "encoder_text": (
+                    f"{AK_CHAT} {AK_RESPOND} {AK_PROFILE} {AK_CONTEXT} {AK_SOURCE_TYPE}\n"
+                    "PocketPal user-context answer example.\n"
+                    "Answer from the provided local user context. Do not call it research evidence unless the source type is a paper. "
+                    "Respect privacy and profile constraints.\n"
+                    f"{profile_block}\n"
+                    f"{AK_CONTEXT} {AK_SOURCE_TYPE}={profile['context_type']}\n"
+                    f"{AK_EVIDENCE} [U1]: {profile['context_text']}\n"
+                    f"{AK_USER} {profile['context_request']}\n"
+                    "Return a structured decision with action=respond."
+                ),
+                "content": f"From [U1], prioritize {profile['context_text'].split(':', 1)[0].lower()}.",
+                "metadata": {
+                    "task_type": "user_context_answer",
+                    "used_context_ids": ["U1"],
+                },
+                "weight": 1.2,
+            },
+        ]
+        rng.shuffle(variants)
+        for variant in variants:
+            if len(examples) >= max_examples:
+                break
+            content = str(variant["content"])
+            decoder_text = (
+                _structured_decision_text(
+                    action=str(variant.get("action", "respond")),
+                    content=content,
+                    metadata=dict(variant["metadata"]),
+                )
+                if objective == "chat"
+                else content
+            )
+            examples.append(
+                {
+                    "source_type": "pocketpal_user_slots",
+                    "source_id": variant["source_id"],
+                    "task_type": variant["task_type"],
+                    "encoder_text": variant["encoder_text"],
+                    "decoder_text": decoder_text,
+                    "action": str(variant.get("action", "respond")),
+                    "source_action": str(variant.get("action", "respond")),
+                    "extension_capability": "",
+                    "benchmark_family": "pocketpal_user_config",
+                    "difficulty": variant["task_type"],
+                    "weight": float(variant["weight"]),
+                }
+            )
+        index += 1
+    return examples
 
 
 def _term_tokens(*values: object, limit: int = 8) -> list[str]:
@@ -1299,6 +2233,7 @@ def build_dataset(
     objective: str,
     code_trace_mode: str,
     seed: int,
+    max_user_slot_examples: int = 0,
 ) -> dict[str, Any]:
     objective_value = str(objective).strip().lower()
     objective = objective_value if objective_value in {"chat", "text"} else "action"
@@ -1334,6 +2269,7 @@ def build_dataset(
             seed=seed,
             streaming=paper_text_streaming,
         ),
+        *_user_slot_examples(max_examples=max_user_slot_examples, objective=objective, seed=seed),
     ]
     rows = _dedupe(rows)
     rows = _limit_mixed(rows, max_examples)
@@ -1383,6 +2319,7 @@ def build_dataset(
         "paper_text_path": str(paper_text_path) if str(paper_text_path) != "." else "",
         "paper_text_negative_count": int(paper_text_negative_count),
         "paper_text_streaming": bool(paper_text_streaming),
+        "max_user_slot_examples": int(max_user_slot_examples),
         "agentkernel_special_tokens": list(AGENTKERNEL_SPECIAL_TOKENS),
         "seed": int(seed),
         "repo_root": str(repo_root),
@@ -1401,6 +2338,7 @@ def build_dataset(
             "encoder_text": "context/compiler input for the encoder",
             "decoder_text": "target structured chat decision for the decoder when objective=chat",
             "task_type": "optional multitask label such as query_rewrite, rerank_candidates, evidence_sufficiency, answer_synthesis",
+            "pocketpal_user_slots": "synthetic examples that teach user-filled profile slots, slot updates, and privacy boundaries",
             "weight": "loss weight; trainer may ignore until weighted loss is enabled",
         },
     }
@@ -1428,6 +2366,7 @@ def main() -> None:
     parser.add_argument("--max-paper-text-examples", type=int, default=0)
     parser.add_argument("--paper-text-negative-count", type=int, default=3)
     parser.add_argument("--paper-text-streaming", choices=("0", "1"), default="1")
+    parser.add_argument("--max-user-slot-examples", type=int, default=0)
     parser.add_argument("--max-examples", type=int, default=0)
     parser.add_argument("--eval-fraction", type=float, default=0.05)
     parser.add_argument("--objective", choices=("chat", "text", "action"), default="chat")
@@ -1455,6 +2394,7 @@ def main() -> None:
         max_paper_text_examples=int(args.max_paper_text_examples),
         paper_text_negative_count=int(args.paper_text_negative_count),
         paper_text_streaming=str(args.paper_text_streaming) == "1",
+        max_user_slot_examples=int(args.max_user_slot_examples),
         eval_fraction=float(args.eval_fraction),
         max_examples=int(args.max_examples),
         objective=str(args.objective),

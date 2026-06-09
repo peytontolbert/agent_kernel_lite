@@ -2,19 +2,25 @@
   "id": "image_generation",
   "name": "Image Generation",
   "version": "0.1.0-dev",
-  "source": "local-dev",
+  "source": "local",
   "default_enabled": false,
   "approval_policy": "always_ask",
   "capabilities": [
     {
       "id": "image.generate",
-      "description": "Generate a browser image artifact from a prompt using the local AgentKernel Lite BitDiT model.",
+      "description": "Generate an image artifact from a prompt using the local development image runtime.",
       "scopes": ["prompt.read", "artifact.image.write"]
     }
   ],
   "metadata": {
     "adapter": "browser",
-    "model_id": "agentkernel_lite_image_bitdit_hf_cifar_distilled_v1",
-    "development_only": true
+    "backend": "sana_student_browser_wasm_pending",
+    "model_id": "agentkernel_lite_image_sana_300m_bitnet_block12_13ff_browser_v0",
+    "quality_tier": "staged-bitnet-qat-browser-export",
+    "teacher_model": "Efficient-Large-Model/Sana_Sprint_0.6B_1024px_teacher_diffusers",
+    "student_checkpoint": "checkpoints/agentkernel_lite_image_sana_300m_bitnet_block12_13ff_recover_v10b/sana_latent_student_best_block12_13ff_3300.pt",
+    "student_step": 3300,
+    "development_only": true,
+    "dense_reference_checkpoint": "checkpoints/agentkernel_lite_image_sana_300m_broad_v6/sana_latent_student_best_anchor_broad_3000.pt"
   }
 }

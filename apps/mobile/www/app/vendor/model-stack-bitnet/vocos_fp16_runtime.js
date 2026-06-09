@@ -1,3 +1,4 @@
+const MODEL_ASSET_CACHE = 'agent-kernel-lite-model-assets-v1';
 const SAMPLE_RATE = 24000;
 const N_FFT = 1024;
 const HOP = 256;
@@ -85,15 +86,54 @@ export class FP16TensorBundle {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.json();
+  const response = await fetch(url, { cache: 'force-cache' });
   if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
+  await writeCachedResponse(url, response.clone());
   return response.json();
 }
 
 async function fetchBuffer(url) {
-  const response = await fetch(url);
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.arrayBuffer();
+  const response = await fetch(url, { cache: 'force-cache' });
   if (!response.ok) throw new Error(`failed to fetch ${url}: ${response.status}`);
+  await writeCachedResponse(url, response.clone());
   return response.arrayBuffer();
+}
+
+async function modelAssetCache() {
+  if (typeof caches === 'undefined' || typeof caches.open !== 'function') return null;
+  try {
+    return await caches.open(MODEL_ASSET_CACHE);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readCachedResponse(url) {
+  const cache = await modelAssetCache();
+  if (!cache) return null;
+  try {
+    return await cache.match(cacheKeyForUrl(url));
+  } catch (_) {
+    return null;
+  }
+}
+
+async function writeCachedResponse(url, response) {
+  const cache = await modelAssetCache();
+  if (!cache || !response) return;
+  try {
+    if (response.ok || response.status === 0 || response.status === 200) {
+      await cache.put(cacheKeyForUrl(url), response);
+    }
+  } catch (_) {}
+}
+
+function cacheKeyForUrl(url) {
+  return new Request(new URL(url, globalThis.location?.href || import.meta.url).href, { method: 'GET' });
 }
 
 function alignedSlice(buffer, offset, nbytes, TypedArray) {

@@ -439,13 +439,15 @@ function adjustedTokenCandidates(logits, decLength, vocabSize, generatedIds, tok
   const offset = (decLength - 1) * vocabSize;
   const repetitionPenalty = Math.max(1, Math.min(2, Number(options.repetitionPenalty ?? 1.16)));
   const eosTokenId = Number(tokenizer.eosTokenId || 2);
+  const allowedSpecialIds = new Set(Array.from(options.allowedSpecialIds || []).map((id) => Number(id)));
   const blocked = new Set([
     Number(tokenizer.padTokenId ?? 0),
     Number(tokenizer.bosTokenId ?? 1),
     Number(tokenizer.unkTokenId ?? 3),
   ]);
   for (const id of tokenizer.specialIds || []) {
-    if (Number(id) !== eosTokenId) blocked.add(Number(id));
+    const tokenId = Number(id);
+    if (tokenId !== eosTokenId && !allowedSpecialIds.has(tokenId)) blocked.add(tokenId);
   }
   const candidates = [];
   for (let i = 0; i < vocabSize; i += 1) {
@@ -480,6 +482,64 @@ function selectNextToken(logits, decLength, vocabSize, generatedIds, tokenizer, 
   const candidates = adjustedTokenCandidates(logits, decLength, vocabSize, generatedIds, tokenizer, options);
   const eosTokenId = Number(tokenizer.eosTokenId || 2);
   return candidates.length ? sampleFromCandidates(candidates, temperature, topP) : eosTokenId;
+}
+
+function singleTokenId(tokenizer, text) {
+  try {
+    const ids = tokenizer.encode(String(text || ''), 8)
+      .map((id) => Number(id))
+      .filter((id) => id !== Number(tokenizer.bosTokenId || 1)
+        && id !== Number(tokenizer.eosTokenId || 2)
+        && id !== Number(tokenizer.padTokenId ?? 0));
+    return ids.length === 1 ? ids[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+function structuredDecodeAllowedSpecialIds(tokenizer) {
+  return [
+    '<AK_STRUCTURED>',
+    '<AK_ACTION_RESPOND>',
+    '<AK_ACTION_ASK_USER>',
+    '<AK_ACTION_EXTENSION_REQUEST>',
+    '<AK_ACTION_SAVE_MEMORY>',
+    '<AK_CONTENT>',
+    '</AK_CONTENT>',
+    '<AK_TASK_TYPE>',
+    '<AK_INTENT>',
+    '<AK_FIELD>',
+    '<AK_FIELD_NAME>',
+    '<AK_FIELD_VALUE>',
+    '<AK_FIELDS>',
+    '<AK_FRESHNESS>',
+    '<AK_END>',
+    '<AK_COPY_USER_SOURCE_1>',
+  ]
+    .map((token) => singleTokenId(tokenizer, token))
+    .filter((id) => Number.isFinite(Number(id)));
+}
+
+function isCompleteJsonObjectText(text) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{') || !raw.endsWith('}')) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function isCompleteAkDecisionText(text) {
+  const raw = String(text || '').trim();
+  if (!raw.includes('<AK_STRUCTURED>')) return false;
+  const hasAction = raw.includes('<AK_ACTION_RESPOND>')
+    || raw.includes('<AK_ACTION_ASK_USER>')
+    || raw.includes('<AK_ACTION_EXTENSION_REQUEST>')
+    || raw.includes('<AK_ACTION_SAVE_MEMORY>');
+  if (!hasAction) return false;
+  return raw.includes('<AK_END>') || (raw.includes('<AK_CONTENT>') && raw.includes('</AK_CONTENT>'));
 }
 
 function tokenProbability(logits, decLength, vocabSize, generatedIds, tokenizer, tokenId, options = {}) {
@@ -749,6 +809,7 @@ async function generateModelStack({ prompt, options, generationId }) {
   let pendingLogits = null;
   const speculationStats = createSpeculationStats();
   const isControlDecode = Boolean(options?.stopOnDecision || decoderPrefix);
+  const allowedSpecialIds = isControlDecode ? structuredDecodeAllowedSpecialIds(tokenizer) : [];
   const session = typeof modelStackRuntime.createGenerationSession === 'function'
     ? modelStackRuntime.createGenerationSession(encIds)
     : null;
@@ -809,6 +870,7 @@ async function generateModelStack({ prompt, options, generationId }) {
           temperature,
           topP,
           repetitionPenalty: 1.16,
+          allowedSpecialIds,
         });
     if (nextId === Number(tokenizer.eosTokenId || 2)) break;
     appendGeneratedId(nextId);
@@ -839,6 +901,7 @@ async function generateModelStack({ prompt, options, generationId }) {
               temperature: 0,
               topP: 1,
               repetitionPenalty: 1.16,
+              allowedSpecialIds,
             });
             if (expected !== draft[draftIndex]) {
               accepted = false;
@@ -850,6 +913,7 @@ async function generateModelStack({ prompt, options, generationId }) {
               temperature,
               topP,
               repetitionPenalty: 1.16,
+              allowedSpecialIds,
             });
             const highConfidence = stats.rank <= 3 && stats.probability >= Math.max(0.08, stats.topProbability * 0.34);
             if (!highConfidence || Math.random() > stats.probability) {
@@ -879,6 +943,15 @@ async function generateModelStack({ prompt, options, generationId }) {
         post('status', { message: 'selector decision decoded' });
         break;
       }
+    }
+    if (isControlDecode && step >= 1) {
+      const controlText = tokenizer.decode(generatedIds);
+      if (!(isCompleteJsonObjectText(controlText) || isCompleteAkDecisionText(controlText))) {
+        if (step % 16 === 0) post('status', { message: `cached BitNet decoder generated ${step + 1} tokens` });
+        continue;
+      }
+      post('status', { message: isCompleteAkDecisionText(controlText) ? 'AK token decision decoded' : 'control JSON decoded' });
+      break;
     }
     if (step % 16 === 0) post('status', { message: `cached BitNet decoder generated ${step + 1} tokens` });
   }
@@ -910,7 +983,23 @@ function softmax(values) {
   return weights.map((value) => value / total);
 }
 
+function extractAgentTaskHintIntent(text) {
+  const match = String(text || '').match(/<AK_TASK_HINT>\s*intent=([a-z_]+)/);
+  const intent = match ? String(match[1] || '') : '';
+  return intent && intent !== 'casual' ? intent : '';
+}
+
 async function classifyAgentIntentModelStack({ text, requestId, maxEncoderTokens }) {
+  const hintedIntent = extractAgentTaskHintIntent(text);
+  if (hintedIntent) {
+    post('intent', {
+      requestId,
+      intent: hintedIntent,
+      confidence: 1,
+      ranked: [{ id: hintedIntent, index: AGENT_INTENT_LABELS.indexOf(hintedIntent), probability: 1 }],
+    });
+    return;
+  }
   if (!modelStackRuntime) throw new Error('Model-stack runtime is not loaded.');
   if (typeof modelStackRuntime.agentIntentLogits !== 'function') {
     throw new Error('Loaded model does not expose agent intent logits.');
@@ -935,6 +1024,18 @@ async function classifyAgentIntentModelStack({ text, requestId, maxEncoderTokens
   });
 }
 
+async function classifyAgentPolicyModelStack({ text, requestId, maxEncoderTokens }) {
+  if (!modelStackRuntime) throw new Error('Model-stack runtime is not loaded.');
+  if (typeof modelStackRuntime.agentPolicyLogits !== 'function') {
+    throw new Error('Loaded model does not expose agent policy logits.');
+  }
+  const tokenizer = modelStackTokenizer || createByteTokenizer();
+  const encIds = tokenizer.encode(String(text || ''), Math.max(64, Math.min(1024, Number(maxEncoderTokens || 768))));
+  post('status', { message: 'scoring agent policy with AgentKernel BitNet encoder' });
+  const logits = await modelStackRuntime.agentPolicyLogits(encIds);
+  post('policy', { requestId, logits });
+}
+
 self.addEventListener('message', (event) => {
   const data = event.data || {};
   (async () => {
@@ -946,6 +1047,8 @@ self.addEventListener('message', (event) => {
       await embedModelStack(data);
     } else if (data.type === 'intent') {
       await classifyAgentIntentModelStack(data);
+    } else if (data.type === 'policy') {
+      await classifyAgentPolicyModelStack(data);
     } else if (data.type === 'cancel') {
       const generationId = Number(data.generationId || activeGenerationId || 0);
       if (generationId) cancelledGenerationIds.add(generationId);

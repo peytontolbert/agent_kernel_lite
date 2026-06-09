@@ -273,11 +273,11 @@ def train(args: argparse.Namespace) -> None:
     if not trainable_parameters:
         raise ValueError("no trainable parameters selected")
     optimizer = torch.optim.AdamW(trainable_parameters, lr=float(args.lr), weight_decay=float(args.weight_decay))
-    rows = stream_hf_rows(args)
-    row_iter = iter(rows)
     local_rows = load_local_samples(args.local_samples)
     if local_rows:
         print(json.dumps({"local_samples": len(local_rows), "local_samples_path": args.local_samples}))
+    use_hf_stream = bool(args.dataset) and float(args.local_sample_prob) < 1.0
+    row_iter = iter(stream_hf_rows(args)) if use_hf_stream else iter(())
     pending: list[dict[str, Any]] = []
     step = 0
     while step < int(args.max_steps):
@@ -288,6 +288,11 @@ def train(args: argparse.Namespace) -> None:
             try:
                 row = next(row_iter)
             except StopIteration:
+                if local_rows:
+                    item = local_row_to_item(random.choice(local_rows), args=args, model=model, device=device)
+                    if item is not None:
+                        pending.append(item)
+                    continue
                 break
             item = row_to_item(row, args=args, model=model, device=device)
         if item is None:
@@ -328,11 +333,11 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     parser.add_argument("--vocab", default=DEFAULT_VOCAB)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT)
-    parser.add_argument("--dataset", default="mozilla-foundation/common_voice_17_0")
-    parser.add_argument("--config", default="en")
-    parser.add_argument("--split", default="train")
+    parser.add_argument("--dataset", default="librispeech_asr")
+    parser.add_argument("--config", default="clean")
+    parser.add_argument("--split", default="train.100")
     parser.add_argument("--audio-column", default="audio")
-    parser.add_argument("--text-column", default="sentence")
+    parser.add_argument("--text-column", default="text")
     parser.add_argument("--sample-rate", type=int, default=24000)
     parser.add_argument("--min-duration", type=float, default=0.5)
     parser.add_argument("--max-duration", type=float, default=12.0)
@@ -349,7 +354,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--q4-include", default="")
     parser.add_argument("--q4-exclude", default="text_embed.text_embed,mel_spec")
-    parser.add_argument("--local-samples", default="/data/resumebot/voice_profiles/wavs/samples.txt")
+    parser.add_argument("--local-samples", default="/data/resumebot/voice_profiles/Peyton/samples.txt")
     parser.add_argument(
         "--local-sample-prob",
         type=float,

@@ -136,6 +136,51 @@ def test_build_dataset_accepts_paper_text_path(tmp_path: Path) -> None:
     assert Path(manifest["eval_dataset_path"]).exists()
 
 
+def test_user_slot_examples_teach_profile_conditioning() -> None:
+    builder = _load_script("build_agentkernel_lite_encdec_dataset")
+
+    examples = builder._user_slot_examples(max_examples=32, objective="chat", seed=5)
+
+    assert len(examples) == 32
+    task_types = {row["task_type"] for row in examples}
+    assert {
+        "slot_conditioned_response",
+        "slot_update",
+        "slot_privacy_boundary",
+        "memory_save",
+        "ask_missing_slot",
+        "extension_request",
+        "extension_result_summary",
+        "web_search_request",
+        "web_search_result_synthesis",
+        "web_search_weak_results",
+        "user_context_answer",
+    } <= task_types
+    actions = {row["action"] for row in examples}
+    assert {"respond", "save_memory", "ask_user", "extension_request"} <= actions
+    joined_inputs = "\n".join(str(row["encoder_text"]) for row in examples)
+    assert "<AK_PROFILE>" in joined_inputs
+    assert "<AK_SLOT_NAME>" in joined_inputs
+    assert "<AK_PRIVACY>" in joined_inputs
+    assert "<AK_EXTENSION>" in joined_inputs
+    assert "<AK_SAVE_MEMORY>" in joined_inputs
+    assert "<AK_SOURCE_TYPE>" in joined_inputs
+    assert "<AK_WEB_SEARCH>" in joined_inputs
+    assert "<AK_WEB_RESULT>" in joined_inputs
+    assert "<AK_MAX_SOURCES>" in joined_inputs
+    joined_targets = "\n".join(str(row["decoder_text"]) for row in examples)
+    assert '"action": "save_memory"' in joined_targets
+    assert '"action": "ask_user"' in joined_targets
+    assert '"action": "extension_request"' in joined_targets
+    assert "slot_updates" in joined_targets
+    assert "private_slots_excluded" in joined_targets
+    assert "requires_user_approval" in joined_targets
+    assert '"extension_id": "web_search"' in joined_targets
+    assert '"capability": "web.search"' in joined_targets
+    assert '"max_sources": 5' in joined_targets
+    assert "local_user_profile" in joined_targets
+
+
 def test_agentkernel_bpe_can_register_custom_special_tokens(tmp_path: Path) -> None:
     pytest.importorskip("tokenizers")
     pytest.importorskip("torch.nn")
@@ -143,7 +188,10 @@ def test_agentkernel_bpe_can_register_custom_special_tokens(tmp_path: Path) -> N
     train_path = tmp_path / "train.jsonl"
     eval_path = tmp_path / "eval.jsonl"
     row = {
-        "encoder_text": "<AK_CHAT> <AK_GATHER_CONTEXT> <AK_USER> Find papers about neural retrieval.",
+        "encoder_text": (
+            "<AK_CHAT> <AK_GATHER_CONTEXT> <AK_PROFILE> <AK_SLOT> "
+            "<AK_EXTENSION> <AK_SAVE_MEMORY> <AK_USER> Find papers about neural retrieval."
+        ),
         "decoder_text": json.dumps({"action": "gather_context", "content": "neural retrieval"}),
     }
     train_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
@@ -159,11 +207,17 @@ def test_agentkernel_bpe_can_register_custom_special_tokens(tmp_path: Path) -> N
     )
 
     special_id = tokenizer.tokenizer.token_to_id("<AK_GATHER_CONTEXT>")
+    slot_id = tokenizer.tokenizer.token_to_id("<AK_SLOT>")
+    extension_id = tokenizer.tokenizer.token_to_id("<AK_EXTENSION>")
     assert special_id is not None
+    assert slot_id is not None
+    assert extension_id is not None
     encoded = tokenizer(
-        "<AK_GATHER_CONTEXT> neural retrieval",
+        "<AK_GATHER_CONTEXT> <AK_SLOT> <AK_EXTENSION> neural retrieval",
         max_length=16,
         padding="max_length",
         truncation=True,
     )
     assert special_id in encoded["input_ids"]
+    assert slot_id in encoded["input_ids"]
+    assert extension_id in encoded["input_ids"]

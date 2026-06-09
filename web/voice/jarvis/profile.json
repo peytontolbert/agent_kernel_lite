@@ -1,0 +1,24 @@
+{
+  "id": "jarvis",
+  "name": "Jarvis",
+  "source": "Jarvis voice message.mp3",
+  "reference_wav": "sample_0.wav",
+  "vocab": "F5TTS_Base_vocab.txt",
+  "sample_rate": 24000,
+  "channels": 1,
+  "duration_seconds": 6.59,
+  "reference_text": "At your service, sir. Systems are online and ready.",
+  "runtime": {
+    "f5_manifest": "https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/manifest.json",
+    "vocos_manifest": "../models/vocos_mel_24khz_q4_v0/manifest.json",
+    "conditioning_frames": 256,
+    "steps": 8,
+    "cfg_strength": 2.0,
+    "speed": 1.15,
+    "preset": "custom-f5-fullq4-surface-v2-webgpu-session-wasmfallback-vocos-q4-jarvis-ref256-cfg2-step8-speed115",
+    "f5_fallback_manifest": "../models/f5tts_peyton_q4_v0/manifest.json",
+    "backend": "huggingface-f5-q4-webgpu-dit-conv-session-wasm-fallback",
+    "cache_policy": "browser force-cache for manifest/tensor assets"
+  },
+  "notes": "Reference text is a placeholder because local ASR was unavailable; replace it with the exact clip transcript for best F5-TTS conditioning."
+}

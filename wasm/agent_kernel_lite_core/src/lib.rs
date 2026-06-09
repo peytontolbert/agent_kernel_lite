@@ -22,6 +22,117 @@ const MAX_TITLE_CHARS: usize = 180;
 const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[wasm_bindgen]
+pub fn image_ternary_linear_f32(
+    input: &[f32],
+    weight_values: &[i8],
+    scale_values: &[f32],
+    bias_values: &[f32],
+    rows: usize,
+    in_dim: usize,
+    out_dim: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if rows == 0 || in_dim == 0 || out_dim == 0 {
+        return Err(JsValue::from_str(
+            "image linear dimensions must be non-zero",
+        ));
+    }
+    if input.len() != rows.saturating_mul(in_dim) {
+        return Err(JsValue::from_str("image linear input shape mismatch"));
+    }
+    if weight_values.len() != out_dim.saturating_mul(in_dim) {
+        return Err(JsValue::from_str("image linear weight shape mismatch"));
+    }
+    if scale_values.len() != out_dim {
+        return Err(JsValue::from_str("image linear scale shape mismatch"));
+    }
+    if !bias_values.is_empty() && bias_values.len() != out_dim {
+        return Err(JsValue::from_str("image linear bias shape mismatch"));
+    }
+
+    let mut output = vec![0.0; rows * out_dim];
+    for row in 0..rows {
+        let input_offset = row * in_dim;
+        let output_offset = row * out_dim;
+        for col in 0..out_dim {
+            let weight_offset = col * in_dim;
+            let mut dot = 0.0f32;
+            for inner in 0..in_dim {
+                let q = weight_values[weight_offset + inner];
+                if q != 0 {
+                    dot += input[input_offset + inner] * q as f32;
+                }
+            }
+            let bias = bias_values.get(col).copied().unwrap_or(0.0);
+            output[output_offset + col] = bias + dot * scale_values[col];
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
+pub fn image_ternary_packed_2bit_linear_f32(
+    input: &[f32],
+    packed_weight_values: &[u8],
+    scale_values: &[f32],
+    bias_values: &[f32],
+    rows: usize,
+    in_dim: usize,
+    out_dim: usize,
+) -> Result<Vec<f32>, JsValue> {
+    if rows == 0 || in_dim == 0 || out_dim == 0 {
+        return Err(JsValue::from_str(
+            "image packed linear dimensions must be non-zero",
+        ));
+    }
+    if input.len() != rows.saturating_mul(in_dim) {
+        return Err(JsValue::from_str(
+            "image packed linear input shape mismatch",
+        ));
+    }
+    let weight_count = out_dim.saturating_mul(in_dim);
+    let packed_count = weight_count.saturating_add(3) / 4;
+    if packed_weight_values.len() != packed_count {
+        return Err(JsValue::from_str(
+            "image packed linear weight shape mismatch",
+        ));
+    }
+    if scale_values.len() != out_dim {
+        return Err(JsValue::from_str(
+            "image packed linear scale shape mismatch",
+        ));
+    }
+    if !bias_values.is_empty() && bias_values.len() != out_dim {
+        return Err(JsValue::from_str("image packed linear bias shape mismatch"));
+    }
+
+    let mut output = vec![0.0; rows * out_dim];
+    for row in 0..rows {
+        let input_offset = row * in_dim;
+        let output_offset = row * out_dim;
+        for col in 0..out_dim {
+            let weight_offset = col * in_dim;
+            let mut dot = 0.0f32;
+            for inner in 0..in_dim {
+                let weight_index = weight_offset + inner;
+                let packed = packed_weight_values[weight_index / 4];
+                let code = (packed >> ((weight_index % 4) * 2)) & 0b11;
+                let q = match code {
+                    0 => -1.0,
+                    2 => 1.0,
+                    _ => 0.0,
+                };
+                if q != 0.0 {
+                    dot += input[input_offset + inner] * q;
+                }
+            }
+            let bias = bias_values.get(col).copied().unwrap_or(0.0);
+            output[output_offset + col] = bias + dot * scale_values[col];
+        }
+    }
+    Ok(output)
+}
+
+#[wasm_bindgen]
 pub struct AgentLiteCore {
     session_id: String,
     mode: String,
@@ -523,6 +634,40 @@ impl AgentLiteCore {
         .to_string()
     }
 
+    pub fn propose_last_decision_extension_action(&mut self, input_json: String) -> String {
+        let Some(decision) = self.last_decision.clone() else {
+            return json!({
+                "status": "error",
+                "error": "no model decision is available",
+            })
+            .to_string();
+        };
+        if decision.action != ActionKind::ExtensionRequest {
+            return json!({
+                "status": "error",
+                "error": "last model decision is not an extension_request",
+                "action": decision.action.as_str(),
+            })
+            .to_string();
+        }
+        let extension_id = metadata_string(&decision.proposal_metadata, &["extension_id", "id"])
+            .or_else(|| nested_metadata_string(&decision.proposal_metadata, "extension", &["id", "extension_id"]))
+            .unwrap_or_default();
+        let capability_id = metadata_string(&decision.proposal_metadata, &["capability", "capability_id"])
+            .or_else(|| nested_metadata_string(&decision.proposal_metadata, "extension", &["capability", "capability_id"]))
+            .unwrap_or_default();
+        if extension_id.is_empty() || capability_id.is_empty() {
+            return json!({
+                "status": "error",
+                "error": "extension_request metadata must include extension_id and capability",
+                "extension_id": extension_id,
+                "capability_id": capability_id,
+            })
+            .to_string();
+        }
+        self.propose_extension_action(extension_id, capability_id, input_json)
+    }
+
     pub fn record_extension_result(&mut self, action_id: String, receipt_json: String) -> String {
         let normalized_action_id = compact_whitespace(&action_id);
         match parse_receipt(&receipt_json) {
@@ -851,6 +996,24 @@ fn trim_generated_text(text: &str) -> String {
     out
 }
 
+fn metadata_string(metadata: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = metadata.get(*key).and_then(Value::as_str) {
+            let normalized = compact_whitespace(value);
+            if !normalized.is_empty() {
+                return Some(normalized);
+            }
+        }
+    }
+    None
+}
+
+fn nested_metadata_string(metadata: &Value, object_key: &str, keys: &[&str]) -> Option<String> {
+    metadata
+        .get(object_key)
+        .and_then(|value| metadata_string(value, keys))
+}
+
 fn normalize_mode(mode: &str) -> String {
     match mode.trim().to_ascii_lowercase().as_str() {
         "think" => "think".to_string(),
@@ -1057,8 +1220,56 @@ mod tests {
         );
         assert!(receipt.contains("approved_executed"));
         assert!(core.snapshot_json().contains("action_ledger"));
-        assert!(core.list_extension_manifests().contains("enabled_extension_count"));
+        assert!(core
+            .list_extension_manifests()
+            .contains("enabled_extension_count"));
         let uninstalled = core.uninstall_extension("github".to_string());
         assert!(uninstalled.contains("\"status\":\"uninstalled\""));
+    }
+
+    #[test]
+    fn proposes_extension_action_from_flat_model_decision() {
+        let mut core = AgentLiteCore::new("s".to_string(), "chat".to_string(), 2);
+        core.register_extension_manifest(
+            json!({
+                "id": "calendar",
+                "name": "Calendar",
+                "source": "local",
+                "default_enabled": true,
+                "enabled": true,
+                "capabilities": [{"id": "calendar.create_event", "description": "create event"}]
+            })
+            .to_string(),
+        );
+        core.set_extension_enabled("calendar".to_string(), true);
+        core.finish_model_reply(
+            json!({
+                "action": "extension_request",
+                "content": "Requesting approval to use calendar:calendar.create_event.",
+                "proposal_metadata": {
+                    "task_type": "extension_request",
+                    "extension_id": "calendar",
+                    "capability": "calendar.create_event",
+                    "requires_user_approval": true
+                }
+            })
+            .to_string(),
+        );
+        let proposal = serde_json::from_str::<Value>(&core.propose_last_decision_extension_action(
+            json!({"user_request": "Put launch review on the calendar tomorrow at 3pm"}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(
+            proposal.get("status").and_then(Value::as_str),
+            Some("pending_user_approval")
+        );
+        assert_eq!(
+            proposal.get("extension_id").and_then(Value::as_str),
+            Some("calendar")
+        );
+        assert_eq!(
+            proposal.get("capability_id").and_then(Value::as_str),
+            Some("calendar.create_event")
+        );
     }
 }

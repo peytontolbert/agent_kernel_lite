@@ -75,10 +75,22 @@ def pack_int4_signed(values: np.ndarray) -> bytes:
     return packed.tobytes(order="C")
 
 
-def write_dense_tensor(handle, index: dict[str, dict[str, Any]], offset: int, name: str, tensor: torch.Tensor) -> int:
+def write_dense_tensor(
+    handle,
+    index: dict[str, dict[str, Any]],
+    offset: int,
+    name: str,
+    tensor: torch.Tensor,
+    *,
+    dense_float_dtype: str,
+) -> int:
     if torch.is_floating_point(tensor):
-        array = tensor.detach().contiguous().to(torch.float16).numpy()
-        dtype = "float16"
+        if dense_float_dtype == "float32":
+            array = tensor.detach().contiguous().to(torch.float32).numpy()
+            dtype = "float32"
+        else:
+            array = tensor.detach().contiguous().to(torch.float16).numpy()
+            dtype = "float16"
     elif tensor.dtype == torch.bool:
         array = tensor.detach().contiguous().numpy().astype(np.uint8)
         dtype = "bool_u8"
@@ -106,6 +118,7 @@ def export_q4_bundle(
     model_id: str,
     include: tuple[str, ...],
     exclude: tuple[str, ...],
+    dense_float_dtype: str,
     dry_run: bool,
 ) -> dict[str, Any]:
     state = load_state(checkpoint_path, state_key)
@@ -146,11 +159,22 @@ def export_q4_bundle(
                 continue
 
             if dense_handle is not None:
-                dense_offset = write_dense_tensor(dense_handle, dense_index, dense_offset, name, tensor)
+                dense_offset = write_dense_tensor(
+                    dense_handle,
+                    dense_index,
+                    dense_offset,
+                    name,
+                    tensor,
+                    dense_float_dtype=dense_float_dtype,
+                )
             else:
                 if torch.is_floating_point(tensor):
-                    nbytes = tensor.numel() * 2
-                    dtype = "float16"
+                    if dense_float_dtype == "float32":
+                        nbytes = tensor.numel() * 4
+                        dtype = "float32"
+                    else:
+                        nbytes = tensor.numel() * 2
+                        dtype = "float16"
                 elif tensor.dtype == torch.bool:
                     nbytes = tensor.numel()
                     dtype = "bool_u8"
@@ -190,7 +214,7 @@ def export_q4_bundle(
         "quantization": {
             "scheme": "q4_symmetric_row_scale_f16",
             "packed_values": "signed int4 two values per byte, low nibble first",
-            "dense_dtype": "float16",
+            "dense_dtype": dense_float_dtype,
             "include": list(include),
             "exclude": list(exclude),
             "q4_parameter_count": q4_params,
@@ -235,6 +259,7 @@ def main() -> None:
     parser.add_argument("--model-id", default="f5tts-peyton-q4-v0")
     parser.add_argument("--include", default="")
     parser.add_argument("--exclude", default=",".join(DEFAULT_EXCLUDES))
+    parser.add_argument("--dense-float-dtype", choices=("float16", "float32"), default="float16")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     summary = export_q4_bundle(
@@ -244,6 +269,7 @@ def main() -> None:
         model_id=str(args.model_id),
         include=split_csv(args.include),
         exclude=split_csv(args.exclude),
+        dense_float_dtype=str(args.dense_float_dtype),
         dry_run=bool(args.dry_run),
     )
     print(json.dumps(summary, indent=2))

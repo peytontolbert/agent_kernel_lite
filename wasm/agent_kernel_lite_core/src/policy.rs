@@ -163,8 +163,27 @@ fn decision_from_value(value: &Value, raw: &str) -> ActionDecisionLite {
     if decision.action == ActionKind::Done {
         decision.done = true;
     }
+    promote_action_from_metadata(&mut decision);
     decision.normalize();
     decision
+}
+
+fn promote_action_from_metadata(decision: &mut ActionDecisionLite) {
+    if decision.action != ActionKind::Respond {
+        return;
+    }
+    let task_type = decision
+        .proposal_metadata
+        .get("task_type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    decision.action = match task_type {
+        "memory_save" | "converted_memory_save" => ActionKind::SaveMemory,
+        "ask_missing_slot" | "converted_ask_user" => ActionKind::AskUser,
+        "extension_request" | "converted_function_call" => ActionKind::ExtensionRequest,
+        _ => ActionKind::Respond,
+    };
 }
 
 fn fallback_decision(raw: &str, mode: &str) -> ActionDecisionLite {
@@ -291,5 +310,29 @@ mod tests {
     fn plain_code_mode_falls_back_to_propose_code() {
         let packet = parse_model_decision("```python\nprint(1)\n```", "code", "{}");
         assert_eq!(packet.decision.action, ActionKind::ProposeCode);
+    }
+
+    #[test]
+    fn promotes_controller_action_from_metadata() {
+        let packet = parse_model_decision(
+            r#"{"action":"respond","content":"Requesting approval.","proposal_metadata":{"task_type":"extension_request","extension":{"id":"calendar","capability":"calendar.create_event","requires_user_approval":true}}}"#,
+            "chat",
+            "{}",
+        );
+        assert_eq!(packet.decision.action, ActionKind::ExtensionRequest);
+
+        let memory = parse_model_decision(
+            r#"{"action":"respond","content":"Remembered locally.","proposal_metadata":{"task_type":"memory_save","memory":{"scope":"local_user_profile","text":"short answers"}}}"#,
+            "chat",
+            "{}",
+        );
+        assert_eq!(memory.decision.action, ActionKind::SaveMemory);
+
+        let ask = parse_model_decision(
+            r#"{"action":"respond","content":"Which style should I use?","proposal_metadata":{"task_type":"ask_missing_slot","missing_slot":"workflow_style"}}"#,
+            "chat",
+            "{}",
+        );
+        assert_eq!(ask.decision.action, ActionKind::AskUser);
     }
 }

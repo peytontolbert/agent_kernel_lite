@@ -550,6 +550,92 @@ unsafe fn add_weighted_64_simd(output: &mut [f32], values: &[f32], weight: f32) 
     }
 }
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn dot4_queries_scaled_64_simd(
+    q0: *const f32,
+    q1: *const f32,
+    q2: *const f32,
+    q3: *const f32,
+    k: *const f32,
+    scale: f32,
+) -> [f32; 4] {
+    use core::arch::wasm32::*;
+
+    let mut s0 = f32x4_splat(0.0);
+    let mut s1 = f32x4_splat(0.0);
+    let mut s2 = f32x4_splat(0.0);
+    let mut s3 = f32x4_splat(0.0);
+    let mut i = 0usize;
+    while i + 7 < 64 {
+        let kv = v128_load(k.add(i) as *const v128);
+        let kv_next = v128_load(k.add(i + 4) as *const v128);
+        let q0v = v128_load(q0.add(i) as *const v128);
+        let q1v = v128_load(q1.add(i) as *const v128);
+        let q2v = v128_load(q2.add(i) as *const v128);
+        let q3v = v128_load(q3.add(i) as *const v128);
+        let q0n = v128_load(q0.add(i + 4) as *const v128);
+        let q1n = v128_load(q1.add(i + 4) as *const v128);
+        let q2n = v128_load(q2.add(i + 4) as *const v128);
+        let q3n = v128_load(q3.add(i + 4) as *const v128);
+        s0 = f32x4_add(f32x4_add(s0, f32x4_mul(q0v, kv)), f32x4_mul(q0n, kv_next));
+        s1 = f32x4_add(f32x4_add(s1, f32x4_mul(q1v, kv)), f32x4_mul(q1n, kv_next));
+        s2 = f32x4_add(f32x4_add(s2, f32x4_mul(q2v, kv)), f32x4_mul(q2n, kv_next));
+        s3 = f32x4_add(f32x4_add(s3, f32x4_mul(q3v, kv)), f32x4_mul(q3n, kv_next));
+        i += 8;
+    }
+    [
+        (f32x4_extract_lane::<0>(s0) + f32x4_extract_lane::<1>(s0) + f32x4_extract_lane::<2>(s0) + f32x4_extract_lane::<3>(s0)) * scale,
+        (f32x4_extract_lane::<0>(s1) + f32x4_extract_lane::<1>(s1) + f32x4_extract_lane::<2>(s1) + f32x4_extract_lane::<3>(s1)) * scale,
+        (f32x4_extract_lane::<0>(s2) + f32x4_extract_lane::<1>(s2) + f32x4_extract_lane::<2>(s2) + f32x4_extract_lane::<3>(s2)) * scale,
+        (f32x4_extract_lane::<0>(s3) + f32x4_extract_lane::<1>(s3) + f32x4_extract_lane::<2>(s3) + f32x4_extract_lane::<3>(s3)) * scale,
+    ]
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[target_feature(enable = "simd128")]
+unsafe fn add_weighted_64_four_simd(
+    output: *mut f32,
+    out0: usize,
+    out1: usize,
+    out2: usize,
+    out3: usize,
+    values: *const f32,
+    w0: f32,
+    w1: f32,
+    w2: f32,
+    w3: f32,
+) {
+    use core::arch::wasm32::*;
+
+    let ww0 = f32x4_splat(w0);
+    let ww1 = f32x4_splat(w1);
+    let ww2 = f32x4_splat(w2);
+    let ww3 = f32x4_splat(w3);
+    let mut i = 0usize;
+    while i + 7 < 64 {
+        let v = v128_load(values.add(i) as *const v128);
+        let v_next = v128_load(values.add(i + 4) as *const v128);
+        let o0 = output.add(out0 + i);
+        let o1 = output.add(out1 + i);
+        let o2 = output.add(out2 + i);
+        let o3 = output.add(out3 + i);
+        let o0_next = output.add(out0 + i + 4);
+        let o1_next = output.add(out1 + i + 4);
+        let o2_next = output.add(out2 + i + 4);
+        let o3_next = output.add(out3 + i + 4);
+        v128_store(o0 as *mut v128, f32x4_add(v128_load(o0 as *const v128), f32x4_mul(ww0, v)));
+        v128_store(o1 as *mut v128, f32x4_add(v128_load(o1 as *const v128), f32x4_mul(ww1, v)));
+        v128_store(o2 as *mut v128, f32x4_add(v128_load(o2 as *const v128), f32x4_mul(ww2, v)));
+        v128_store(o3 as *mut v128, f32x4_add(v128_load(o3 as *const v128), f32x4_mul(ww3, v)));
+        v128_store(o0_next as *mut v128, f32x4_add(v128_load(o0_next as *const v128), f32x4_mul(ww0, v_next)));
+        v128_store(o1_next as *mut v128, f32x4_add(v128_load(o1_next as *const v128), f32x4_mul(ww1, v_next)));
+        v128_store(o2_next as *mut v128, f32x4_add(v128_load(o2_next as *const v128), f32x4_mul(ww2, v_next)));
+        v128_store(o3_next as *mut v128, f32x4_add(v128_load(o3_next as *const v128), f32x4_mul(ww3, v_next)));
+        i += 8;
+    }
+}
+
 fn apply_rotary_one(q: &mut [f32], k: &mut [f32], position: usize, n_heads: usize, head_dim: usize, base_theta: f32) {
     if base_theta <= 0.0 || head_dim % 2 != 0 {
         return;
@@ -1690,31 +1776,141 @@ fn attention_impl_kv_head_major(
     if !causal {
         for head in 0..n_heads {
             let head_base = head * kv_len * head_dim;
-            for qi in 0..q_len {
-                let mut max_score = f32::NEG_INFINITY;
-                let q_base = qi * model_dim + head * head_dim;
-                for kj in 0..kv_len {
-                    let k_base = head_base + kj * head_dim;
-                    let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
-                    scores[kj] = score;
-                    if score > max_score {
-                        max_score = score;
+            #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+            {
+                let mut scores1 = vec![0.0f32; kv_len];
+                let mut scores2 = vec![0.0f32; kv_len];
+                let mut scores3 = vec![0.0f32; kv_len];
+                let mut qi = 0usize;
+                while qi + 3 < q_len {
+                    let q_base0 = qi * model_dim + head * head_dim;
+                    let q_base1 = (qi + 1) * model_dim + head * head_dim;
+                    let q_base2 = (qi + 2) * model_dim + head * head_dim;
+                    let q_base3 = (qi + 3) * model_dim + head * head_dim;
+                    let mut max0 = f32::NEG_INFINITY;
+                    let mut max1 = f32::NEG_INFINITY;
+                    let mut max2 = f32::NEG_INFINITY;
+                    let mut max3 = f32::NEG_INFINITY;
+                    for kj in 0..kv_len {
+                        let k_base = head_base + kj * head_dim;
+                        let s = unsafe {
+                            dot4_queries_scaled_64_simd(
+                                q.as_ptr().add(q_base0),
+                                q.as_ptr().add(q_base1),
+                                q.as_ptr().add(q_base2),
+                                q.as_ptr().add(q_base3),
+                                k_head.as_ptr().add(k_base),
+                                scale,
+                            )
+                        };
+                        scores[kj] = s[0];
+                        scores1[kj] = s[1];
+                        scores2[kj] = s[2];
+                        scores3[kj] = s[3];
+                        max0 = max0.max(s[0]);
+                        max1 = max1.max(s[1]);
+                        max2 = max2.max(s[2]);
+                        max3 = max3.max(s[3]);
                     }
+                    let mut denom0 = 0.0f32;
+                    let mut denom1 = 0.0f32;
+                    let mut denom2 = 0.0f32;
+                    let mut denom3 = 0.0f32;
+                    for kj in 0..kv_len {
+                        scores[kj] = (scores[kj] - max0).exp();
+                        scores1[kj] = (scores1[kj] - max1).exp();
+                        scores2[kj] = (scores2[kj] - max2).exp();
+                        scores3[kj] = (scores3[kj] - max3).exp();
+                        denom0 += scores[kj];
+                        denom1 += scores1[kj];
+                        denom2 += scores2[kj];
+                        denom3 += scores3[kj];
+                    }
+                    let inv0 = 1.0 / denom0.max(1.0e-20);
+                    let inv1 = 1.0 / denom1.max(1.0e-20);
+                    let inv2 = 1.0 / denom2.max(1.0e-20);
+                    let inv3 = 1.0 / denom3.max(1.0e-20);
+                    let out_base0 = qi * model_dim + head * head_dim;
+                    let out_base1 = (qi + 1) * model_dim + head * head_dim;
+                    let out_base2 = (qi + 2) * model_dim + head * head_dim;
+                    let out_base3 = (qi + 3) * model_dim + head * head_dim;
+                    for kj in 0..kv_len {
+                        let v_base = head_base + kj * head_dim;
+                        unsafe {
+                            add_weighted_64_four_simd(
+                                output.as_mut_ptr(),
+                                out_base0,
+                                out_base1,
+                                out_base2,
+                                out_base3,
+                                v_head.as_ptr().add(v_base),
+                                scores[kj] * inv0,
+                                scores1[kj] * inv1,
+                                scores2[kj] * inv2,
+                                scores3[kj] * inv3,
+                            );
+                        }
+                    }
+                    qi += 4;
                 }
-                let mut denom = 0.0f32;
-                for score in scores.iter_mut().take(kv_len) {
-                    *score = (*score - max_score).exp();
-                    denom += *score;
+                while qi < q_len {
+                    let mut max_score = f32::NEG_INFINITY;
+                    let q_base = qi * model_dim + head * head_dim;
+                    for kj in 0..kv_len {
+                        let k_base = head_base + kj * head_dim;
+                        let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
+                        scores[kj] = score;
+                        if score > max_score {
+                            max_score = score;
+                        }
+                    }
+                    let mut denom = 0.0f32;
+                    for score in scores.iter_mut().take(kv_len) {
+                        *score = (*score - max_score).exp();
+                        denom += *score;
+                    }
+                    let denom = denom.max(1.0e-20);
+                    let out_base = qi * model_dim + head * head_dim;
+                    for kj in 0..kv_len {
+                        let v_base = head_base + kj * head_dim;
+                        add_weighted_64(
+                            &mut output[out_base..out_base + 64],
+                            &v_head[v_base..v_base + 64],
+                            scores[kj] / denom,
+                        );
+                    }
+                    qi += 1;
                 }
-                let denom = denom.max(1.0e-20);
-                let out_base = qi * model_dim + head * head_dim;
-                for kj in 0..kv_len {
-                    let v_base = head_base + kj * head_dim;
-                    add_weighted_64(
-                        &mut output[out_base..out_base + 64],
-                        &v_head[v_base..v_base + 64],
-                        scores[kj] / denom,
-                    );
+                continue;
+            }
+            #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+            {
+                for qi in 0..q_len {
+                    let mut max_score = f32::NEG_INFINITY;
+                    let q_base = qi * model_dim + head * head_dim;
+                    for kj in 0..kv_len {
+                        let k_base = head_base + kj * head_dim;
+                        let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
+                        scores[kj] = score;
+                        if score > max_score {
+                            max_score = score;
+                        }
+                    }
+                    let mut denom = 0.0f32;
+                    for score in scores.iter_mut().take(kv_len) {
+                        *score = (*score - max_score).exp();
+                        denom += *score;
+                    }
+                    let denom = denom.max(1.0e-20);
+                    let out_base = qi * model_dim + head * head_dim;
+                    for kj in 0..kv_len {
+                        let v_base = head_base + kj * head_dim;
+                        add_weighted_64(
+                            &mut output[out_base..out_base + 64],
+                            &v_head[v_base..v_base + 64],
+                            scores[kj] / denom,
+                        );
+                    }
                 }
             }
         }
@@ -1756,6 +1952,150 @@ fn attention_impl_kv_head_major(
     Ok(output)
 }
 
+fn attention_noncausal_already_head_major_64(
+    q: &[f32],
+    k_head: &[f32],
+    v_head: &[f32],
+    q_len: usize,
+    kv_len: usize,
+    n_heads: usize,
+) -> Vec<f32> {
+    let head_dim = 64usize;
+    let model_dim = n_heads * head_dim;
+    let mut output = vec![0.0f32; q_len * model_dim];
+    let mut scores = vec![0.0f32; kv_len];
+    let scale = 1.0f32 / 8.0f32;
+    for head in 0..n_heads {
+        let head_base = head * kv_len * head_dim;
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        {
+            let mut scores1 = vec![0.0f32; kv_len];
+            let mut scores2 = vec![0.0f32; kv_len];
+            let mut scores3 = vec![0.0f32; kv_len];
+            let mut qi = 0usize;
+            while qi + 3 < q_len {
+                let q_base0 = qi * model_dim + head * head_dim;
+                let q_base1 = (qi + 1) * model_dim + head * head_dim;
+                let q_base2 = (qi + 2) * model_dim + head * head_dim;
+                let q_base3 = (qi + 3) * model_dim + head * head_dim;
+                let mut max0 = f32::NEG_INFINITY;
+                let mut max1 = f32::NEG_INFINITY;
+                let mut max2 = f32::NEG_INFINITY;
+                let mut max3 = f32::NEG_INFINITY;
+                for kj in 0..kv_len {
+                    let k_base = head_base + kj * head_dim;
+                    let s = unsafe {
+                        dot4_queries_scaled_64_simd(
+                            q.as_ptr().add(q_base0),
+                            q.as_ptr().add(q_base1),
+                            q.as_ptr().add(q_base2),
+                            q.as_ptr().add(q_base3),
+                            k_head.as_ptr().add(k_base),
+                            scale,
+                        )
+                    };
+                    scores[kj] = s[0];
+                    scores1[kj] = s[1];
+                    scores2[kj] = s[2];
+                    scores3[kj] = s[3];
+                    max0 = max0.max(s[0]);
+                    max1 = max1.max(s[1]);
+                    max2 = max2.max(s[2]);
+                    max3 = max3.max(s[3]);
+                }
+                let mut denom0 = 0.0f32;
+                let mut denom1 = 0.0f32;
+                let mut denom2 = 0.0f32;
+                let mut denom3 = 0.0f32;
+                for kj in 0..kv_len {
+                    scores[kj] = (scores[kj] - max0).exp();
+                    scores1[kj] = (scores1[kj] - max1).exp();
+                    scores2[kj] = (scores2[kj] - max2).exp();
+                    scores3[kj] = (scores3[kj] - max3).exp();
+                    denom0 += scores[kj];
+                    denom1 += scores1[kj];
+                    denom2 += scores2[kj];
+                    denom3 += scores3[kj];
+                }
+                let inv0 = 1.0 / denom0.max(1.0e-20);
+                let inv1 = 1.0 / denom1.max(1.0e-20);
+                let inv2 = 1.0 / denom2.max(1.0e-20);
+                let inv3 = 1.0 / denom3.max(1.0e-20);
+                let out_base0 = qi * model_dim + head * head_dim;
+                let out_base1 = (qi + 1) * model_dim + head * head_dim;
+                let out_base2 = (qi + 2) * model_dim + head * head_dim;
+                let out_base3 = (qi + 3) * model_dim + head * head_dim;
+                for kj in 0..kv_len {
+                    let v_base = head_base + kj * head_dim;
+                    unsafe {
+                        add_weighted_64_four_simd(
+                            output.as_mut_ptr(),
+                            out_base0,
+                            out_base1,
+                            out_base2,
+                            out_base3,
+                            v_head.as_ptr().add(v_base),
+                            scores[kj] * inv0,
+                            scores1[kj] * inv1,
+                            scores2[kj] * inv2,
+                            scores3[kj] * inv3,
+                        );
+                    }
+                }
+                qi += 4;
+            }
+            while qi < q_len {
+                let mut max_score = f32::NEG_INFINITY;
+                let q_base = qi * model_dim + head * head_dim;
+                for kj in 0..kv_len {
+                    let k_base = head_base + kj * head_dim;
+                    let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
+                    scores[kj] = score;
+                    max_score = max_score.max(score);
+                }
+                let mut denom = 0.0f32;
+                for score in scores.iter_mut().take(kv_len) {
+                    *score = (*score - max_score).exp();
+                    denom += *score;
+                }
+                let denom = denom.max(1.0e-20);
+                let out_base = qi * model_dim + head * head_dim;
+                for kj in 0..kv_len {
+                    let v_base = head_base + kj * head_dim;
+                    add_weighted_64(&mut output[out_base..out_base + 64], &v_head[v_base..v_base + 64], scores[kj] / denom);
+                }
+                qi += 1;
+            }
+            continue;
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+        {
+            for qi in 0..q_len {
+                let mut max_score = f32::NEG_INFINITY;
+                let q_base = qi * model_dim + head * head_dim;
+                for kj in 0..kv_len {
+                    let k_base = head_base + kj * head_dim;
+                    let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
+                    scores[kj] = score;
+                    max_score = max_score.max(score);
+                }
+                let mut denom = 0.0f32;
+                for score in scores.iter_mut().take(kv_len) {
+                    *score = (*score - max_score).exp();
+                    denom += *score;
+                }
+                let denom = denom.max(1.0e-20);
+                let out_base = qi * model_dim + head * head_dim;
+                for kj in 0..kv_len {
+                    let v_base = head_base + kj * head_dim;
+                    add_weighted_64(&mut output[out_base..out_base + 64], &v_head[v_base..v_base + 64], scores[kj] / denom);
+                }
+            }
+        }
+    }
+    output
+}
+
 fn attention_impl_kv_already_head_major(
     q: &[f32],
     k_head: &[f32],
@@ -1781,37 +2121,7 @@ fn attention_impl_kv_already_head_major(
     let mut scores = vec![0.0f32; kv_len];
     let scale = 1.0f32 / (head_dim as f32).sqrt();
     if !causal {
-        for head in 0..n_heads {
-            let head_base = head * kv_len * head_dim;
-            for qi in 0..q_len {
-                let mut max_score = f32::NEG_INFINITY;
-                let q_base = qi * model_dim + head * head_dim;
-                for kj in 0..kv_len {
-                    let k_base = head_base + kj * head_dim;
-                    let score = dot_scaled_64(&q[q_base..q_base + 64], &k_head[k_base..k_base + 64], scale);
-                    scores[kj] = score;
-                    if score > max_score {
-                        max_score = score;
-                    }
-                }
-                let mut denom = 0.0f32;
-                for score in scores.iter_mut().take(kv_len) {
-                    *score = (*score - max_score).exp();
-                    denom += *score;
-                }
-                let denom = denom.max(1.0e-20);
-                let out_base = qi * model_dim + head * head_dim;
-                for kj in 0..kv_len {
-                    let v_base = head_base + kj * head_dim;
-                    add_weighted_64(
-                        &mut output[out_base..out_base + 64],
-                        &v_head[v_base..v_base + 64],
-                        scores[kj] / denom,
-                    );
-                }
-            }
-        }
-        return Ok(output);
+        return Ok(attention_noncausal_already_head_major_64(q, k_head, v_head, q_len, kv_len, n_heads));
     }
     for head in 0..n_heads {
         let head_base = head * kv_len * head_dim;
@@ -2216,12 +2526,7 @@ unsafe fn dot8_unpacked_i8_f32_simd(input: &[f32], row: usize, in_dim: usize, we
     let mut acc7 = f32x4_splat(0.0);
     let mut col = 0usize;
     while col + 3 < in_dim {
-        let w = f32x4(
-            *weight_row.get_unchecked(col) as f32,
-            *weight_row.get_unchecked(col + 1) as f32,
-            *weight_row.get_unchecked(col + 2) as f32,
-            *weight_row.get_unchecked(col + 3) as f32,
-        );
+        let w = load_i8x4_as_f32(weight_row.as_ptr().add(col));
         acc0 = f32x4_add(acc0, f32x4_mul(v128_load(input.as_ptr().add(row * in_dim + col) as *const v128), w));
         acc1 = f32x4_add(acc1, f32x4_mul(v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128), w));
         acc2 = f32x4_add(acc2, f32x4_mul(v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128), w));
@@ -2312,18 +2617,8 @@ unsafe fn dot8_unpacked_i8_f32_pair_simd(
     let mut b7 = f32x4_splat(0.0);
     let mut col = 0usize;
     while col + 3 < in_dim {
-        let wa = f32x4(
-            *weight_a.get_unchecked(col) as f32,
-            *weight_a.get_unchecked(col + 1) as f32,
-            *weight_a.get_unchecked(col + 2) as f32,
-            *weight_a.get_unchecked(col + 3) as f32,
-        );
-        let wb = f32x4(
-            *weight_b.get_unchecked(col) as f32,
-            *weight_b.get_unchecked(col + 1) as f32,
-            *weight_b.get_unchecked(col + 2) as f32,
-            *weight_b.get_unchecked(col + 3) as f32,
-        );
+        let wa = load_i8x4_as_f32(weight_a.as_ptr().add(col));
+        let wb = load_i8x4_as_f32(weight_b.as_ptr().add(col));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -2452,54 +2747,14 @@ unsafe fn dot4_unpacked_i8_f32_quad_simd(
     let mut d3 = f32x4_splat(0.0);
     let mut col = 0usize;
     while col + 7 < in_dim {
-        let wa = f32x4(
-            *weight_a.get_unchecked(col) as f32,
-            *weight_a.get_unchecked(col + 1) as f32,
-            *weight_a.get_unchecked(col + 2) as f32,
-            *weight_a.get_unchecked(col + 3) as f32,
-        );
-        let wb = f32x4(
-            *weight_b.get_unchecked(col) as f32,
-            *weight_b.get_unchecked(col + 1) as f32,
-            *weight_b.get_unchecked(col + 2) as f32,
-            *weight_b.get_unchecked(col + 3) as f32,
-        );
-        let wc = f32x4(
-            *weight_c.get_unchecked(col) as f32,
-            *weight_c.get_unchecked(col + 1) as f32,
-            *weight_c.get_unchecked(col + 2) as f32,
-            *weight_c.get_unchecked(col + 3) as f32,
-        );
-        let wd = f32x4(
-            *weight_d.get_unchecked(col) as f32,
-            *weight_d.get_unchecked(col + 1) as f32,
-            *weight_d.get_unchecked(col + 2) as f32,
-            *weight_d.get_unchecked(col + 3) as f32,
-        );
-        let wa_next = f32x4(
-            *weight_a.get_unchecked(col + 4) as f32,
-            *weight_a.get_unchecked(col + 5) as f32,
-            *weight_a.get_unchecked(col + 6) as f32,
-            *weight_a.get_unchecked(col + 7) as f32,
-        );
-        let wb_next = f32x4(
-            *weight_b.get_unchecked(col + 4) as f32,
-            *weight_b.get_unchecked(col + 5) as f32,
-            *weight_b.get_unchecked(col + 6) as f32,
-            *weight_b.get_unchecked(col + 7) as f32,
-        );
-        let wc_next = f32x4(
-            *weight_c.get_unchecked(col + 4) as f32,
-            *weight_c.get_unchecked(col + 5) as f32,
-            *weight_c.get_unchecked(col + 6) as f32,
-            *weight_c.get_unchecked(col + 7) as f32,
-        );
-        let wd_next = f32x4(
-            *weight_d.get_unchecked(col + 4) as f32,
-            *weight_d.get_unchecked(col + 5) as f32,
-            *weight_d.get_unchecked(col + 6) as f32,
-            *weight_d.get_unchecked(col + 7) as f32,
-        );
+        let wa = load_i8x4_as_f32(weight_a.as_ptr().add(col));
+        let wb = load_i8x4_as_f32(weight_b.as_ptr().add(col));
+        let wc = load_i8x4_as_f32(weight_c.as_ptr().add(col));
+        let wd = load_i8x4_as_f32(weight_d.as_ptr().add(col));
+        let wa_next = load_i8x4_as_f32(weight_a.as_ptr().add(col + 4));
+        let wb_next = load_i8x4_as_f32(weight_b.as_ptr().add(col + 4));
+        let wc_next = load_i8x4_as_f32(weight_c.as_ptr().add(col + 4));
+        let wd_next = load_i8x4_as_f32(weight_d.as_ptr().add(col + 4));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -2527,30 +2782,10 @@ unsafe fn dot4_unpacked_i8_f32_quad_simd(
         col += 8;
     }
     while col + 3 < in_dim {
-        let wa = f32x4(
-            *weight_a.get_unchecked(col) as f32,
-            *weight_a.get_unchecked(col + 1) as f32,
-            *weight_a.get_unchecked(col + 2) as f32,
-            *weight_a.get_unchecked(col + 3) as f32,
-        );
-        let wb = f32x4(
-            *weight_b.get_unchecked(col) as f32,
-            *weight_b.get_unchecked(col + 1) as f32,
-            *weight_b.get_unchecked(col + 2) as f32,
-            *weight_b.get_unchecked(col + 3) as f32,
-        );
-        let wc = f32x4(
-            *weight_c.get_unchecked(col) as f32,
-            *weight_c.get_unchecked(col + 1) as f32,
-            *weight_c.get_unchecked(col + 2) as f32,
-            *weight_c.get_unchecked(col + 3) as f32,
-        );
-        let wd = f32x4(
-            *weight_d.get_unchecked(col) as f32,
-            *weight_d.get_unchecked(col + 1) as f32,
-            *weight_d.get_unchecked(col + 2) as f32,
-            *weight_d.get_unchecked(col + 3) as f32,
-        );
+        let wa = load_i8x4_as_f32(weight_a.as_ptr().add(col));
+        let wb = load_i8x4_as_f32(weight_b.as_ptr().add(col));
+        let wc = load_i8x4_as_f32(weight_c.as_ptr().add(col));
+        let wd = load_i8x4_as_f32(weight_d.as_ptr().add(col));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -2671,78 +2906,18 @@ unsafe fn dot4_unpacked_i8_f32_six_simd(
     let mut f3 = f32x4_splat(0.0);
     let mut col = 0usize;
     while col + 7 < in_dim {
-        let wa0 = f32x4(
-            *weight_a0.get_unchecked(col) as f32,
-            *weight_a0.get_unchecked(col + 1) as f32,
-            *weight_a0.get_unchecked(col + 2) as f32,
-            *weight_a0.get_unchecked(col + 3) as f32,
-        );
-        let wb0 = f32x4(
-            *weight_b0.get_unchecked(col) as f32,
-            *weight_b0.get_unchecked(col + 1) as f32,
-            *weight_b0.get_unchecked(col + 2) as f32,
-            *weight_b0.get_unchecked(col + 3) as f32,
-        );
-        let wc0 = f32x4(
-            *weight_c0.get_unchecked(col) as f32,
-            *weight_c0.get_unchecked(col + 1) as f32,
-            *weight_c0.get_unchecked(col + 2) as f32,
-            *weight_c0.get_unchecked(col + 3) as f32,
-        );
-        let wa1 = f32x4(
-            *weight_a1.get_unchecked(col) as f32,
-            *weight_a1.get_unchecked(col + 1) as f32,
-            *weight_a1.get_unchecked(col + 2) as f32,
-            *weight_a1.get_unchecked(col + 3) as f32,
-        );
-        let wb1 = f32x4(
-            *weight_b1.get_unchecked(col) as f32,
-            *weight_b1.get_unchecked(col + 1) as f32,
-            *weight_b1.get_unchecked(col + 2) as f32,
-            *weight_b1.get_unchecked(col + 3) as f32,
-        );
-        let wc1 = f32x4(
-            *weight_c1.get_unchecked(col) as f32,
-            *weight_c1.get_unchecked(col + 1) as f32,
-            *weight_c1.get_unchecked(col + 2) as f32,
-            *weight_c1.get_unchecked(col + 3) as f32,
-        );
-        let wa0_next = f32x4(
-            *weight_a0.get_unchecked(col + 4) as f32,
-            *weight_a0.get_unchecked(col + 5) as f32,
-            *weight_a0.get_unchecked(col + 6) as f32,
-            *weight_a0.get_unchecked(col + 7) as f32,
-        );
-        let wb0_next = f32x4(
-            *weight_b0.get_unchecked(col + 4) as f32,
-            *weight_b0.get_unchecked(col + 5) as f32,
-            *weight_b0.get_unchecked(col + 6) as f32,
-            *weight_b0.get_unchecked(col + 7) as f32,
-        );
-        let wc0_next = f32x4(
-            *weight_c0.get_unchecked(col + 4) as f32,
-            *weight_c0.get_unchecked(col + 5) as f32,
-            *weight_c0.get_unchecked(col + 6) as f32,
-            *weight_c0.get_unchecked(col + 7) as f32,
-        );
-        let wa1_next = f32x4(
-            *weight_a1.get_unchecked(col + 4) as f32,
-            *weight_a1.get_unchecked(col + 5) as f32,
-            *weight_a1.get_unchecked(col + 6) as f32,
-            *weight_a1.get_unchecked(col + 7) as f32,
-        );
-        let wb1_next = f32x4(
-            *weight_b1.get_unchecked(col + 4) as f32,
-            *weight_b1.get_unchecked(col + 5) as f32,
-            *weight_b1.get_unchecked(col + 6) as f32,
-            *weight_b1.get_unchecked(col + 7) as f32,
-        );
-        let wc1_next = f32x4(
-            *weight_c1.get_unchecked(col + 4) as f32,
-            *weight_c1.get_unchecked(col + 5) as f32,
-            *weight_c1.get_unchecked(col + 6) as f32,
-            *weight_c1.get_unchecked(col + 7) as f32,
-        );
+        let wa0 = load_i8x4_as_f32(weight_a0.as_ptr().add(col));
+        let wb0 = load_i8x4_as_f32(weight_b0.as_ptr().add(col));
+        let wc0 = load_i8x4_as_f32(weight_c0.as_ptr().add(col));
+        let wa1 = load_i8x4_as_f32(weight_a1.as_ptr().add(col));
+        let wb1 = load_i8x4_as_f32(weight_b1.as_ptr().add(col));
+        let wc1 = load_i8x4_as_f32(weight_c1.as_ptr().add(col));
+        let wa0_next = load_i8x4_as_f32(weight_a0.as_ptr().add(col + 4));
+        let wb0_next = load_i8x4_as_f32(weight_b0.as_ptr().add(col + 4));
+        let wc0_next = load_i8x4_as_f32(weight_c0.as_ptr().add(col + 4));
+        let wa1_next = load_i8x4_as_f32(weight_a1.as_ptr().add(col + 4));
+        let wb1_next = load_i8x4_as_f32(weight_b1.as_ptr().add(col + 4));
+        let wc1_next = load_i8x4_as_f32(weight_c1.as_ptr().add(col + 4));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -2778,42 +2953,12 @@ unsafe fn dot4_unpacked_i8_f32_six_simd(
         col += 8;
     }
     while col + 3 < in_dim {
-        let wa0 = f32x4(
-            *weight_a0.get_unchecked(col) as f32,
-            *weight_a0.get_unchecked(col + 1) as f32,
-            *weight_a0.get_unchecked(col + 2) as f32,
-            *weight_a0.get_unchecked(col + 3) as f32,
-        );
-        let wb0 = f32x4(
-            *weight_b0.get_unchecked(col) as f32,
-            *weight_b0.get_unchecked(col + 1) as f32,
-            *weight_b0.get_unchecked(col + 2) as f32,
-            *weight_b0.get_unchecked(col + 3) as f32,
-        );
-        let wc0 = f32x4(
-            *weight_c0.get_unchecked(col) as f32,
-            *weight_c0.get_unchecked(col + 1) as f32,
-            *weight_c0.get_unchecked(col + 2) as f32,
-            *weight_c0.get_unchecked(col + 3) as f32,
-        );
-        let wa1 = f32x4(
-            *weight_a1.get_unchecked(col) as f32,
-            *weight_a1.get_unchecked(col + 1) as f32,
-            *weight_a1.get_unchecked(col + 2) as f32,
-            *weight_a1.get_unchecked(col + 3) as f32,
-        );
-        let wb1 = f32x4(
-            *weight_b1.get_unchecked(col) as f32,
-            *weight_b1.get_unchecked(col + 1) as f32,
-            *weight_b1.get_unchecked(col + 2) as f32,
-            *weight_b1.get_unchecked(col + 3) as f32,
-        );
-        let wc1 = f32x4(
-            *weight_c1.get_unchecked(col) as f32,
-            *weight_c1.get_unchecked(col + 1) as f32,
-            *weight_c1.get_unchecked(col + 2) as f32,
-            *weight_c1.get_unchecked(col + 3) as f32,
-        );
+        let wa0 = load_i8x4_as_f32(weight_a0.as_ptr().add(col));
+        let wb0 = load_i8x4_as_f32(weight_b0.as_ptr().add(col));
+        let wc0 = load_i8x4_as_f32(weight_c0.as_ptr().add(col));
+        let wa1 = load_i8x4_as_f32(weight_a1.as_ptr().add(col));
+        let wb1 = load_i8x4_as_f32(weight_b1.as_ptr().add(col));
+        let wc1 = load_i8x4_as_f32(weight_c1.as_ptr().add(col));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -2953,42 +3098,12 @@ unsafe fn dot8_unpacked_i8_f32_triple_simd(
     let mut c7 = f32x4_splat(0.0);
     let mut col = 0usize;
     while col + 7 < in_dim {
-        let wa = f32x4(
-            *weight_a.get_unchecked(col) as f32,
-            *weight_a.get_unchecked(col + 1) as f32,
-            *weight_a.get_unchecked(col + 2) as f32,
-            *weight_a.get_unchecked(col + 3) as f32,
-        );
-        let wb = f32x4(
-            *weight_b.get_unchecked(col) as f32,
-            *weight_b.get_unchecked(col + 1) as f32,
-            *weight_b.get_unchecked(col + 2) as f32,
-            *weight_b.get_unchecked(col + 3) as f32,
-        );
-        let wc = f32x4(
-            *weight_c.get_unchecked(col) as f32,
-            *weight_c.get_unchecked(col + 1) as f32,
-            *weight_c.get_unchecked(col + 2) as f32,
-            *weight_c.get_unchecked(col + 3) as f32,
-        );
-        let wa_next = f32x4(
-            *weight_a.get_unchecked(col + 4) as f32,
-            *weight_a.get_unchecked(col + 5) as f32,
-            *weight_a.get_unchecked(col + 6) as f32,
-            *weight_a.get_unchecked(col + 7) as f32,
-        );
-        let wb_next = f32x4(
-            *weight_b.get_unchecked(col + 4) as f32,
-            *weight_b.get_unchecked(col + 5) as f32,
-            *weight_b.get_unchecked(col + 6) as f32,
-            *weight_b.get_unchecked(col + 7) as f32,
-        );
-        let wc_next = f32x4(
-            *weight_c.get_unchecked(col + 4) as f32,
-            *weight_c.get_unchecked(col + 5) as f32,
-            *weight_c.get_unchecked(col + 6) as f32,
-            *weight_c.get_unchecked(col + 7) as f32,
-        );
+        let wa = load_i8x4_as_f32(weight_a.as_ptr().add(col));
+        let wb = load_i8x4_as_f32(weight_b.as_ptr().add(col));
+        let wc = load_i8x4_as_f32(weight_c.as_ptr().add(col));
+        let wa_next = load_i8x4_as_f32(weight_a.as_ptr().add(col + 4));
+        let wb_next = load_i8x4_as_f32(weight_b.as_ptr().add(col + 4));
+        let wc_next = load_i8x4_as_f32(weight_c.as_ptr().add(col + 4));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -3032,24 +3147,9 @@ unsafe fn dot8_unpacked_i8_f32_triple_simd(
         col += 8;
     }
     while col + 3 < in_dim {
-        let wa = f32x4(
-            *weight_a.get_unchecked(col) as f32,
-            *weight_a.get_unchecked(col + 1) as f32,
-            *weight_a.get_unchecked(col + 2) as f32,
-            *weight_a.get_unchecked(col + 3) as f32,
-        );
-        let wb = f32x4(
-            *weight_b.get_unchecked(col) as f32,
-            *weight_b.get_unchecked(col + 1) as f32,
-            *weight_b.get_unchecked(col + 2) as f32,
-            *weight_b.get_unchecked(col + 3) as f32,
-        );
-        let wc = f32x4(
-            *weight_c.get_unchecked(col) as f32,
-            *weight_c.get_unchecked(col + 1) as f32,
-            *weight_c.get_unchecked(col + 2) as f32,
-            *weight_c.get_unchecked(col + 3) as f32,
-        );
+        let wa = load_i8x4_as_f32(weight_a.as_ptr().add(col));
+        let wb = load_i8x4_as_f32(weight_b.as_ptr().add(col));
+        let wc = load_i8x4_as_f32(weight_c.as_ptr().add(col));
         let x0 = v128_load(input.as_ptr().add(row * in_dim + col) as *const v128);
         let x1 = v128_load(input.as_ptr().add((row + 1) * in_dim + col) as *const v128);
         let x2 = v128_load(input.as_ptr().add((row + 2) * in_dim + col) as *const v128);
@@ -3119,6 +3219,16 @@ unsafe fn sum_f32x4(value: core::arch::wasm32::v128) -> f32 {
         + f32x4_extract_lane::<1>(value)
         + f32x4_extract_lane::<2>(value)
         + f32x4_extract_lane::<3>(value)
+}
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline(always)]
+unsafe fn load_i8x4_as_f32(ptr: *const i8) -> core::arch::wasm32::v128 {
+    use core::arch::wasm32::*;
+    let bytes = v128_load(ptr as *const v128);
+    let i16s = i16x8_extend_low_i8x16(bytes);
+    let i32s = i32x4_extend_low_i16x8(i16s);
+    f32x4_convert_i32x4(i32s)
 }
 
 fn dot8_unpacked_i8_f32_triple(

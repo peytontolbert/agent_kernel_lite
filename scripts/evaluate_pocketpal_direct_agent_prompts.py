@@ -107,6 +107,21 @@ def _score_output(output: str, expected: str, *, source_text: str = "", prompt: 
     return not failures, recall, failures, scored_output
 
 
+def _task_prefix_map(values: list[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for value in values:
+        raw = str(value or "")
+        if not raw.strip():
+            continue
+        if "=" not in raw:
+            raise ValueError(f"decoder-prefix-by-task must be TASK=PREFIX, got {raw!r}")
+        task, prefix = raw.split("=", 1)
+        task = task.strip()
+        if task:
+            mapping[task] = prefix.strip()
+    return mapping
+
+
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     repo_root = Path(args.repo_root).resolve()
     sampler = _load_sampler(repo_root)
@@ -129,6 +144,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     load_pretrained(model, str(manifest["model_dir"]), strict=True)
     device = torch.device(str(args.device))
     model.to(device).eval()
+    prefix_by_task = _task_prefix_map(list(args.decoder_prefix_by_task or []))
 
     passed = 0
     by_task: dict[str, dict[str, Any]] = {}
@@ -139,7 +155,11 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             model,
             tokenizer,
             str(row["encoder_text"]),
-            decoder_prefix=str(row.get("decoder_prefix", "") or args.decoder_prefix),
+            decoder_prefix=str(
+                ("" if bool(args.override_row_decoder_prefix) else row.get("decoder_prefix", ""))
+                or prefix_by_task.get(str(row.get("task_type", "") or ""), "")
+                or args.decoder_prefix
+            ),
             device=device,
             max_encoder_tokens=int(args.max_encoder_tokens),
             max_new_tokens=int(args.max_new_tokens),
@@ -147,6 +167,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             top_p=float(args.top_p),
             repetition_penalty=float(args.repetition_penalty),
             keep_special_tokens=bool(args.keep_special_tokens),
+            forbid_ak_content_control=bool(args.forbid_ak_content_control),
         )
         source_text = ""
         source_match = re.search(r"<AK_SLOT_NAME>=SOURCE_TEXT\s+<AK_SLOT_VALUE>=(.*?)(?:\n|$)", str(row["encoder_text"]), flags=re.S)
@@ -210,7 +231,10 @@ def main() -> None:
     parser.add_argument("--top-p", type=float, default=0.65)
     parser.add_argument("--repetition-penalty", type=float, default=1.0)
     parser.add_argument("--decoder-prefix", default="")
+    parser.add_argument("--decoder-prefix-by-task", action="append", default=[])
+    parser.add_argument("--override-row-decoder-prefix", type=int, choices=(0, 1), default=0)
     parser.add_argument("--keep-special-tokens", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--forbid-ak-content-control", type=int, choices=(0, 1), default=0)
     parser.add_argument("--max-examples", type=int, default=120)
     parser.add_argument("--max-failures", type=int, default=20)
     parser.add_argument("--output-json", default="")

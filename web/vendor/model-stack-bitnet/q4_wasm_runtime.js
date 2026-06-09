@@ -1,5 +1,6 @@
 let wasmModulePromise = null;
-const WASM_RUNTIME_VERSION = "20260521-f5-webgpu-ditgraph-v3";
+const MODEL_ASSET_CACHE = 'agent-kernel-lite-model-assets-v1';
+const WASM_RUNTIME_VERSION = "20260521-f5-webgpu-ditgraph-attn2pass-v6";
 
 function resolveUrl(path, baseUrl) {
   return new URL(path, baseUrl).toString();
@@ -33,7 +34,7 @@ async function ensureQ4Wasm() {
       const wasmUrl = new URL("model_stack_bitnet_wasm_bg.wasm", moduleUrl);
       wasmUrl.searchParams.set("v", WASM_RUNTIME_VERSION);
       const wasmBytes = await fetchBuffer(wasmUrl.href, "Model Stack WASM runtime");
-      await module.default(wasmBytes);
+      await module.default({ module_or_path: wasmBytes });
       return module;
     })();
   }
@@ -41,32 +42,75 @@ async function ensureQ4Wasm() {
 }
 
 async function fetchJson(url, label = "JSON asset") {
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.json();
   try {
     const response = await fetch(url, { cache: "force-cache" });
     if (!response.ok && response.status !== 0) {
       throw new Error(`HTTP ${response.status}`);
     }
+    await writeCachedResponse(url, response.clone());
     return response.json();
   } catch (error) {
     const text = await xhrText(url).catch((xhrError) => {
       throw new Error(`${label} load failed: ${url}: ${error.message || String(error)}; XHR fallback: ${xhrError.message || String(xhrError)}`);
     });
+    await writeCachedResponse(url, new Response(text, { headers: { 'content-type': 'application/json' } }));
     return JSON.parse(text);
   }
 }
 
 async function fetchBuffer(url, label = "binary asset") {
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.arrayBuffer();
   try {
     const response = await fetch(url, { cache: "force-cache" });
     if (!response.ok && response.status !== 0) {
       throw new Error(`HTTP ${response.status}`);
     }
+    await writeCachedResponse(url, response.clone());
     return response.arrayBuffer();
   } catch (error) {
-    return xhrArrayBuffer(url).catch((xhrError) => {
+    return xhrArrayBuffer(url).then(async (buffer) => {
+      await writeCachedResponse(url, new Response(buffer));
+      return buffer;
+    }).catch((xhrError) => {
       throw new Error(`${label} load failed: ${url}: ${error.message || String(error)}; XHR fallback: ${xhrError.message || String(xhrError)}`);
     });
   }
+}
+
+async function modelAssetCache() {
+  if (typeof caches === 'undefined' || typeof caches.open !== 'function') return null;
+  try {
+    return await caches.open(MODEL_ASSET_CACHE);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readCachedResponse(url) {
+  const cache = await modelAssetCache();
+  if (!cache) return null;
+  try {
+    return await cache.match(cacheKeyForUrl(url));
+  } catch (_) {
+    return null;
+  }
+}
+
+async function writeCachedResponse(url, response) {
+  const cache = await modelAssetCache();
+  if (!cache || !response) return;
+  try {
+    if (response.ok || response.status === 0 || response.status === 200) {
+      await cache.put(cacheKeyForUrl(url), response);
+    }
+  } catch (_) {}
+}
+
+function cacheKeyForUrl(url) {
+  return new Request(new URL(url, globalThis.location?.href || import.meta.url).href, { method: 'GET' });
 }
 
 async function fetchChunkedBuffer(baseUrl, chunks, label = "chunked binary asset", expectedBytes = null) {
@@ -181,7 +225,7 @@ function createGpuStorageBuffer(device, data, usage = 0) {
   const source = ArrayBuffer.isView(data) ? data : new Uint8Array(data);
   const buffer = device.createBuffer({
     size: align4(source.byteLength),
-    usage: (usage || bufferUsage.STORAGE) | bufferUsage.COPY_DST,
+    usage: (usage || bufferUsage.STORAGE) | bufferUsage.COPY_DST | bufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(buffer, 0, source.buffer, source.byteOffset, source.byteLength);
   return buffer;
@@ -435,97 +479,88 @@ struct AttentionParams {
 
 @group(0) @binding(0) var<storage, read> q_values: array<f32>;
 @group(0) @binding(1) var<storage, read> k_values: array<f32>;
-@group(0) @binding(2) var<storage, read> v_values: array<f32>;
-@group(0) @binding(3) var<storage, read_write> output: array<f32>;
-@group(0) @binding(4) var<uniform> params: AttentionParams;
+@group(0) @binding(2) var<storage, read_write> score_values: array<f32>;
+@group(0) @binding(3) var<uniform> score_params: AttentionParams;
 
-fn rotary_q(pos: u32, head: u32, d: u32) -> f32 {
-  let half = params.head_dim / 2u;
+fn rotary_q_score(pos: u32, head: u32, d: u32) -> f32 {
+  let half = score_params.head_dim / 2u;
   let local = d % half;
-  let base = pos * params.dim + head * params.head_dim;
+  let base = pos * score_params.dim + head * score_params.head_dim;
   let a = q_values[base + local];
   let b = q_values[base + local + half];
-  let angle = f32(pos) / pow(10000.0, f32(2u * local) / f32(params.head_dim));
+  let angle = f32(pos) / pow(10000.0, f32(2u * local) / f32(score_params.head_dim));
   let c = cos(angle);
   let s = sin(angle);
-  if (d < half) {
-    return a * c - b * s;
-  }
+  if (d < half) { return a * c - b * s; }
   return b * c + a * s;
 }
 
-fn rotary_k(pos: u32, head: u32, d: u32) -> f32 {
-  let half = params.head_dim / 2u;
+fn rotary_k_score(pos: u32, head: u32, d: u32) -> f32 {
+  let half = score_params.head_dim / 2u;
   let local = d % half;
-  let base = pos * params.dim + head * params.head_dim;
+  let base = pos * score_params.dim + head * score_params.head_dim;
   let a = k_values[base + local];
   let b = k_values[base + local + half];
-  let angle = f32(pos) / pow(10000.0, f32(2u * local) / f32(params.head_dim));
+  let angle = f32(pos) / pow(10000.0, f32(2u * local) / f32(score_params.head_dim));
   let c = cos(angle);
   let s = sin(angle);
-  if (d < half) {
-    return a * c - b * s;
-  }
+  if (d < half) { return a * c - b * s; }
   return b * c + a * s;
 }
 
-@compute @workgroup_size(8, 8, 1)
-fn rotary_attention_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+@compute @workgroup_size(4, 4, 4)
+fn rotary_attention_scores_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let query = gid.x;
   let head = gid.y;
-  if (query >= params.seq_len || head >= params.heads) { return; }
-  let scale = inverseSqrt(f32(params.head_dim));
+  let key = gid.z;
+  if (query >= score_params.seq_len || head >= score_params.heads || key >= score_params.seq_len) { return; }
+  var score = 0.0;
+  var d = 0u;
+  loop {
+    if (d >= score_params.head_dim) { break; }
+    score = score + rotary_q_score(query, head, d) * rotary_k_score(key, head, d);
+    d = d + 1u;
+  }
+  let idx = (query * score_params.heads + head) * score_params.seq_len + key;
+  score_values[idx] = score * inverseSqrt(f32(score_params.head_dim));
+}
+
+@group(1) @binding(0) var<storage, read> attn_scores: array<f32>;
+@group(1) @binding(1) var<storage, read> v_values: array<f32>;
+@group(1) @binding(2) var<storage, read_write> output: array<f32>;
+@group(1) @binding(3) var<uniform> out_params: AttentionParams;
+
+@compute @workgroup_size(4, 4, 8)
+fn rotary_attention_output_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let query = gid.x;
+  let head = gid.y;
+  let d = gid.z;
+  if (query >= out_params.seq_len || head >= out_params.heads || d >= out_params.head_dim) { return; }
+  let score_base = (query * out_params.heads + head) * out_params.seq_len;
   var max_score = -3.402823e38;
   var key = 0u;
   loop {
-    if (key >= params.seq_len) { break; }
-    var score = 0.0;
-    var d = 0u;
-    loop {
-      if (d >= params.head_dim) { break; }
-      score = score + rotary_q(query, head, d) * rotary_k(key, head, d);
-      d = d + 1u;
-    }
-    score = score * scale;
-    max_score = max(max_score, score);
+    if (key >= out_params.seq_len) { break; }
+    max_score = max(max_score, attn_scores[score_base + key]);
     key = key + 1u;
   }
   var denom = 0.0;
   key = 0u;
   loop {
-    if (key >= params.seq_len) { break; }
-    var score = 0.0;
-    var d = 0u;
-    loop {
-      if (d >= params.head_dim) { break; }
-      score = score + rotary_q(query, head, d) * rotary_k(key, head, d);
-      d = d + 1u;
-    }
-    denom = denom + exp(score * scale - max_score);
+    if (key >= out_params.seq_len) { break; }
+    denom = denom + exp(attn_scores[score_base + key] - max_score);
     key = key + 1u;
   }
-  var d = 0u;
+  var acc = 0.0;
+  key = 0u;
   loop {
-    if (d >= params.head_dim) { break; }
-    var acc = 0.0;
-    key = 0u;
-    loop {
-      if (key >= params.seq_len) { break; }
-      var score = 0.0;
-      var inner = 0u;
-      loop {
-        if (inner >= params.head_dim) { break; }
-        score = score + rotary_q(query, head, inner) * rotary_k(key, head, inner);
-        inner = inner + 1u;
-      }
-      let weight = exp(score * scale - max_score) / denom;
-      let value_index = key * params.dim + head * params.head_dim + d;
-      acc = acc + weight * v_values[value_index];
-      key = key + 1u;
-    }
-    output[query * params.dim + head * params.head_dim + d] = acc;
-    d = d + 1u;
+    if (key >= out_params.seq_len) { break; }
+    let weight = exp(attn_scores[score_base + key] - max_score) / denom;
+    let value_index = key * out_params.dim + head * out_params.head_dim + d;
+    acc = acc + weight * v_values[value_index];
+    key = key + 1u;
   }
+  output[query * out_params.dim + head * out_params.head_dim + d] = acc;
 }
 `;
 }
@@ -676,7 +711,7 @@ class Q4LinearWebGPUHandle {
       if (x.length !== rows * this.inDim) {
         throw new Error(`Q4 WebGPU input length mismatch: got ${x.length}, expected ${rows * this.inDim}`);
       }
-      inputBuffer = this.device.createBuffer({ size: align4(x.byteLength), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST });
+      inputBuffer = this.device.createBuffer({ size: align4(x.byteLength), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST | bufferUsage.COPY_SRC });
       this.device.queue.writeBuffer(inputBuffer, 0, x.buffer, x.byteOffset, x.byteLength);
     }
     const outputBuffer = this.createOutputBuffer(rows);
@@ -696,7 +731,7 @@ class Q4LinearWebGPUHandle {
     let cache = this.runCache.get(cacheKey);
     if (!cache) {
       const bufferUsage = gpuBufferUsage();
-      const inputBuffer = this.device.createBuffer({ size: align4(inputBytes), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST });
+      const inputBuffer = this.device.createBuffer({ size: align4(inputBytes), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST | bufferUsage.COPY_SRC });
       const outputBuffer = this.device.createBuffer({ size: align4(outputBytes), usage: bufferUsage.STORAGE | bufferUsage.COPY_SRC });
       const readbackBuffer = this.device.createBuffer({ size: align4(outputBytes), usage: bufferUsage.MAP_READ | bufferUsage.COPY_DST });
       const bindGroup = this.device.createBindGroup({
@@ -737,7 +772,8 @@ export class Q4TensorBundleWebGPU {
     this.pipeline = pipeline;
     this.activationPipeline = null;
     this.layerNormAffinePipeline = null;
-    this.rotaryAttentionPipeline = null;
+    this.rotaryAttentionScorePipeline = null;
+    this.rotaryAttentionOutputPipeline = null;
     this.gatedAddPipeline = null;
     this.q4Conv1dPipeline = null;
     this.samplerUpdatePipeline = null;
@@ -767,13 +803,19 @@ export class Q4TensorBundleWebGPU {
     return this.layerNormAffinePipeline;
   }
 
-  rotaryAttentionComputePipeline() {
-    if (!this.rotaryAttentionPipeline) {
+  rotaryAttentionComputePipelines() {
+    if (!this.rotaryAttentionScorePipeline || !this.rotaryAttentionOutputPipeline) {
       const shaderModule = this.device.createShaderModule({ code: rotaryAttentionShaderSource() });
-      const descriptor = { layout: 'auto', compute: { module: shaderModule, entryPoint: 'rotary_attention_main' } };
-      this.rotaryAttentionPipeline = this.device.createComputePipeline(descriptor);
+      this.rotaryAttentionScorePipeline = this.device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: shaderModule, entryPoint: 'rotary_attention_scores_main' },
+      });
+      this.rotaryAttentionOutputPipeline = this.device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: shaderModule, entryPoint: 'rotary_attention_output_main' },
+      });
     }
-    return this.rotaryAttentionPipeline;
+    return { score: this.rotaryAttentionScorePipeline, output: this.rotaryAttentionOutputPipeline };
   }
 
   gatedAddComputePipeline() {
@@ -952,25 +994,38 @@ export class Q4TensorBundleWebGPU {
     const kBuffer = kTensor.buffer;
     const vBuffer = vTensor.buffer;
     const outputBytes = expected * Float32Array.BYTES_PER_ELEMENT;
+    const scoreBytes = seqLen * heads * seqLen * Float32Array.BYTES_PER_ELEMENT;
     const outputBuffer = this.device.createBuffer({ size: align4(outputBytes), usage: bufferUsage.STORAGE | bufferUsage.COPY_SRC });
+    const scoreBuffer = this.device.createBuffer({ size: align4(scoreBytes), usage: bufferUsage.STORAGE | bufferUsage.COPY_SRC });
     const paramsBuffer = this.device.createBuffer({ size: 16, usage: bufferUsage.UNIFORM | bufferUsage.COPY_DST });
     this.device.queue.writeBuffer(paramsBuffer, 0, new Uint32Array([seqLen, heads, headDim, dim]));
-    const pipeline = this.rotaryAttentionComputePipeline();
-    const bindGroup = this.device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
+    const pipelines = this.rotaryAttentionComputePipelines();
+    const scoreBindGroup = this.device.createBindGroup({
+      layout: pipelines.score.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: qBuffer } },
         { binding: 1, resource: { buffer: kBuffer } },
-        { binding: 2, resource: { buffer: vBuffer } },
-        { binding: 3, resource: { buffer: outputBuffer } },
-        { binding: 4, resource: { buffer: paramsBuffer } },
+        { binding: 2, resource: { buffer: scoreBuffer } },
+        { binding: 3, resource: { buffer: paramsBuffer } },
+      ],
+    });
+    const outputBindGroup = this.device.createBindGroup({
+      layout: pipelines.output.getBindGroupLayout(1),
+      entries: [
+        { binding: 0, resource: { buffer: scoreBuffer } },
+        { binding: 1, resource: { buffer: vBuffer } },
+        { binding: 2, resource: { buffer: outputBuffer } },
+        { binding: 3, resource: { buffer: paramsBuffer } },
       ],
     });
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(Math.ceil(seqLen / 8), Math.ceil(heads / 8), 1);
+    pass.setPipeline(pipelines.score);
+    pass.setBindGroup(0, scoreBindGroup);
+    pass.dispatchWorkgroups(Math.ceil(seqLen / 4), Math.ceil(heads / 4), Math.ceil(seqLen / 4));
+    pass.setPipeline(pipelines.output);
+    pass.setBindGroup(1, outputBindGroup);
+    pass.dispatchWorkgroups(Math.ceil(seqLen / 4), Math.ceil(heads / 4), Math.ceil(headDim / 8));
     pass.end();
     const out = new WebGPUTensorF32(this.device, outputBuffer, expected, seqLen, dim);
     this.device.queue.submit([encoder.finish()]);
@@ -1040,7 +1095,7 @@ export class Q4TensorBundleWebGPU {
     if (input instanceof WebGPUTensorF32) return input;
     const x = input instanceof Float32Array ? input : new Float32Array(input);
     const bufferUsage = gpuBufferUsage();
-    const buffer = this.device.createBuffer({ size: align4(x.byteLength), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST });
+    const buffer = this.device.createBuffer({ size: align4(x.byteLength), usage: bufferUsage.STORAGE | bufferUsage.COPY_DST | bufferUsage.COPY_SRC });
     this.device.queue.writeBuffer(buffer, 0, x.buffer, x.byteOffset, x.byteLength);
     return new WebGPUTensorF32(this.device, buffer, x.length, rows, cols || Math.floor(x.length / Math.max(1, rows)));
   }

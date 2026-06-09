@@ -131,12 +131,24 @@ def json_to_content_tokens(text: str, *, source_text: str = "", use_copy_source:
 
 
 def _read_until_token(text: str, start_token: str, end_token: str) -> str:
+    raw = str(text or "")
     match = re.search(
         rf"{re.escape(start_token)}\s*(.*?)\s*{re.escape(end_token)}",
-        str(text or ""),
+        raw,
         flags=re.S,
     )
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+    start = raw.find(start_token)
+    if start < 0:
+        return ""
+    remainder = raw[start + len(start_token) :].strip()
+    if not remainder:
+        return ""
+    next_token = re.search(r"\s+</?AK_[A-Z0-9_]+>|\s+<AK_[A-Z0-9_]+>", remainder)
+    if next_token:
+        remainder = remainder[: next_token.start()].strip()
+    return remainder
 
 
 def _read_value_after(text: str, token: str) -> str:

@@ -1,27 +1,29 @@
 import { decodeWavMono, vocosMelFromMono } from '../vendor/model-stack-bitnet/audio_mel_runtime.js';
 import { F5TTSQ4DiTRuntime } from '../vendor/model-stack-bitnet/f5tts_q4_dit_runtime.js';
 import * as Q4Runtime from '../vendor/model-stack-bitnet/q4_wasm_runtime.js';
+import { normalizeF5TTSSpeechText } from '../vendor/model-stack-bitnet/tts_text_normalizer.js';
 import { SAMPLE_RATE, VocosMel24khzRuntime } from '../vendor/model-stack-bitnet/vocos_fp16_runtime.js';
 
 let runtimePromise = null;
+const VOICE_ASSET_CACHE = 'agent-kernel-lite-model-assets-v1';
 const { Q4TensorBundleWASM } = Q4Runtime;
 
 const VOICE_NAME = 'Peyton';
-const RUNTIME_VERSION = '20260521-peyton-hf-q4-distill-wasm-ref256-framecal260-step8-cfg2-speed115';
-const SPEAK_PRESET = 'custom-f5-hf-q4-distill-wasm-framecal-vocos-q4-peyton-ref256-cfg2-step8-speed115';
-const REFERENCE_TEXT = "Hi, I'm recording this sample to create a ";
+const RUNTIME_VERSION = '20260524-peyton-hf-q4-distill-webgpu-fullref-attn2pass-step8-cfg14-speed110';
+const SPEAK_PRESET = 'custom-f5-hf-q4-distill-webgpu-fullref-vocos-q4-peyton-ref938-cfg14-step8-speed110';
 const FULL_REFERENCE_TEXT = "Hi, I'm recording this sample to create a digital copy of my voice. I want it to sound natural and conversational, just like how I normally speak.";
-const REFERENCE_MEL_FRAMES = 256;
+const REFERENCE_TEXT = FULL_REFERENCE_TEXT;
 const FULL_REFERENCE_MEL_FRAMES = 938;
+const REFERENCE_MEL_FRAMES = FULL_REFERENCE_MEL_FRAMES;
 const MAX_DURATION_FRAMES = 1536;
 const GENERATED_FRAMES_PER_TEXT_BYTE = 6.33;
 const SHORT_TEXT_SPEED = 0.3;
 const MIN_GEN_FRAMES_SHORT = 32;
 const MIN_GEN_FRAMES_MEDIUM = 64;
 const MIN_GEN_FRAMES_LONG = 96;
-const SPEECH_SPEED = 1.15;
+const SPEECH_SPEED = 1.1;
 const DEFAULT_STEPS = 8;
-const DEFAULT_CFG_STRENGTH = 2.0;
+const DEFAULT_CFG_STRENGTH = 1.4;
 const CROSS_FADE_SECONDS = 0.15;
 const OUTPUT_PEAK = 0.82;
 const WEBGPU_MIN_SPEEDUP = 1.08;
@@ -29,7 +31,7 @@ const WEBGPU_F5_MIN_SPEEDUP = 1.15;
 
 const DEFAULTS = {
   f5Manifest: 'https://huggingface.co/PeytonT/f5tts-4bit-distill/resolve/main/manifest.json',
-  f5FallbackManifest: '../models/f5tts_q4_12to4_distill_bundle/manifest.json',
+  f5FallbackManifest: '../models/f5tts_peyton_q4_v0/manifest.json',
   vocosManifest: '../models/vocos_mel_24khz_q4_v0/manifest.json',
   refWav: '../voice/peyton/sample_0.wav',
   vocab: '../voice/peyton/F5TTS_Base_vocab.txt',
@@ -60,8 +62,7 @@ async function loadRuntime() {
         manifestUrl: DEFAULTS.f5Manifest,
         fallbackLabel: 'Loading packaged evaluated ' + VOICE_NAME + ' Q4 F5TTS fallback',
         fallbackManifestUrl: DEFAULTS.f5FallbackManifest,
-        preferWasm: true,
-        preferF5Graph: true,
+        graphKind: 'f5',
       });
       postProgress({ phase: 'runtime', detail: 'Loading Vocos Q4 weights', percent: 9 });
       const vocosBundle = await loadStage('Loading Vocos Q4', () => (
@@ -86,7 +87,7 @@ async function loadRuntime() {
       } catch (error) {
         if (f5Bundle.backend !== 'webgpu') throw error;
         postMessage({ type: 'status', detail: `F5 WebGPU session failed; reloading WASM fallback (${error.message || String(error)})` });
-        f5Bundle = await loadStage('Reloading F5 Q4 with WASM fallback', () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5Manifest)));
+        f5Bundle = await loadStage('Reloading packaged Peyton Q4 with WASM fallback', () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(DEFAULTS.f5FallbackManifest)));
         f5Id = f5Bundle.manifest?.model_id || 'f5tts-q4';
         f5 = new F5TTSQ4DiTRuntime(f5Bundle);
         f5Backend = 'WASM';
@@ -124,12 +125,12 @@ async function loadRuntime() {
 
 async function selectFastestF5Session(gpuBundle, gpuF5) {
   if (!gpuBundle?.base) return { bundle: gpuBundle, speedup: 1 };
-  const condSeqLen = 16;
-  const genFrames = 8;
+  const condSeqLen = 128;
+  const genFrames = 16;
   const duration = condSeqLen + genFrames;
   const condMel = new Float32Array(condSeqLen * 100);
   const textIds = new Int32Array(duration);
-  for (let i = 0; i < textIds.length; i += 1) textIds[i] = i < 8 ? 1 : -1;
+  for (let i = 0; i < textIds.length; i += 1) textIds[i] = i < 64 ? 1 : -1;
   const args = {
     condMel,
     condSeqLen,
@@ -182,15 +183,22 @@ async function loadStage(label, fn) {
   }
 }
 
-async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '', preferWasm = false, preferF5Graph = false }) {
+function hasWebGPUQ4Runtime() {
+  return Boolean(globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU);
+}
+
+async function loadModelBundle({ label, manifestUrl, fallbackLabel = '', fallbackManifestUrl = '', graphKind = '' }) {
   async function loadPreferred(stageLabel, url) {
-    if (!preferWasm && globalThis.navigator?.gpu && Q4Runtime.Q4TensorBundleWebGPU) {
+    if (hasWebGPUQ4Runtime()) {
       try {
         const gpuBundle = await loadStage(`${stageLabel} with WebGPU`, () => Q4Runtime.Q4TensorBundleWebGPU.fromManifestUrl(versionedUrl(url)));
-        return preferF5Graph ? gpuBundle : await selectFastestQ4Bundle(gpuBundle, stageLabel);
+        if (graphKind === 'f5') return gpuBundle;
+        return await selectFastestQ4Bundle(gpuBundle, stageLabel);
       } catch (error) {
-        postMessage({ type: 'status', detail: `${stageLabel} WebGPU failed; falling back to WASM (${error.message || String(error)})` });
+        postMessage({ type: 'status', detail: `${stageLabel} WebGPU unavailable or rejected; falling back to WASM (${error.message || String(error)})` });
       }
+    } else {
+      postMessage({ type: 'status', detail: `${stageLabel} WebGPU not detected; using WASM` });
     }
     return loadStage(`${stageLabel} with fused WASM`, () => Q4TensorBundleWASM.fromManifestUrl(versionedUrl(url)));
   }
@@ -288,15 +296,25 @@ async function speak(message) {
   const runtime = await loadRuntime();
   const loadedAt = performance.now();
   const text = String(message.text || 'This is ' + VOICE_NAME + ' speaking from Agent Kernel Lite.').trim();
-  const condSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
+  const speechText = normalizeF5TTSSpeechText(text);
+  if (speechText !== text) {
+    postMessage({ type: 'status', detail: `${VOICE_NAME} voice normalized technical terms for speech` });
+  }
+  const requestedCondSeqLen = clampInt(message.condSeqLen, REFERENCE_MEL_FRAMES, 2, MAX_DURATION_FRAMES - 1);
+  const f5IsWebGPU = runtime.f5Mode?.startsWith('webgpu:');
+  const maxCondSeqLenForRuntime = f5IsWebGPU ? MAX_DURATION_FRAMES - 1 : 256;
+  const condSeqLen = Math.min(requestedCondSeqLen, maxCondSeqLenForRuntime);
+  if (condSeqLen !== requestedCondSeqLen) {
+    postMessage({ type: 'status', detail: `${VOICE_NAME} voice using ${condSeqLen} reference frames on ${runtime.f5Mode}; full reference requires WebGPU` });
+  }
   const steps = clampInt(message.steps, DEFAULT_STEPS, 1, 32);
   const cfgStrength = clampNumber(message.cfgStrength, DEFAULT_CFG_STRENGTH, 0, 4);
   const speechSpeed = clampNumber(message.speed, SPEECH_SPEED, 0.5, 2.0);
   const reference = referenceProfile(condSeqLen);
   const maxGenFrames = MAX_DURATION_FRAMES - condSeqLen;
-  const chunks = splitTextForSpeech(text, reference.framesPerTextByte, maxGenFrames);
+  const chunks = splitTextForSpeech(speechText || text, reference.framesPerTextByte, maxGenFrames);
   const explicitGenFrames = Number.isFinite(Number(message.genFrames)) ? Number(message.genFrames) : null;
-  const preset = `custom-wasm-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}-speed${formatPresetNumber(speechSpeed)}`;
+  const preset = `${runtime.f5Mode?.startsWith('webgpu:') ? 'custom-webgpu' : 'custom-wasm'}-cond${condSeqLen}-ref${reference.textBytes}-${explicitGenFrames ? `gen${explicitGenFrames}` : 'duration'}-cfg${formatPresetNumber(cfgStrength)}-step${steps}-speed${formatPresetNumber(speechSpeed)}`;
 
   postProgress({
     phase: 'condition',
@@ -424,7 +442,7 @@ async function speak(message) {
     steps,
     elapsedMs: performance.now() - startedAt,
   });
-  const audio = normalizePeak(concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS), OUTPUT_PEAK);
+  const audio = normalizePeak(deharshSpeech(concatAudioParts(audioParts, totalSamples, SAMPLE_RATE, CROSS_FADE_SECONDS), SAMPLE_RATE), OUTPUT_PEAK);
   const wav = encodeWav(audio, SAMPLE_RATE);
   postProgress({
     phase: 'render',
@@ -472,27 +490,76 @@ function versionedUrl(path) {
 }
 
 async function fetchArrayBuffer(url) {
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.arrayBuffer();
   try {
     const response = await fetch(url, { cache: 'force-cache' });
-    if (response.ok || response.status === 0) return response.arrayBuffer();
+    if (response.ok || response.status === 0) {
+      await writeCachedResponse(url, response.clone());
+      return response.arrayBuffer();
+    }
     throw new Error(`HTTP ${response.status}`);
   } catch (error) {
-    return xhrArrayBuffer(url).catch(() => {
+    return xhrArrayBuffer(url).then(async (buffer) => {
+      await writeCachedResponse(url, new Response(buffer));
+      return buffer;
+    }).catch(() => {
       throw new Error(`failed to fetch ${url}: ${error.message || String(error)}`);
     });
   }
 }
 
 async function fetchText(url) {
+  const cached = await readCachedResponse(url);
+  if (cached) return cached.text();
   try {
     const response = await fetch(url, { cache: 'force-cache' });
-    if (response.ok || response.status === 0) return response.text();
+    if (response.ok || response.status === 0) {
+      await writeCachedResponse(url, response.clone());
+      return response.text();
+    }
     throw new Error(`HTTP ${response.status}`);
   } catch (error) {
-    return xhrText(url).catch(() => {
+    return xhrText(url).then(async (text) => {
+      await writeCachedResponse(url, new Response(text, { headers: { 'content-type': 'text/plain' } }));
+      return text;
+    }).catch(() => {
       throw new Error(`failed to fetch ${url}: ${error.message || String(error)}`);
     });
   }
+}
+
+async function voiceAssetCache() {
+  if (typeof caches === 'undefined' || typeof caches.open !== 'function') return null;
+  try {
+    return await caches.open(VOICE_ASSET_CACHE);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readCachedResponse(url) {
+  const cache = await voiceAssetCache();
+  if (!cache) return null;
+  try {
+    return await cache.match(cacheKeyForUrl(url));
+  } catch (_) {
+    return null;
+  }
+}
+
+async function writeCachedResponse(url, response) {
+  const cache = await voiceAssetCache();
+  if (!cache || !response) return;
+  try {
+    if (response.ok || response.status === 0 || response.status === 200) {
+      await cache.put(cacheKeyForUrl(url), response);
+    }
+  } catch (_) {}
+}
+
+function cacheKeyForUrl(url) {
+  return new Request(new URL(url, globalThis.location?.href || import.meta.url).href, { method: 'GET' });
 }
 
 function xhrArrayBuffer(url) {
@@ -676,6 +743,23 @@ function clampNumber(value, fallback, min, max) {
 
 function formatPresetNumber(value) {
   return Number.isInteger(value) ? String(value) : String(value).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function deharshSpeech(samples, sampleRate) {
+  if (!samples?.length || !(sampleRate > 0)) return samples;
+  const cutoffHz = 4800;
+  const highGain = 0.58;
+  const dt = 1 / sampleRate;
+  const rc = 1 / (2 * Math.PI * cutoffHz);
+  const alpha = dt / (rc + dt);
+  const out = new Float32Array(samples.length);
+  let low = samples[0] || 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const sample = samples[i] || 0;
+    low += alpha * (sample - low);
+    out[i] = low + (sample - low) * highGain;
+  }
+  return out;
 }
 
 function encodeWav(samples, sampleRate) {

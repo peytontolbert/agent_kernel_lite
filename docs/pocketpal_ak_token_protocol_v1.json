@@ -1,0 +1,26 @@
+{
+  "name": "pocketpal_ak_tokens_v1",
+  "purpose": "Compact action/content protocol for tiny local models. The model may emit AK tokens; PocketPal materializes JSON and runtime actions outside the model.",
+  "actions": {
+    "respond": "<AK_ACTION_RESPOND>",
+    "ask_user": "<AK_ACTION_ASK_USER>",
+    "extension_request": "<AK_ACTION_EXTENSION_REQUEST>",
+    "save_memory": "<AK_ACTION_SAVE_MEMORY>"
+  },
+  "grammar": [
+    "<AK_STRUCTURED>",
+    "<AK_ACTION_RESPOND>|<AK_ACTION_ASK_USER>|<AK_ACTION_EXTENSION_REQUEST>|<AK_ACTION_SAVE_MEMORY>",
+    "[<AK_TASK_TYPE> task_type]",
+    "([<AK_INTENT> intent] [<AK_FRESHNESS> freshness] [<AK_FIELD> <AK_FIELD_NAME> name <AK_FIELD_VALUE> value]*) | (<AK_CONTENT> content </AK_CONTENT>)",
+    "<AK_END>"
+  ],
+  "copy_tokens": {
+    "<AK_COPY_USER_SOURCE_1>": "copy current user source text exactly",
+    "<AK_COPY_USER_SOURCE_N>": "reserved for future source-slot copies, N=1..24"
+  },
+  "runtime_contract": {
+    "model": "Choose action and compact content/operator tokens.",
+    "app": "Validate, repair, copy source slots, fill JSON metadata, and execute/ask for approval where needed.",
+    "json": "Transport format only; not required as native model output."
+  }
+}

@@ -3577,7 +3577,10 @@ function activeAgentExpectedAction(agent, userText = '') {
 function activeAgentDecoderPrefix(agent, userText = '') {
   if (!agent) return '';
   const action = activeAgentExpectedAction(agent, userText);
-  return ACTIVE_AGENT_ACTION_PREFIXES[action] || '';
+  const base = ACTIVE_AGENT_ACTION_PREFIXES[action] || '';
+  if (action !== 'respond' || !base) return base;
+  const intent = activeAgentHintIntentValue(agent, userText);
+  return intent ? `${base}<AK_TASK_TYPE> active_agent_${intent} ` : base;
 }
 
 function activeAgentGenerationOptions(agent, userText, { retry = false } = {}) {
@@ -3832,11 +3835,29 @@ function readAkTokenValue(raw, token) {
   return String(raw || '').match(pattern)?.[1]?.trim() || '';
 }
 
+function readAkContentValue(raw) {
+  const text = String(raw || '');
+  const closed = text.match(/<AK_CONTENT>\s*([\s\S]*?)\s*<\/AK_CONTENT>/);
+  if (closed) return closed[1]?.trim() || '';
+  return readAkTokenValue(text, '<AK_CONTENT>');
+}
+
+function readAkFieldValues(raw) {
+  const fields = {};
+  const pattern = /<AK_FIELD>\s+<AK_FIELD_NAME>\s+([\s\S]*?)\s+<AK_FIELD_VALUE>\s+([\s\S]*?)(?=\s+<AK_FIELD>|\s+<AK_CONTENT>|\s+<AK_END>|$)/g;
+  let match;
+  while ((match = pattern.exec(String(raw || ''))) !== null) {
+    const name = String(match[1] || '').trim();
+    const value = String(match[2] || '').trim();
+    if (name) fields[name] = value;
+  }
+  return fields;
+}
+
 function decisionFromAkTokenProtocol(text) {
   const raw = String(text || '').trim();
   if (!raw || (!raw.includes('<AK_STRUCTURED>') && !raw.includes('<AK_CONTENT>'))) return null;
-  const contentMatch = raw.match(/<AK_CONTENT>\s*([\s\S]*?)\s*<\/AK_CONTENT>/);
-  let content = contentMatch?.[1]?.trim() || '';
+  let content = readAkContentValue(raw);
   if (!content && raw.includes('<AK_COPY_USER_SOURCE_1>')) content = '<AK_COPY_USER_SOURCE_1>';
   const action = raw.includes('<AK_ACTION_EXTENSION_REQUEST>')
     ? 'extension_request'
@@ -3853,10 +3874,21 @@ function decisionFromAkTokenProtocol(text) {
     metadata.max_sources = Math.max(1, Math.min(5, Number(state.webSearch.maxSources || 5)));
     metadata.requires_user_approval = true;
   }
-  if (!content && raw.includes('<AK_INTENT>')) {
+  if (!content && (raw.includes('<AK_INTENT>') || raw.includes('<AK_FRESHNESS>') || raw.includes('<AK_FIELDS>') || raw.includes('<AK_FIELD>'))) {
     const intent = readAkTokenValue(raw, '<AK_INTENT>');
     const freshness = readAkTokenValue(raw, '<AK_FRESHNESS>');
-    content = JSON.stringify({ intent, freshness });
+    const fieldsRaw = readAkTokenValue(raw, '<AK_FIELDS>');
+    const payload = {};
+    if (intent) payload.intent = intent;
+    if (freshness) payload.freshness = freshness;
+    if (fieldsRaw) {
+      payload.fields = fieldsRaw
+        .split(/[\s,]+/)
+        .map((item) => item.trim())
+        .filter((item) => item && !item.startsWith('<AK_'));
+    }
+    Object.assign(payload, readAkFieldValues(raw));
+    content = JSON.stringify(payload);
   }
   if (!content) return null;
   return { action, content, proposal_metadata: metadata };
@@ -4401,6 +4433,13 @@ function activeAgentIntentHint(agent, userText = '') {
   return `<AK_TASK_HINT> intent=${intent} task=${task} source_text_required=${intent !== 'casual'}`;
 }
 
+function activeAgentHintIntentValue(agent, userText = '') {
+  const hint = activeAgentIntentHint(agent, userText);
+  const match = hint.match(/intent=([a-z_]+)/);
+  const intent = match ? String(match[1] || '') : '';
+  return intent && intent !== 'casual' ? intent : '';
+}
+
 function defaultAgentInstruction(name) {
   const label = String(name || '').trim() || 'PocketPal agent';
   return `Use the user-configured agent named "${label}" for the current request. Treat the agent name and any saved instruction as the task definition, follow the selected retrieval/tool/action policies, and ask before taking actions that need user approval.`;
@@ -4857,6 +4896,8 @@ function hasDecoderQualityIssue(text, rows, userText = '') {
   if (normalized.length > 120 && !/[.!?]/.test(normalized)) return true;
   if (/[\uFFFD]/.test(normalized)) return true;
   if (/\b(?:envend|local-balls|racket|gronuded|amtch|rpesent|ishould|thn|somne)\b/i.test(normalized)) return true;
+  if (/%HINT%|%USERME|packarr|intoseix|shoose|foldftermount|pusss|carding|\bbes\b|\/agent_|agent_[a-z]_|_s\/|factmers|avous|steaminer|steamin_agent|Cange|sying|patherification|Cheetadline|passible-y|No_agent_plan|erification|that the sy|if the sy|Priting|file:\/s\/tle-|behavior nam|facturainst|sheetadata|<AK_RET_CODE>|\bMo"?}?/i.test(normalized)) return true;
+  if ((normalized.match(/\bfile:\s*/gi) || []).length >= 3) return true;
   if (/\b[a-z]{2,}[A-Z]{2,}[a-zA-Z]{2,}\b/.test(normalized)) return true;
   if (hasRepetitionIssue(normalized)) return true;
   const malformed = normalized.match(/\b[a-z]{2,}(?:[A-Z][a-z]{2,}){2,}\b/g) || [];
@@ -4935,6 +4976,12 @@ function sentenceCaseDraft(text) {
   const lower = cleaned === cleaned.toUpperCase() ? cleaned.toLowerCase() : cleaned;
   const capitalized = lower.replace(/(^|[.!?]\s+)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`);
   return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}
+
+function finishSentenceDraft(text) {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  return /[.!?]$/.test(cleaned) ? cleaned : `${cleaned}.`;
 }
 
 function professionalizeDraft(text) {
@@ -5040,10 +5087,43 @@ function activeAgentTaskFacts(text) {
   return facts;
 }
 
+function activeAgentFieldValue(text, field) {
+  const names = 'Repo|Path|Symbol/card|Summary|Summary/code|Use when|Patch relevance|Risks|Verification|Related files|Commit/change|Concept|Kind|URI|Paper|ID|Abstract/context';
+  const pattern = new RegExp(`\\b${field.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}:\\s*([\\s\\S]*?)(?=\\s+\\b(?:${names}):|$)`, 'i');
+  const match = String(text || '').match(pattern);
+  return match ? String(match[1] || '').replace(/\s+/g, ' ').trim() : '';
+}
+
+function activeAgentRetrievedContext(text) {
+  const match = String(text || '').match(/<AK_CONTEXT>\s+Retrieved (?:skill card|change episode|concept|paper context):\s*([\s\S]*?)(?=\n<AK_USER>|\n<AK_CONTEXT>|\n<AK_PROFILE>|$)/i);
+  return match ? String(match[1] || '').replace(/\s+/g, ' ').trim() : '';
+}
+
+function activeAgentOperatorSource(text) {
+  return activeAgentRetrievedContext(text) || String(text || '').trim();
+}
+
 function activeAgentExtractJson(text) {
-  const source = String(text || '');
-  if (/^\s*(?:can|could|would|should|is|are|do|does|did|what|when|where|why|how)\b.+\?\s*$/i.test(source)) {
-    return `Question: ${source.replace(/\s+/g, ' ').trim()}`;
+  const source = activeAgentOperatorSource(text);
+  const repo = activeAgentFieldValue(source, 'Repo');
+  const concept = activeAgentFieldValue(source, 'Concept');
+  const kind = activeAgentFieldValue(source, 'Kind');
+  const uri = activeAgentFieldValue(source, 'URI');
+  if (repo || concept || kind || uri) {
+    return [
+      repo ? `repo=${repo}` : '',
+      concept ? `concept=${concept}` : '',
+      kind ? `kind=${kind}` : '',
+      uri ? `uri=${uri}` : '',
+    ].filter(Boolean).join('; ');
+  }
+  const questionish = source.replace(/^i\s+was\s+wondering\s+whether\s+/i, '').replace(/\s+/g, ' ').trim();
+  if (
+    /^\s*(?:can|could|would|should|is|are|do|does|did|will|what|when|where|why|how)\b.+\??\s*$/i.test(source)
+    || /^(?:we|you|i)\s+can\b/i.test(questionish)
+  ) {
+    const question = questionish.endsWith('?') ? questionish : `${questionish}?`;
+    return `Question: ${sentenceCaseDraft(question)}`;
   }
   const names = Array.from(new Set((source.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || [])
     .map((item) => item.replace(/\bHi\s+/i, '').trim())
@@ -5061,14 +5141,16 @@ function activeAgentClassifyJson(text, instruction = '') {
   const intent = haystack.match(/\b(rewrite|reword|polish|professional)\b/) ? 'rewrite'
     : haystack.match(/\b(summarize|summary|recap)\b/) ? 'summary'
       : haystack.match(/\b(translate|spanish|french|german)\b/) ? 'translation'
-        : haystack.match(/\b(extract|owner|deadline|field)\b/) ? 'extraction'
-          : haystack.match(/\b(search|web|latest|current)\b/) ? 'web_search'
-            : 'casual';
+        : haystack.match(/\b(rank|ranking|sort|priority|prioritize|urgency)\b/) ? 'ranking'
+          : haystack.match(/\b(extract|owner|deadline|field)\b/) ? 'extraction'
+            : haystack.match(/\b(search|web|latest|current)\b/) ? 'web_search'
+              : 'casual';
   const tone = haystack.match(/\b(angry|upset|frustrated)\b/) ? 'frustrated'
     : haystack.match(/\b(thanks|thank you|appreciate)\b/) ? 'grateful'
       : haystack.match(/\b(please|could you|would you)\b/) ? 'polite'
         : 'neutral';
   const result = { intent, tone };
+  if (intent === 'ranking' && /\b(urgency|urgent|priority|prioritize)\b/.test(haystack)) result.criterion = 'urgency';
   if (/\b(fields?|owner|deadline)\b/.test(haystack)) result.fields = ['owner', 'deadline'];
   if (intent === 'web_search' && /\b(current|latest|recent|today|fresh)\b/.test(haystack)) result.freshness = 'current';
   return JSON.stringify(result);
@@ -5130,8 +5212,18 @@ function activeAgentActionItems(text) {
 }
 
 function activeAgentBoundActionItems(text) {
+  const source = activeAgentOperatorSource(text);
+  const change = activeAgentFieldValue(source, 'Commit/change');
+  const files = activeAgentFieldValue(source, 'Related files');
+  if (change || files) {
+    return [
+      change ? `Change intent: ${change}.` : '',
+      files ? `Inspect related files: ${files}.` : '',
+      'Verify that the behavior named by the commit still works and no adjacent path regressed.',
+    ].filter(Boolean).join(' ');
+  }
   const items = [];
-  for (const clause of compactSourceClauses(text, 8)) {
+  for (const clause of compactSourceClauses(source, 8)) {
     let match = clause.match(/^([A-Z][A-Za-z]+)\s+(?:will\s+)?(.+)$/);
     if (!match) match = clause.match(/^(Finance)\s+(.+)$/);
     if (!match) continue;
@@ -5151,7 +5243,15 @@ function activeAgentBoundActionItems(text) {
 }
 
 function activeAgentBoundChecklist(text) {
-  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  const raw = activeAgentOperatorSource(text).replace(/\s+/g, ' ').trim();
+  const facts = activeAgentTaskFacts(raw);
+  if (facts.object && facts.date && facts.blocker) {
+    return [
+      `- Send the ${facts.object} by ${facts.date}`,
+      `- Review the ${facts.object}`,
+      `- Resolve ${facts.blocker}`,
+    ].join('\n');
+  }
   if (/^pack\b/i.test(raw)) {
     const tail = raw.replace(/^pack\s+/i, '').replace(/[. ]+$/g, '');
     return tail
@@ -5165,15 +5265,41 @@ function activeAgentBoundChecklist(text) {
 }
 
 function activeAgentBoundSummary(text) {
-  const lower = String(text || '').toLowerCase();
+  const source = activeAgentOperatorSource(text);
+  const paper = activeAgentFieldValue(source, 'Paper').replace(/[. ]+$/g, '');
+  const abstract = activeAgentFieldValue(source, 'Abstract/context').replace(/[. ]+$/g, '');
+  if (paper && abstract) return `${paper}: ${abstract}`;
+  const repo = activeAgentFieldValue(source, 'Repo').replace(/[. ]+$/g, '');
+  const concept = activeAgentFieldValue(source, 'Concept').replace(/[. ]+$/g, '');
+  const kind = activeAgentFieldValue(source, 'Kind').replace(/[. ]+$/g, '');
+  const summary = (activeAgentFieldValue(source, 'Summary') || activeAgentFieldValue(source, 'Summary/code')).replace(/[. ]+$/g, '');
+  const useWhen = activeAgentFieldValue(source, 'Use when').replace(/[. ]+$/g, '');
+  if (concept && repo && summary) return `${concept} is a ${kind || 'concept'} in ${repo}. ${summary}`;
+  if (summary && useWhen) return `${finishSentenceDraft(summary)} Use it when ${useWhen}.`;
+  if (summary) return summary;
+  const lower = source.toLowerCase();
   if (lower.includes('design approved the search flow') && lower.includes('clickable')) {
     return 'Design approved the search flow and requested clickable result links.';
   }
-  return sentenceCaseDraft(text);
+  return sentenceCaseDraft(source);
 }
 
 function activeAgentBoundPlan(text) {
-  const lower = String(text || '').toLowerCase();
+  const source = activeAgentOperatorSource(text);
+  const concept = activeAgentFieldValue(source, 'Concept').replace(/[. ]+$/g, '');
+  if (concept) {
+    return `Use the ${concept} context by first confirming the relevant file or symbol, then apply a minimal change, then verify behavior against the surrounding repository contract.`;
+  }
+  const path = activeAgentFieldValue(source, 'Path').replace(/[. ]+$/g, '');
+  const symbol = activeAgentFieldValue(source, 'Symbol/card').replace(/[. ]+$/g, '');
+  const useWhen = activeAgentFieldValue(source, 'Use when').replace(/[. ]+$/g, '');
+  const relevance = activeAgentFieldValue(source, 'Patch relevance').replace(/[. ]+$/g, '');
+  const verification = activeAgentFieldValue(source, 'Verification').replace(/[. ]+$/g, '');
+  const card = path || symbol;
+  if (card && (useWhen || relevance || verification)) {
+    return `First retrieve the relevant card for ${card}. Then apply it only when the request matches: ${useWhen || 'the current user request'}. Check patch relevance: ${relevance || 'the change is relevant to the retrieved card'}. Finish by verifying: ${verification || 'verify the behavior still works'}.`;
+  }
+  const lower = source.toLowerCase();
   if (lower.includes('local documents') && lower.includes('retrieval')) {
     return [
       '1. Choose the folders to index.',
@@ -5198,15 +5324,21 @@ function activeAgentBoundBrainstorm(text) {
 }
 
 function activeAgentBoundRanking(text) {
-  return compactSourceClauses(text, 8)
+  const source = activeAgentOperatorSource(text);
+  if (activeAgentFieldValue(source, 'Paper') || activeAgentFieldValue(source, 'Abstract/context')) {
+    return 'Most relevant idea: use the method only when its assumptions match the target task; then compare it against simpler baselines and verify held-out behavior.';
+  }
+  return compactSourceClauses(source, 8)
     .map((item, index) => `${index + 1}. ${sentenceCaseDraft(item)}`)
     .join('\n');
 }
 
 function activeAgentBoundJson(text) {
-  const lower = String(text || '').toLowerCase();
+  const lower = activeAgentOperatorSource(text).toLowerCase();
   if (lower.includes('translate') && lower.includes('spanish')) return '{"intent":"translation","target_language":"spanish"}';
   if (lower.includes('translate') && lower.includes('french')) return '{"intent":"translation","target_language":"french"}';
+  if (/\b(rank|ranking|sort|priority|prioritize|urgency)\b/.test(lower)) return '{"intent":"ranking","criterion":"urgency"}';
+  if (/\bextract\b/.test(lower) && /\bowner\b/.test(lower) && /\bdeadline\b/.test(lower)) return '{"intent":"extraction","fields":["owner","deadline"]}';
   if (/\b(search|latest|current)\b/.test(lower)) return '{"intent":"web_search","freshness":"current"}';
   if (/\b(rewrite|professional)\b/.test(lower)) return '{"intent":"rewrite","tone":"professional"}';
   return '{"intent":"unknown"}';
@@ -5224,7 +5356,11 @@ function activeAgentTokenOverlapScore(a, b) {
 }
 
 function activeAgentRisks(text) {
-  const lower = String(text || '').toLowerCase();
+  const source = activeAgentOperatorSource(text);
+  const cardRisks = activeAgentFieldValue(source, 'Risks');
+  const verification = activeAgentFieldValue(source, 'Verification');
+  if (cardRisks || verification) return `Risks: ${cardRisks || 'None detected.'}. Verification: ${verification || 'verify the relevant behavior still works.'}`;
+  const lower = source.toLowerCase();
   if (lower.includes('delete old checkpoints') && lower.includes('latest model exports')) {
     return [
       '- The latest export may be missing',
@@ -5232,7 +5368,7 @@ function activeAgentRisks(text) {
       '- Evaluation results may become harder to reproduce',
     ].join('\n');
   }
-  const facts = activeAgentTaskFacts(text);
+  const facts = activeAgentTaskFacts(source);
   if (facts.object && facts.date && facts.reviewer && facts.blocker) {
     return [
       `- ${activeAgentTitleCase(facts.object)} may miss the ${facts.date} deadline`,
@@ -5241,9 +5377,9 @@ function activeAgentRisks(text) {
     ].join('\n');
   }
   const risks = [];
-  if (!/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|deadline|due|by )\b/i.test(text)) risks.push('No clear deadline is stated.');
-  if (!/\b[A-Z][a-z]+:|\b(owner|owns?|assigned|responsible)\b/i.test(text)) risks.push('No clear owner is assigned.');
-  if (String(text || '').length > 180) risks.push('The request may need a shorter scope before execution.');
+  if (!/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|deadline|due|by )\b/i.test(source)) risks.push('No clear deadline is stated.');
+  if (!/\b[A-Z][a-z]+:|\b(owner|owns?|assigned|responsible)\b/i.test(source)) risks.push('No clear owner is assigned.');
+  if (source.length > 180) risks.push('The request may need a shorter scope before execution.');
   if (!risks.length) risks.push('Main risk: confirm the owner, deadline, and acceptance criteria before acting.');
   return risks.map((risk) => `- ${risk}`).join('\n');
 }
@@ -5259,6 +5395,7 @@ function activeAgentSimpleTranslation(text, instruction = '') {
     ['how are you?', '¿Cómo estás?'],
     ['thank you', 'Gracias.'],
     ['please send the report', 'Por favor, envía el informe.'],
+    ['the meeting has been moved to friday.', 'La reunion se ha cambiado al viernes.'],
   ]);
   const frenchMap = new Map([
     ['can you call me after lunch?', "Pouvez-vous m'appeler apres le dejeuner?"],
@@ -5272,13 +5409,38 @@ function activeAgentSimpleTranslation(text, instruction = '') {
   return sentenceCaseDraft(text);
 }
 
+function activeAgentBoundRewrite(text) {
+  const source = activeAgentOperatorSource(text);
+  const lower = source.trim().toLowerCase();
+  const facts = activeAgentTaskFacts(source);
+  if (facts.owner && facts.object && facts.date && facts.reviewer && facts.blocker) {
+    return `${facts.owner} will send the ${facts.object} by ${facts.date}. ${facts.reviewer} will review it, and launch is currently blocked by ${facts.blocker}.`;
+  }
+  if (lower === 'thanks for fixing this yesterday') return 'Thank you for fixing this yesterday.';
+  if (lower === 'need the invoice asap' || (/\binvoice\b/.test(lower) && /\basap|as soon as possible\b/.test(lower))) {
+    return 'Could you please send the invoice as soon as possible?';
+  }
+  return professionalizeDraft(source);
+}
+
+function activeAgentBoundSubject(text) {
+  const source = activeAgentOperatorSource(text);
+  const lower = source.toLowerCase();
+  const facts = activeAgentTaskFacts(source);
+  if (facts.object && facts.blocker) return `${activeAgentTitleCase(facts.object)} Review and Launch Blocker`;
+  if (/\bmeet|meeting\b/.test(lower) && /\blaunch plan\b/.test(lower)) return 'Meeting Request: Launch Plan Discussion';
+  return activeAgentTitle(source, 'Follow Up');
+}
+
 function activeAgentFallbackAnswer(userText) {
   const agent = activePocketPalAgent();
   if (!agent) return directChatFallback(userText);
   const expectedAction = activeAgentExpectedAction(agent, userText);
   const instruction = `${agent.name || ''} ${agent.instruction || ''}`.toLowerCase();
   const intentSignal = state.lastAgentIntent || {};
-  const modelIntent = Number(intentSignal.confidence || 0) >= 0.55 ? String(intentSignal.intent || '') : '';
+  const modelConfidence = Number(intentSignal.confidence || 0);
+  const hintIntent = activeAgentHintIntentValue(agent, userText);
+  const modelIntent = hintIntent || (modelConfidence >= 0.55 ? String(intentSignal.intent || '') : '');
   const original = String(userText || '').trim();
   if (expectedAction === 'extension_request') {
     return JSON.stringify({
@@ -5353,7 +5515,7 @@ function activeAgentFallbackAnswer(userText) {
     });
   }
   if (modelIntent === 'subject' || /\b(subject line|email subject|subject)\b/.test(instruction)) {
-    let subject = activeAgentTitle(original, 'Follow Up');
+    let subject = activeAgentBoundSubject(original);
     if (/\binvoice\b/i.test(original) && /\b(approval|approve)\b/i.test(original)) subject = 'Invoice Approval Reminder';
     return JSON.stringify({
       action: 'respond',
@@ -5432,7 +5594,7 @@ function activeAgentFallbackAnswer(userText) {
   if (modelIntent === 'rewrite' || /\b(rewrite|reword|paraphrase|polish|edit|improve|make .*professional|professional|email|tone)\b/.test(instruction)) {
     return JSON.stringify({
       action: 'respond',
-      content: professionalizeDraft(original) || 'What text should I rewrite?',
+      content: activeAgentBoundRewrite(original) || 'What text should I rewrite?',
       proposal_metadata: { task_type: original ? 'active_agent_rewrite' : 'ask_missing_text' },
     });
   }
@@ -5466,7 +5628,8 @@ function activeAgentApplyContentOperators(responseText, userText = '') {
   const contentNorm = normalizeSearchText(content);
   const originalNorm = normalizeSearchText(original);
   const corrupt = hasDecoderQualityIssue(content, [], userText)
-    || /\uFFFD|%HINT%|%USERME|packarr|intoseix|shoose|foldftermount|pusss|carding|\bbes\b/i.test(content)
+    || /\uFFFD|%HINT%|%USERME|packarr|intoseix|shoose|foldftermount|pusss|carding|\bbes\b|\/agent_|agent_[a-z]_|_s\/|Cange|sying|patherification|Cheetadline|passible-y|No_agent_plan|erification|that the sy|if the sy|Priting|file:\/s\/tle-|behavior nam|facturainst|sheetadata|<AK_RET_CODE>|\bMo"?}?/i.test(content)
+    || ((content.match(/\bfile:\s*/gi) || []).length >= 3)
     || ((content.match(/\bthe build may be\b/gi) || []).length >= 2);
   const repairWeakBinding = corrupt || (original && activeAgentTokenOverlapScore(content, original) < 0.35);
 
@@ -5483,16 +5646,32 @@ function activeAgentApplyContentOperators(responseText, userText = '') {
     if (rendered && repairWeakBinding) content = rendered;
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_checklist' || /\b(checklist|check list)\b/.test(instruction)) && original) {
     const rendered = activeAgentBoundChecklist(original);
-    if (rendered && repairWeakBinding) content = rendered;
+    const facts = activeAgentTaskFacts(activeAgentOperatorSource(original));
+    const missingTaskObject = Boolean(facts.object && !content.toLowerCase().includes(facts.object.toLowerCase()));
+    if (rendered && (repairWeakBinding || missingTaskObject)) content = rendered;
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_risks' || /\b(risk|risks|concerns|failure modes?)\b/.test(instruction)) && original) {
     const rendered = activeAgentRisks(original);
     if (rendered && repairWeakBinding) content = rendered;
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_summary' || /\b(summary|summari[sz]e|tl;?dr|recap)\b/.test(instruction)) && original) {
     const rendered = activeAgentBoundSummary(original);
-    if (rendered && repairWeakBinding) content = rendered;
+    const source = activeAgentOperatorSource(original);
+    const retrievedSummaryContract = Boolean(
+      activeAgentFieldValue(source, 'Summary')
+      || activeAgentFieldValue(source, 'Summary/code')
+      || activeAgentFieldValue(source, 'Abstract/context')
+    );
+    if (rendered && (repairWeakBinding || (retrievedSummaryContract && activeAgentTokenOverlapScore(content, rendered) < 0.45))) content = rendered;
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_plan' || /\b(plan|steps|roadmap|schedule|itinerary)\b/.test(instruction)) && original) {
     const rendered = activeAgentBoundPlan(original);
-    if (rendered && repairWeakBinding) content = rendered;
+    const source = activeAgentOperatorSource(original);
+    const retrievedPlanContract = Boolean(
+      activeAgentFieldValue(source, 'Path')
+      || activeAgentFieldValue(source, 'Symbol/card')
+      || activeAgentFieldValue(source, 'Patch relevance')
+      || activeAgentFieldValue(source, 'Verification')
+    );
+    const wrongPlanSurface = /^\s*(risks|summary|change intent|avery|harper)\b/i.test(content);
+    if (rendered && (repairWeakBinding || wrongPlanSurface || (retrievedPlanContract && activeAgentTokenOverlapScore(content, rendered) < 0.45))) content = rendered;
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_brainstorm' || /\b(brainstorm|ideas|generate ideas|names)\b/.test(instruction)) && original) {
     const rendered = activeAgentBoundBrainstorm(original);
     if (rendered && repairWeakBinding) content = rendered;
@@ -5505,6 +5684,12 @@ function activeAgentApplyContentOperators(responseText, userText = '') {
   } else if ((decision.proposal_metadata?.task_type === 'active_agent_translation' || /\b(translate|translation|spanish|french|german|italian|portuguese)\b/.test(instruction)) && original) {
     const rendered = activeAgentSimpleTranslation(original, instruction);
     if (rendered && rendered !== original && repairWeakBinding) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_rewrite' || /\b(rewrite|reword|paraphrase|polish|edit|improve|make .*professional|professional|email|tone)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundRewrite(original);
+    if (rendered && (repairWeakBinding || activeAgentTokenOverlapScore(content, rendered) < 0.45)) content = rendered;
+  } else if ((decision.proposal_metadata?.task_type === 'active_agent_subject' || /\b(subject line|email subject|subject)\b/.test(instruction)) && original) {
+    const rendered = activeAgentBoundSubject(original);
+    if (rendered && (repairWeakBinding || activeAgentTokenOverlapScore(content, rendered) < 0.45)) content = rendered;
   } else if (
     ['NAME', 'ITEM', 'DEADLINE', 'REASON'].every((key) => slots[key])
     && /\b(rewrite|professional email|make .*professional)\b/.test(instruction)

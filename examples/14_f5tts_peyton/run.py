@@ -5,6 +5,7 @@ import argparse
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 
@@ -34,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"], help="Inference device.")
     parser.add_argument("--nfe-step", type=int, default=16, help="F5TTS denoising steps for the smoke test.")
+    parser.add_argument("--cfg-strength", type=float, default=2.0, help="Classifier-free guidance strength.")
+    parser.add_argument("--speed", type=float, default=1.0, help="F5-TTS generation speed multiplier.")
     parser.add_argument(
         "--simulate-q4",
         action="store_true",
@@ -159,6 +162,7 @@ def main() -> None:
     ref_audio, ref_text = preprocess_ref_audio_text(str(ref_audio_path), ref_text)
 
     print(f"synthesizing on {device}: {args.text!r}")
+    synth_start = time.perf_counter()
     with torch.inference_mode():
         audio, sample_rate, _ = infer_process(
             ref_audio,
@@ -167,11 +171,12 @@ def main() -> None:
             model,
             vocoder,
             mel_spec_type="vocos",
-            speed=1.0,
+            speed=float(args.speed),
             nfe_step=int(args.nfe_step),
-            cfg_strength=2.0,
+            cfg_strength=float(args.cfg_strength),
             sway_sampling_coef=-1.0,
         )
+    synth_elapsed = time.perf_counter() - synth_start
     if isinstance(audio, torch.Tensor):
         audio = audio.detach().cpu().numpy()
     if np.max(np.abs(audio)) > 1.0:
@@ -190,6 +195,7 @@ def main() -> None:
 
     print(f"generated_wav={target_path}")
     print(f"bytes={target_path.stat().st_size}")
+    print(f"synth_elapsed_seconds={synth_elapsed:.4f}")
 
 
 if __name__ == "__main__":
